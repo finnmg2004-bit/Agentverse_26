@@ -24,7 +24,7 @@ import safety  # noqa: E402
 from agent import DEFAULT_SAY, NudgeAgent  # noqa: E402
 from alerts import HapticAlerts  # noqa: E402
 from bridge import BrainBridge  # noqa: E402
-from hearing import StereoHearing  # noqa: E402
+from hearing import SoundEvents, StereoHearing  # noqa: E402
 from navigator import Navigator  # noqa: E402
 from skills import Skill, SkillExecutor  # noqa: E402
 from vision import OwnerDetector  # noqa: E402
@@ -47,6 +47,7 @@ class Brain:
         self.bridge = BrainBridge()
         self.world = WorldModel()
         self.hearing = StereoHearing()
+        self.sound_events = SoundEvents()  # debounced start/stop + "what did I hear" log (Ricktho, 10.5a)
         self.vision = OwnerDetector()
         self.nav = Navigator()
         self.alerts = HapticAlerts()
@@ -86,6 +87,7 @@ class Brain:
         self.localizer.reset()
         self.latched = {}
         self.deferred = set()
+        self.sound_events.reset()
         self.last_owner_seen_event = 0.0
         self.episode = episode
         self.world.log(f"RESET by sim (episode {episode}) - ready")
@@ -106,6 +108,9 @@ class Brain:
         est = self.world.sound_estimates.get(res.get("label"))
         res["estimated_room"] = est["room"] if est and est["converged"] else None
         self.world.update_sound(res)
+        for ev in self.sound_events.update(res, self.world.t_sim):
+            extra = f" after {ev['duration_s']:.1f}s" if ev["phase"] == "stop" else f" ({ev['confidence']:.2f})"
+            self.world.log(f"SOUND {ev['phase']}: {ev['label']}{extra}")
 
         # Release latches only once a sound is truly silenced (not just quieter because we moved away),
         # so a still-ringing alarm can't restart a mission that was just completed.
@@ -373,6 +378,9 @@ class Brain:
             "backends": {"hearing": self.hearing.backend_name, "vision": self.vision.backend},
             # last sentence the owner said/typed, as received (control GUI "Heard:" line)
             "heard": self.last_heard,
+            # debounced sound start/stop events + what Nudge heard in the last 5 min (hearing.SoundEvents)
+            "sound_events": list(self.sound_events.log)[-10:],
+            "heard_sounds": self.sound_events.what_did_i_hear(since_t=w.t_sim - 300.0),
         }
 
     def run(self, duration: float = 0.0) -> None:

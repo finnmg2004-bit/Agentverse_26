@@ -353,3 +353,80 @@ class StereoHearing:
             "rms": round(rms, 4),
             "backend": self.backend_name,
         }
+
+
+class SoundEvents:
+    """Debounced sound start / stop events + a "what did I hear" log (AGENTS.md 10.5a).
+
+    Built-in missions react to the raw 2 Hz scores; taught tasks ("when the oven timer goes, ...")
+    and `what_did_i_hear()` need clean events instead:
+      start: a registry sound scores >= START_CONF in START_WINDOWS consecutive 0.5 s windows
+      stop:  it then scores < STOP_CONF in STOP_WINDOWS consecutive windows
+    Event: {"sound", "label", "tier", "phase": "start"|"stop", "confidence", "room", "t",
+            "duration_s" (stop only)}. `room` = the brain's sound-localiser estimate when it has
+    converged (else None); `expected_room` = where the registry says the source is installed.
+    """
+
+    START_CONF = 0.5
+    START_WINDOWS = 2
+    STOP_CONF = 0.25
+    STOP_WINDOWS = 3
+
+    def __init__(self, maxlen: int = 50) -> None:
+        from collections import deque
+
+        self.log: "deque[Dict[str, Any]]" = deque(maxlen=maxlen)
+        self.active: Dict[str, Dict[str, Any]] = {}  # sound -> start event
+        self._above: Dict[str, int] = {}
+        self._below: Dict[str, int] = {}
+
+    def update(self, result: Dict[str, Any], t: float) -> list:
+        """Feed one `process_audio` result (sim time `t`); returns the events this window produced."""
+        events = []
+        scores = result.get("scores", {})
+        for name in SOUNDS:
+            conf = float(scores.get(name, 0.0))
+            if name not in self.active:
+                self._above[name] = self._above.get(name, 0) + 1 if conf >= self.START_CONF else 0
+                if self._above[name] >= self.START_WINDOWS:
+                    ev = self._event(name, "start", conf, result, t)
+                    self.active[name] = ev
+                    self._below[name] = 0
+                    events.append(ev)
+            else:
+                self.active[name]["confidence"] = max(self.active[name]["confidence"], round(conf, 3))
+                self._below[name] = self._below.get(name, 0) + 1 if conf < self.STOP_CONF else 0
+                if self._below[name] >= self.STOP_WINDOWS:
+                    start = self.active.pop(name)
+                    ev = self._event(name, "stop", start["confidence"], result, t)
+                    ev["room"] = start["room"] or ev["room"]
+                    ev["duration_s"] = round(t - start["t"], 1)
+                    self._above[name] = 0
+                    events.append(ev)
+        self.log.extend(events)
+        return events
+
+    @staticmethod
+    def _event(name: str, phase: str, conf: float, result: Dict[str, Any], t: float) -> Dict[str, Any]:
+        spec = SOUND_SOURCES[name]
+        room = result.get("estimated_room") if result.get("label") == name else None
+        return {"sound": name, "label": str(spec.get("label", name)), "tier": int(spec.get("tier", 3)),
+                "phase": phase, "confidence": round(conf, 3), "room": room,
+                "expected_room": str(spec.get("room")), "t": round(float(t), 1)}
+
+    def what_did_i_hear(self, since_t: float = -1e9, now_t: float = 0.0) -> list:
+        """Sounds heard since `since_t`: [{sound, label, tier, room, started, ended|None (still on)}]."""
+        out: Dict[tuple, Dict[str, Any]] = {}
+        for ev in self.log:
+            if ev["phase"] == "start" and ev["t"] >= since_t:
+                out[(ev["sound"], ev["t"])] = {"sound": ev["sound"], "label": ev["label"], "tier": ev["tier"],
+                                               "room": ev["room"] or ev["expected_room"],
+                                               "started": ev["t"], "ended": None}
+            elif ev["phase"] == "stop":
+                for key, item in out.items():
+                    if key[0] == ev["sound"] and item["ended"] is None:
+                        item["ended"] = ev["t"]
+        return sorted(out.values(), key=lambda e: e["started"])
+
+    def reset(self) -> None:
+        self.__init__(self.log.maxlen or 50)
