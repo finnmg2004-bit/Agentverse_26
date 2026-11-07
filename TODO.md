@@ -20,7 +20,10 @@ Owners follow AGENTS.md section 9.1.
 - [ ] Scenario test for a voice/GUI command
 
 ## Teo (models)
-- [ ] Local text-to-speech (Piper) `speak(text)` for "Nudge says"
+- [x] Local text-to-speech (Piper): `from speech.tts import speak, synthesize, warmup, stop` (voice en_US-ljspeech-medium, MIT; `pixi run fetch-models`)
+- [x] Windows fix: Whisper + numpy crashed with "OMP Error #15"; win-64 now uses OpenBLAS (`pixi.toml`)
+- [ ] Measure Gemma latency on an RTX 5060 recording laptop (accuracy is 97.8 %; speed is the open question, AGENTS.md 6.1)
+- [ ] Fine-tune (paused): add a Modal payment method, then follow AGENTS.md 6.1
 
 ## Eden (GUI, integration, story)
 - [ ] GUI command/rule text box (sends `user_command`)
@@ -31,3 +34,8 @@ Owners follow AGENTS.md section 9.1.
 - [ ] Record the ≤ 60 s one-take video (carpet rule → doorbell around the carpet → smoke pre-emption)
 - [ ] 1-page technical summary + 5-minute pitch
 - [ ] Submit by 14:00 (deadline 15:00)
+
+## Next phase (proposal, AGENTS.md section 10)
+- [ ] Morning kick-off: choose Option A (ideal: robot maps the house + builds new jobs) or B (fallback: new jobs from existing skills); agree the 10.4 interfaces
+- [ ] Overnight runs (1–2 machines, own branches, headless): see 10.6
+- [ ] ~2 h checkpoint: A teaches + runs one new job end to end, else switch to B

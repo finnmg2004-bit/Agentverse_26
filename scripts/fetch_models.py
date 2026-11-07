@@ -6,6 +6,8 @@ Download the local perception / agent models (gitignored) — run with `pixi run
   assets/models/yamnet.tflite         YAMNet AudioSet sound classifier (TF Hub / Google, Apache-2.0)
   assets/models/yamnet_class_map.csv  YAMNet class names (tensorflow/models, Apache-2.0)
   assets/models/whisper-base.en/      Whisper base.en (CTranslate2 int8-ready, Systran, MIT) — owner voice requests
+  assets/models/en_US-ljspeech-medium.onnx(.json)  Piper TTS voice for speech/tts.py (rhasspy/piper-voices,
+                                      MIT; trained on the public-domain LJ Speech dataset)
   Ollama model (default gemma4:e2b)   local LLM for nudge-brain/agent.py (needs Ollama installed)
 
 Every file is checked against a pinned SHA-256, so a corrupted or changed download is rejected.
@@ -71,6 +73,15 @@ DEFAULT_STT = os.environ.get("NUDGE_STT_MODEL", "base.en")
 def whisper_files(name: str):
     rev, files = WHISPER[name]
     return [(f"whisper-{name}/{f}", WHISPER_REPO.format(name=name, rev=rev, file=f), d) for f, d in files.items()]
+# Piper text-to-speech voice for speech/tts.py (pinned to a rhasspy/piper-voices commit).
+_PIPER = ("https://huggingface.co/rhasspy/piper-voices/resolve/e7229f7d33a10e145e109b886d661984201ac3c4/"
+          "en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx")
+FILES += [
+    ("en_US-ljspeech-medium.onnx", _PIPER,
+     "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22"),
+    ("en_US-ljspeech-medium.onnx.json", _PIPER + ".json",
+     "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860"),
+]
 
 
 def sha256(path: Path) -> str:
