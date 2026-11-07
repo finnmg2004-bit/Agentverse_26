@@ -9,6 +9,12 @@ platforms = ["linux-64", "win-64"]
 # Download YOLOv8n ONNX + YAMNet TFLite into assets/models/ and pull the local Gemma model via Ollama
 fetch-models = "python scripts/fetch_models.py"
 
+# Convert the scanned owner (Renderpeople OBJ in assets/models/, not committed) into a MuJoCo mesh
+prepare-owner = "python scripts/prepare_owner.py"
+
+# Re-split assets/lightbar/police_lights.glb into housing + lens meshes (outputs are committed)
+prepare-lightbar = "python scripts/prepare_lightbar.py"
+
 # Fetch the nerv-world house scene + its Unitree Go2 (git submodule, shallow, ~390 MB)
 fetch-world = "git submodule update --init --depth 1 worlds/nerv-world"
 
@@ -27,12 +33,22 @@ brain = "python nudge-brain/main.py"
 # Nudge Control GUI: 3D view, event buttons, agent reasoning. Pair with `pixi run sim --no-viewer`
 gui = "python gui/nudge_control.py"
 
+# Sim + brain together from ONE terminal; closing either window stops both.
+# Extra options pass through, e.g. `pixi run start --view dog --noise tv`
+start = { cmd = "python scripts/run_all.py", depends-on = ["fetch-world"] }
+
+# End-to-end scenario tests (doorbell, knock, smoke, owner_moved, chair, reset, demo); add --gui to watch
+test-scenarios = { cmd = "python scripts/test_scenarios.py", depends-on = ["fetch-world"] }
+
 [target.linux-64.tasks]
 # Simulator (forces X11/GLFW compatibility on Linux Wayland/X11)
 sim = { cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" }, depends-on = ["fetch-world"] }
 
 # Run the Nudge Brain process (perception, navigation, agent, safety, live dashboard)
 brain = { cmd = "python nudge-brain/main.py", env = { GDK_BACKEND = "x11" } }
+
+# Sim + brain together from one terminal (X11/GLFW env inherited by both child processes)
+start = { cmd = "python scripts/run_all.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" }, depends-on = ["fetch-world"] }
 
 [dependencies]
 python = "3.11.*"

@@ -42,7 +42,7 @@ AMBER = (40, 180, 255)
 RED = (60, 60, 235)
 SOUND_COLORS = {"doorbell": (255, 210, 30), "knock": (30, 190, 255), "smoke_alarm": (60, 60, 240)}
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-FORWARD_KEYS = {ord(c): c for c in "BKMOCXR12345"} | {ord(c.lower()): c for c in "BKMOCXR"}
+FORWARD_KEYS = {ord(c): c for c in "BKMOCXRNV123456"} | {ord(c.lower()): c for c in "BKMOCXRNV"}
 
 
 def w2p(x: float, y: float) -> Tuple[int, int]:

@@ -39,6 +39,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sim import house_layout as H  # noqa: E402
+from sim.guide_handle import add_guide_handle  # noqa: E402
+from sim.lightbar import add_lightbar  # noqa: E402
 
 SCENE_XML = PROJECT_ROOT / H.WORLD_SCENE_XML
 
@@ -211,20 +213,42 @@ def _xyaxes_quat(xaxis, yaxis) -> list:
     return q.tolist()
 
 
+OWNER_MESH_DIR = Path(__file__).resolve().parent.parent / "assets" / "models" / "owner"
+
+
+def _add_scanned_owner(spec: mujoco.MjSpec, owner) -> bool:
+    """Swap the primitive owner's looks for the scanned human mesh, if `pixi run prepare-owner` made one.
+
+    The primitives become invisible proxies in group 4 (hidden house-collision group; rgba kept,
+    since mj_ray skips alpha-0 geoms), so LiDAR and the nav map still see the owner's footprint.
+    """
+    obj, png = OWNER_MESH_DIR / "owner.obj", OWNER_MESH_DIR / "owner.png"
+    if not (obj.exists() and png.exists()):
+        return False
+    spec.add_texture(name="owner_tex", type=mujoco.mjtTexture.mjTEXTURE_2D, file=png.as_posix())
+    mat = spec.add_material(name="owner_mat", specular=0.1, shininess=0.1)
+    mat.textures[int(mujoco.mjtTextureRole.mjTEXROLE_RGB)] = "owner_tex"
+    # Scans aren't watertight; "shell" inertia avoids volume errors (the body is mocap anyway).
+    spec.add_mesh(name="owner_mesh", file=obj.as_posix(), inertia=mujoco.mjtMeshInertia.mjMESH_INERTIA_SHELL)
+    for g in owner.geoms:
+        g.group = 4
+    owner.add_geom(name="owner_visual", type=mujoco.mjtGeom.mjGEOM_MESH, meshname="owner_mesh",
+                   material="owner_mat", contype=0, conaffinity=0, mass=0, group=0)
+    return True
+
+
 def add_nudge_entities(spec: mujoco.MjSpec) -> None:
     """
-    Head camera, guide handle and haptic halo on the Go2; owner and chair mocap bodies;
+    Head camera, pop-up guide handle and light bar on the Go2; owner and chair mocap bodies;
     sound beacons. Same geometry as the original box-house scene.
     """
     G = mujoco.mjtGeom
     base = spec.body("base")
     # Forward-looking head camera (camera looks along -Z: x=(0,-1,0), y=(0,0,1) -> looks along +X)
     base.add_camera(name="head_cam", pos=[0.30, 0.0, 0.12], quat=_xyaxes_quat([0, -1, 0], [0, 0, 1]), fovy=60.0)
-    # Guide handle bar + haptic pulse halo (robot-visual group 2, no contacts)
-    base.add_geom(name="guide_handle_bar", type=G.mjGEOM_CAPSULE, fromto=[-0.05, 0.08, 0.08, -0.22, 0.14, 0.24],
-                  size=[0.014, 0, 0], rgba=[0.9, 0.85, 0.2, 1.0], contype=0, conaffinity=0, group=2)
-    base.add_geom(name="alert_halo", type=G.mjGEOM_SPHERE, pos=[-0.15, 0.0, 0.26], size=[0.065, 0, 0],
-                  rgba=[0.2, 0.9, 0.4, 0.0], contype=0, conaffinity=0, group=2)
+    # Pop-up guide handle (sim/guide_handle.py): retracts flush into a dock, telescopes out for the owner
+    add_guide_handle(spec, "base")
+    # (The old floating `alert_halo` sphere is gone: the light bar shows alerts, the grip shows the haptic code.)
 
     wb = spec.worldbody
     # Sound beacons (visual only)
@@ -243,6 +267,8 @@ def add_nudge_entities(spec: mujoco.MjSpec) -> None:
     owner.add_geom(name="owner_arm_left", type=G.mjGEOM_CAPSULE, fromto=[0, 0.26, 1.24, 0.08, 0.26, 0.76], size=[0.055, 0, 0], rgba=jacket)
     owner.add_geom(name="owner_arm_right", type=G.mjGEOM_CAPSULE, fromto=[0, -0.26, 1.24, 0.08, -0.26, 0.76], size=[0.055, 0, 0], rgba=jacket)
     owner.add_geom(name="owner_head", type=G.mjGEOM_SPHERE, pos=[0, 0, 1.46], size=[0.13, 0, 0], rgba=skin)
+    _add_scanned_owner(spec, owner)
+    add_lightbar(spec, "base")
 
     # Movable chair obstacle (starts stowed)
     cx, cy, cz = H.CHAIR_STOWED_POS
@@ -275,7 +301,7 @@ def apply_cutaway(model: mujoco.MjModel, data: mujoco.MjData, z_cut: float = H.W
 
 
 def build_nudge_model(verbose: bool = True, cutaway: bool = True) -> Tuple[mujoco.MjModel, mujoco.MjData]:
-    """Full Nudge scene: house + Go2 + head_cam/handle/halo + owner + chair + beacons."""
+    """Full Nudge scene: house + Go2 + head_cam/handle/light bar + owner + chair + beacons."""
     spec = load_spec(verbose)
     add_nudge_entities(spec)
     model = spec.compile()
