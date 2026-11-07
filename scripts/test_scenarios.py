@@ -89,7 +89,9 @@ SCENARIOS: Dict[str, Dict] = {
 class SimProcess:
     def __init__(self, gui: bool, noise: str, duration: float) -> None:
         cmd = [sys.executable, "-u", str(ROOT / "sim" / "run_sim.py"), "--duration", str(duration),
-               "--noise", noise]
+               "--noise", noise,
+               # Reproducible owner: no spontaneous wandering, fixed seed for nudge/let-go reactions.
+               "--owner-static", "--owner-seed", "1"]
         if not gui:
             cmd.append("--headless")
         self.proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

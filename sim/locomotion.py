@@ -84,6 +84,10 @@ class Go2Locomotion:
         self.gait_phase: float = 0.0
         self.guiding_active: bool = False
         self.owner_locked: bool = False
+        # Set by sim/owner_behavior.py: the owner may let go of the handle (which also releases the
+        # lock), and their pace walking up to the handle varies.
+        self.owner_grip: bool = True
+        self.owner_speed: float = 0.40
 
         self.reset_robot_pose(*ROBOT_START_POSE)
 
@@ -268,7 +272,7 @@ class Go2Locomotion:
         # and they reach it they are LOCKED: the left hand stays on the grip and they face the robot's
         # heading, so every stop or turn of the robot moves them (that is what the rigid handle conveys).
         self.guiding_active = False
-        if guiding and self.owner_mocap_id >= 0 and dist_to_owner <= 1.55:
+        if guiding and self.owner_grip and self.owner_mocap_id >= 0 and dist_to_owner <= 1.55:
             self.guiding_active = True
             bx, by = OWNER_OFFSET_BODY  # owner centre in the robot frame (behind-right)
             target_ox = self.pose_x + bx * cos_y - by * sin_y
@@ -281,7 +285,7 @@ class Go2Locomotion:
                 self.data.mocap_pos[self.owner_mocap_id] = [target_ox, target_oy, 0.0]
                 self.data.mocap_quat[self.owner_mocap_id] = yaw_to_quat(self.pose_yaw)
             elif d > 0.005:
-                step_d = min(d, 0.40 * dt)
+                step_d = min(d, min(0.40, self.owner_speed) * dt)
                 new_ox = ox + (dx / d) * step_d
                 new_oy = oy + (dy / d) * step_d
                 walk_yaw = math.atan2(dy, dx) if d > 0.15 else self.pose_yaw

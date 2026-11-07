@@ -27,6 +27,9 @@ from navigator import LIDAR_ANGLES, Navigator, wrap
 CRUISE_SPEED = 0.9
 GUIDE_SPEED = 0.35
 STANDOFF = 0.75
+NUDGE_CONTACT_M = 0.47    # robot centre to owner centre at the moment of the nudge
+ACK_WAIT_S = 3.0         # wait this long for the owner's handle tap after the buzz
+MAX_NUDGES = 3            # then nudge again, up to this many times
 OWNER_AT_GOAL_TOL = 0.7   # owner within this distance of a landmark counts as delivered
 FINAL_PUSH_SPEED = 0.25   # robot creeps on after reaching the goal so the owner (behind it) gets there
 FINAL_PUSH_MAX_S = 8.0    # give up (event "timeout", not a false "guide_complete") after this
@@ -119,13 +122,15 @@ class ApproachAndAlert(Skill):
     """Walk up to the owner, nudge them (physical contact), then start the vibration code."""
 
     name = "alert_owner"
-    timeout_s = 40.0
+    timeout_s = 60.0
 
     def __init__(self, sound: str, world, nav: Navigator) -> None:
         super().__init__()
         self.sound = sound
         self.stage = "approach"
         self.stage_t = time.monotonic()
+        self.attempt = 1
+        self.nudge_t = time.monotonic()
         self.goal_owner: Optional[Tuple[float, float]] = None
         self._replan(world, nav)
 
@@ -178,24 +183,45 @@ class ApproachAndAlert(Skill):
         if self.stage == "face":
             if abs(face_err) < 0.15 or dt_stage > 4.0:
                 self._to("nudge")
+                self.nudge_t = time.monotonic()
+                self.attempt = world.nudge_attempts + 1
+                world.owner_ack = f"waiting - nudge {self.attempt}"
                 alerts.set_for_sound(self.sound)
             return SkillOutput(wz=max(-1.5, min(1.5, 2.5 * face_err)))
 
-        if self.stage == "nudge":  # gentle forward bump into the owner's leg
-            if dt_stage > 1.4:
+        if self.stage == "nudge":  # gentle forward bump into the owner's leg, until contact
+            if world.dist_to_owner() < NUDGE_CONTACT_M or dt_stage > 3.0:
                 self._to("retreat")
             return SkillOutput(vx=0.18, wz=1.5 * face_err, allow_contact=True)
 
-        if self.stage == "retreat":
-            if dt_stage > 0.8:
+        if self.stage == "retreat":  # step back far enough that a repeat nudge is a new touch
+            if world.dist_to_owner() > STANDOFF + 0.05 or dt_stage > 2.5:
                 self._to("buzz")
             return SkillOutput(vx=-0.15)
 
         if self.stage == "buzz":  # hold still while the handle vibrates the code
+            if world.owner_tapped_since(self.nudge_t):
+                return self._acknowledged(world)
             if dt_stage > 1.5:
-                return SkillOutput(event="owner_alerted", done=True)
+                self._to("await_ack")
+            return SkillOutput()
+
+        if self.stage == "await_ack":  # owner taps the handle = "I felt it, I'm ready"
+            if world.owner_tapped_since(self.nudge_t):
+                return self._acknowledged(world)
+            if dt_stage > ACK_WAIT_S:
+                # No tap: the AGENT decides (nudge again / lead them anyway / call for help).
+                world.nudge_attempts += 1
+                world.owner_ack = f"no response after {world.nudge_attempts} nudge(s)"
+                world.log(f"No handle tap after nudge {world.nudge_attempts}")
+                return SkillOutput(event="owner_no_response", done=True)
             return SkillOutput()
         return SkillOutput(done=True)
+
+    def _acknowledged(self, world) -> SkillOutput:
+        world.owner_ack = "acknowledged"
+        world.log(f"Owner ACKNOWLEDGED (handle tap) after nudge {self.attempt}")
+        return SkillOutput(event="owner_alerted", done=True)
 
 
 class OfferHandle(Skill):
@@ -321,7 +347,9 @@ class SkillExecutor:
             world.phase = "searching" if world.mission else world.phase
         elif tool == "investigate_sound":
             label = world.mission["sound"] if world.mission else world.sound.get("label")
-            room = str(SOUND_SOURCES.get(label, {}).get("room", world.robot_room))
+            # Where the ears localised it (sound_localizer.py); the registry room only as a fallback.
+            est = world.sound_estimates.get(label) or {}
+            room = est.get("room") or str(SOUND_SOURCES.get(label, {}).get("room", world.robot_room))
             self.skill = GoToRoom(room, world, self.nav)
         elif tool == "look_around":
             self.skill = LookAround(world)
@@ -331,8 +359,8 @@ class SkillExecutor:
         elif tool == "offer_handle":
             self.skill = OfferHandle()
         elif tool == "guide_owner_to":
+            world.phase = "guiding"  # before planning, so evacuation hazard doors apply
             self.skill = GuideOwner(args["target"], world, self.nav)
-            world.phase = "guiding"
         else:  # get_state / none
             self.skill = Skill()
         world.log(f"SKILL {self.skill.label()}")

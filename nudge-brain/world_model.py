@@ -15,7 +15,9 @@ import time
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
+from owner_belief import OwnerBelief
 from sim.house_layout import (
+    SMOKE_EVACUATION_TARGET,
     OUTSIDE,
     ROBOT_START_POSE,
     ROOM_GRAPH,
@@ -93,6 +95,20 @@ class WorldModel:
 
         self.events: Deque[str] = deque(maxlen=10)
 
+        # Probabilistic owner search (owner_belief.py): P(owner in room), updated by vision
+        # (positive + negative evidence) and a walking model.
+        self.belief = OwnerBelief(OWNER_PRIOR_ROOM)
+        # Owner acknowledgement via the handle's touch sensor
+        self.last_tap_wall: float = -1e9
+        self.owner_ack: Optional[str] = None  # None | "waiting n/N" | "acknowledged" | "no response"
+        self.nudge_attempts: int = 0          # nudges delivered without a handle tap (this mission)
+        # Sound localisation (sound_localizer.py) estimates, keyed by sound
+        self.sound_estimates: Dict[str, Dict[str, Any]] = {}
+        # Fire-aware evacuation (evacuation.py)
+        self.fire: Optional[Dict[str, Any]] = None
+        self.evac: Optional[Dict[str, Any]] = None      # {"target", "scores", "hazard_doors", "reason"}
+        self.escalated: bool = False
+
     # ------------------------------------------------------------------ updates
     def update_state(self, msg: Dict[str, Any]) -> None:
         pose = msg.get("robot_pose", list(self.robot_pose))
@@ -102,6 +118,8 @@ class WorldModel:
         self.robot_room = room
         self.lidar_ranges = [float(r) for r in msg.get("lidar_ranges", self.lidar_ranges)]
         self.guiding_active = bool(msg.get("guiding_active", False))
+        if msg.get("handle_tap"):
+            self.last_tap_wall = time.monotonic()
         self.connected = True
         self.last_state_wall = time.monotonic()
 
@@ -120,6 +138,9 @@ class WorldModel:
         if self.owner_visible and det.get("world_xy") is not None:
             wx, wy = det["world_xy"]
             self._set_owner((float(wx), float(wy)), "vision")
+        elif not self.guiding_active and not self.owner_recently_seen(1.5):
+            # Nobody in view: every room the camera can see into becomes less likely.
+            self.belief.look(self.robot_pose)
 
     def _set_owner(self, xy: Tuple[float, float], source: str) -> None:
         self.owner_pos = xy
@@ -128,6 +149,7 @@ class WorldModel:
             self.owner_room = room
         self.owner_last_seen_wall = time.monotonic()
         self.owner_source = source
+        self.belief.see(xy)
         # Once the owner is located, the search bookkeeping is no longer needed.
         self.searched_rooms.clear()
 
@@ -151,26 +173,24 @@ class WorldModel:
         for door in [d for d, t in self.blocked_doors.items() if now - t > ttl_s]:
             del self.blocked_doors[door]
             self.log(f"Doorway {door} re-opened for planning")
-        return set(self.blocked_doors)
+        blocked = set(self.blocked_doors)
+        # While evacuating the owner, never lead them through the fire room's doorways.
+        if self.is_emergency() and self.phase == "guiding" and self.evac:
+            blocked |= set(self.evac.get("hazard_doors", ()))
+        return blocked
+
+    def evac_target(self) -> str:
+        return self.evac["target"] if self.evac else SMOKE_EVACUATION_TARGET
+
+    def owner_tapped_since(self, t_wall: float) -> bool:
+        return self.last_tap_wall >= t_wall
 
     def best_search_room(self) -> str:
-        """Owner's believed room first, then the nearest unsearched room."""
-        if self.owner_room not in self.searched_rooms:
-            return self.owner_room
-        candidates = [r for r in ROOM_ORDER if r not in self.searched_rooms]
-        if not candidates:
-            # Searched everywhere: start again, skipping the room we're standing in.
-            self.searched_rooms = {self.robot_room}
-            candidates = [r for r in ROOM_ORDER if r != self.robot_room]
-        blocked = self.active_blocked_doors()
-        start_idx = ROOM_ORDER.index(self.robot_room) if self.robot_room in ROOM_ORDER else 0
-        return min(
-            candidates,
-            key=lambda r: (
-                room_hops(self.robot_room, r, blocked),
-                (ROOM_ORDER.index(r) - start_idx) % len(ROOM_ORDER),
-            ),
-        )
+        """Most probable owner room, discounted by how far away it is (owner_belief.py).
+        The room the robot is standing in is skipped once it has looked around it."""
+        blocked = set(self.blocked_doors)
+        exclude = {self.robot_room} if self.robot_room in self.searched_rooms else set()
+        return self.belief.best_room(self.robot_room, lambda a, b: room_hops(a, b, blocked), exclude)
 
     # ------------------------------------------------------------------ mission
     def start_mission(self, sound: str) -> None:
@@ -180,6 +200,12 @@ class WorldModel:
         self.last_result = None
         self.phase = "searching"
         self.searched_rooms.clear()
+        self.owner_ack = None
+        self.nudge_attempts = 0
+        self.escalated = False
+        if sound != "smoke_alarm":
+            self.fire = None
+            self.evac = None
         self.log(f"MISSION {sound.upper()} -> owner to {target}")
 
     def finish_mission(self) -> None:
@@ -222,4 +248,7 @@ class WorldModel:
             "phase": self.phase,
             "searched_rooms": sorted(self.searched_rooms),
             "blocked_doors": sorted(self.blocked_doors),
+            "owner_room_probability": {r: round(p, 2) for r, p in self.belief.top(4)},
+            "owner_acknowledged": self.owner_ack == "acknowledged",
+            "evacuation_exit": self.evac_target() if self.is_emergency() else None,
         }

@@ -21,11 +21,17 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 from sim.house_layout import LANDMARKS, ROOMS, SOUND_SOURCES
 
 SMOKE_THRESHOLD = 0.60
-WATCHDOG_S = 2.0
+import os  # noqa: E402
+
+# LLM answer deadline. 4.0 s: Gemma answers in ~0.4-0.6 s on an RTX 5050 laptop but spikes to ~3 s,
+# so 4 s keeps it deciding; raise it (NUDGE_WATCHDOG_S=6) on a slow GPU, lower it for a snappier
+# worst case (the robot holds its current action while waiting).
+WATCHDOG_S = float(os.environ.get("NUDGE_WATCHDOG_S", "4.0"))
+MAX_NUDGES = 3
 OWNER_SPEED_CAP = 0.40
 OWNER_CAP_RADIUS = 1.0
 BUMPER_RANGE = 0.30
-EVACUATION_TARGET = "back_exit_outside"
+EVACUATION_TARGET = "back_exit_outside"  # default only; evacuation.py picks the safest exit per fire
 
 TOOLS = ("get_state", "go_to_room", "look_around", "alert_owner", "offer_handle",
          "guide_owner_to", "investigate_sound")
@@ -55,10 +61,15 @@ def smoke_detected(sound_result: Dict[str, Any]) -> bool:
 
 def emergency_action(world, event: str = "new_sound") -> Dict[str, Any]:
     """Deterministic evacuation policy used on pre-emption and for every emergency event."""
-    if world.guiding_active or event in ("owner_alerted", "handle_taken"):
-        return {"tool": "guide_owner_to", "args": {"target": EVACUATION_TARGET}}
+    if world.guiding_active or event in ("owner_alerted", "handle_taken", "path_blocked"):
+        return {"tool": "guide_owner_to", "args": {"target": world.evac_target()}}
+    if event == "owner_no_response":
+        # In a fire, two unanswered nudges are enough: lead them out anyway.
+        if world.nudge_attempts < 2 and world.owner_recently_seen(4.0):
+            return {"tool": "alert_owner", "args": {"sound": "smoke_alarm", "place": world.evac_target()}}
+        return {"tool": "guide_owner_to", "args": {"target": world.evac_target()}}
     if world.owner_recently_seen(2.0):
-        return {"tool": "alert_owner", "args": {"sound": "smoke_alarm", "place": EVACUATION_TARGET}}
+        return {"tool": "alert_owner", "args": {"sound": "smoke_alarm", "place": world.evac_target()}}
     if event == "arrived_in_room":
         return {"tool": "look_around", "args": {}}
     return {"tool": "go_to_room", "args": {"room": world.best_search_room()}}
@@ -78,8 +89,10 @@ def validate_action(action: Dict[str, Any], world) -> Tuple[bool, str]:
         target = args.get("target")
         if target not in ROOMS and target not in LANDMARKS:
             return False, f"bad target {target!r}"
-        if world.is_emergency() and target != EVACUATION_TARGET:
-            return False, "emergency: must evacuate to back_exit_outside"
+        if world.is_emergency():
+            safe = [t for t, d in ((world.evac or {}).get("details") or {}).items() if not d.get("unavailable")]
+            if target not in (safe or [world.evac_target()]):
+                return False, f"emergency: {target} is not a safe exit (safe: {safe})"
         if not (world.guiding_active or world.dist_to_owner() < 1.6):
             return False, "owner not at the handle"
     if tool == "alert_owner":

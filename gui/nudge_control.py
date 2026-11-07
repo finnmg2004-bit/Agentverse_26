@@ -65,8 +65,10 @@ RED = (235, 70, 70, 255)
 CYAN = (60, 200, 230, 255)
 PURPLE = (190, 140, 255, 255)
 SOUND_COL = {"doorbell": (40, 200, 255, 255), "knock": (255, 190, 40, 255), "smoke_alarm": (240, 60, 60, 255)}
-SOURCE_COL = {"llm": PURPLE, "rules": (140, 180, 230, 255), "safety": RED, "watchdog": AMBER}
-SOURCE_LABEL = {"llm": "GEMMA", "rules": "rules", "safety": "SAFETY", "watchdog": "watchdog"}
+SOURCE_COL = {"llm": PURPLE, "rules": (140, 180, 230, 255), "safety": RED, "watchdog": AMBER,
+              "only option": (150, 150, 155, 255)}
+SOURCE_LABEL = {"llm": "GEMMA", "rules": "rules", "safety": "SAFETY", "watchdog": "watchdog",
+                "only option": "only option"}
 
 CAMERA_PRESETS: Dict[str, dict] = {
     "West wing": dict(mode="free", lookat=[-6.5, 1.0, 0.0], distance=21.0, azimuth=90.0, elevation=-62.0),
@@ -539,7 +541,8 @@ class NudgeControl:
         agent = br.get("agent") or {}
         llm = agent.get("llm") or {}
         stats = (f"   |   Gemma consulted {llm.get('calls', 0)}x"
-                 + (f", avg {llm['avg_s']:.2f} s (budget {llm.get('timeout_s', 0):.0f} s)" if llm.get("avg_s") else ""))
+                 + (f", avg {llm['avg_s']:.2f} s (budget {llm.get('timeout_s', 0):.0f} s)" if llm.get("avg_s") else "")
+                 + (f", overrode the rules {llm['llm'] - llm['agreed']}x" if llm.get("llm") else ""))
         dpg.set_value("agent_backend_txt", f"   reasoning: {agent.get('backend', '-')}{stats}" if brain_ok
                       else "   brain not connected")
         pend = agent.get("pending")
@@ -573,6 +576,11 @@ class NudgeControl:
                 if "mid" in self.fonts:
                     dpg.bind_item_font(t, self.fonts["mid"])
                 dpg.add_text(f"   {who} | {d.get('latency', 0):.2f} s | {d.get('reasoning', '')}", wrap=wrap, color=TEXT)
+                if src == "llm" and d.get("agreed") is False and d.get("rule"):
+                    dpg.add_text(f"   Gemma overrode the rules (they would have chosen {d['rule']})",
+                                 wrap=wrap, color=PURPLE)
+                if d.get("escalate"):
+                    dpg.add_text("   CALLED EMERGENCY SERVICES", color=RED)
                 if d.get("say"):
                     dpg.add_text(f'   message for the owner: "{d["say"]}"', wrap=wrap, color=(150, 230, 255, 255))
                 if d.get("llm_raw"):

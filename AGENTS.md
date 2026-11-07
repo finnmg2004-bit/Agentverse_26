@@ -86,6 +86,7 @@ Agentverse_26/
 │   ├── check_world.py        # Headless check: coordinates vs scene, doorways, planner routes (`pixi run check-world`)
 │   ├── locomotion.py         # Velocity interface (vx, vy, wz) -> Plan B kinematic (nav-map clearance clamp) or Plan A policy
 │   ├── sensors.py            # Head RGB-D renderer, 2D LiDAR raycasts, stereo ear audio synth
+│   ├── owner_behavior.py     # Owner acts like a person: wanders, reacts to nudges, taps handle, lets go
 │   └── run_sim.py            # Main MuJoCo viewer loop, keyboard hotkeys, ZMQ PUB/SUB server (`pixi run sim`)
 └── nudge-brain/              # PROCESS 2: Perception, Navigation, Local Agent & Dashboard
     ├── bridge.py             # ZeroMQ client (subscribes to sensors :5555, publishes cmds :5556)
@@ -96,6 +97,9 @@ Agentverse_26/
     ├── safety.py             # Hard invariants: smoke alarm pre-emption, 2.0s LLM watchdog, speed cap
     ├── alerts.py             # Haptic handle pulse state machine (1 pulse, 2 pulses, continuous)
     ├── skills.py             # Executes agent tool calls as behaviours (go_to_room, look_around, alert_owner, guide...)
+    ├── owner_belief.py       # Bayes filter P(owner in room): vision +/- evidence, walking model
+    ├── sound_localizer.py    # Where a sound is, from ear direction + loudness over several robot poses
+    ├── evacuation.py         # Fire-aware exit choice, hazard doorways, escalation timer
     ├── agent.py              # Event-driven Gemma 4 E2B via Google ADK (local Ollama/vLLM backend)
     ├── dashboard.py          # Live OpenCV telemetry window for the screen recording
     └── main.py               # Brain orchestrator loop
@@ -211,7 +215,7 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 
 ### ZeroMQ Ports & JSON/Multipart Schema
 - **`sim` -> `nudge-brain` (PUB on `tcp://127.0.0.1:5555`)**:
-  - Topic `state` (20 Hz JSON): `{"t": float, "robot_pose": [x, y, yaw], "robot_room": str, "lidar_ranges": [float...], "guiding_active": bool}`
+  - Topic `state` (20 Hz JSON): `{"t": float, "robot_pose": [x, y, yaw], "robot_room": str, "lidar_ranges": [float...], "guiding_active": bool, "handle_tap": bool}` — `handle_tap` is the guide handle's touch sensor (true while the owner taps it to acknowledge an alert). Debug-only ground truth (`owner_pos_gt`, `owner_state_gt`, `chair_blocking`) must never drive brain decisions.
   - Topic `camera` (10 Hz multipart): `[topic, metadata_json, rgb_jpeg_bytes, depth_float16_bytes]`
   - Topic `audio` (2 Hz multipart, every 0.5 s): `[topic, metadata_json, stereo_int16_pcm_bytes]` (16 kHz stereo, 0.5 s window = 8000 samples x 2 channels)
 - **`nudge-brain` -> `sim` (PUB on `tcp://127.0.0.1:5556`)**:
@@ -228,8 +232,10 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 ---
 
 ## 6. Agent Tools & Safety Layer Rules
-- **Agent Model**: Local Gemma 4 E2B via local Ollama HTTP API (`http://127.0.0.1:11434`, model `gemma4:e2b` / `gemma3:4b`). Wakes ONLY on discrete events: `new_sound`, `arrived_in_room`, `owner_seen`, `owner_not_found`, `owner_alerted`, `timeout`.
-- **Gemma = the robot's reasoning for judgement calls only** (`nudge-brain/agent.py`): on `new_sound` and `owner_not_found`, while the owner hasn't been seen in the last 3 s, Gemma gets the facts in plain language (sound + where it comes from, where the owner was last seen and how long ago / usual room, searched rooms, candidate rooms with hop distance) and answers `{"room", "reason", "say"}`: which room to search, a one-sentence reason (shown in the control GUI), and the message Nudge gives the owner (shown as "Nudge says: …"; for the planned screen/speech outputs). `room` is constrained by an Ollama JSON-schema `enum` of the valid unsearched rooms, so it can't pick an invalid room. Budget `NUDGE_LLM_TIMEOUT` (default **4 s**; measured 0.5–0.9 s warm on an RTX 5050 laptop). Routine steps (arrived -> look_around, owner seen -> alert_owner, alerted -> guide_owner_to), emergencies, timeouts and errors are decided by the deterministic policy / safety layer instantly. `DEFAULT_SAY` gives the owner message when Gemma didn't write one. Setup: install Ollama (`winget install Ollama.Ollama`), then `pixi run fetch-models`.
+- **Agent Model**: Local Gemma 4 E2B via local Ollama HTTP API (`http://127.0.0.1:11434`, model `gemma4:e2b` / `gemma3:4b` with automatic deterministic tool-policy fallback if the answer takes longer than `NUDGE_WATCHDOG_S` (default **4.0 s**; measured ~0.4–0.6 s on an RTX 5050 laptop with spikes to ~3 s) or Ollama is offline). Setup: install Ollama (`winget install Ollama.Ollama`), then `pixi run fetch-models`. Wakes ONLY on discrete events: `new_sound`, `arrived_in_room`, `owner_seen`, `owner_not_found`, `owner_alerted`, `owner_no_response`, `handle_taken`, `path_blocked`, `timeout`.
+- **How the LLM decides (`agent.py`)**: on each event `build_menu()` turns live perception into a lettered menu of LEGAL options with their facts (room probabilities + walking distance, exits with walk length + distance from the fire, nudge attempts, ...). Gemma answers through an Ollama JSON schema that only allows the menu's letters + a short reason (+ `call_emergency_services` in a fire), so it cannot produce an invalid call and answers in ~15 tokens (~1.5 s on an MX450, faster on bigger GPUs). Safety decides what is on the menu; the LLM decides which option. Single-option events are executed instantly (`only option`). Every decision records what the rules would have done; the dashboard flags LLM overrides with `*`. The LLM also decides in emergencies (exit choice, re-nudge vs lead out, calling emergency services); the pre-emption itself stays plain code.
+- **Perception the agent uses** (all brain-side, no ground truth): `owner_belief.py` (Bayes filter P(owner in room): camera positive + negative evidence, owner-walks-around model), `sound_localizer.py` (sound position from ear ILD/ITD direction + loudness, accumulated over robot poses on a 0.5 m grid), `evacuation.py` (fire position from hearing; scores every exit by walk length + fire proximity; hazard doorways of the fire room are never used while leading the owner; exits LiDAR saw blocked are excluded).
+- **Owner message + GUI reasoning**: when `alert_owner` is on the menu, Gemma also writes `say`, the short plain-words message Nudge shows/speaks to the owner when it nudges them (control GUI "Nudge says"; `DEFAULT_SAY` per sound otherwise; for the planned screen/speech outputs). Every decision is recorded in `agent.decisions` (event, source, choice, Gemma's reason or a plain-English rule explanation, latency, what the rules would have done, rejections/watchdog notes, raw reply, owner message) and published on the `brain` topic for the control GUI's reasoning panel. `NUDGE_LLM_EVENTS=new_sound,owner_not_found` (comma list) limits which events consult Gemma; default: every event.
 - **Agent Tools**:
   - `get_state() -> dict`
   - `go_to_room(room: str)` — `room` ∈ `house_layout.nudge_rooms()`
@@ -239,8 +245,8 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   - `guide_owner_to(target: str)` — `target` ∈ `house_layout.LANDMARKS`
   - `investigate_sound()`
 - **Plain-Code Safety Layer (`nudge-brain/safety.py`)**:
-  1. **Smoke Alarm Pre-emption**: If `smoke_alarm` is detected with confidence >= 0.6, immediately interrupt any current plan, find owner, set `continuous` alert, and execute `guide_owner_to(SMOKE_EVACUATION_TARGET)` (= `"back_exit_outside"`). *(Planned: generalize to tier-based pre-emption — a higher-priority tier always interrupts a lower one; see 2.1.)*
-  2. **LLM Watchdog**: If Gemma takes longer than `NUDGE_LLM_TIMEOUT` (default 4.0 s) to answer a judgement call, deterministic fallback rules take over immediately (logged as `watchdog` in the GUI).
+  1. **Smoke Alarm Pre-emption**: If `smoke_alarm` is detected with confidence >= 0.6, immediately interrupt any current plan, find owner, set `continuous` alert, and lead the owner out by the safest exit (`evacuation.py`: one of `EXIT_TARGETS` — `front_door_outside`, `back_exit_outside`, `terrace_outside`; `SMOKE_EVACUATION_TARGET` is only the default). Escalation: emergency services are called (simulated) by the LLM, or by plain code if the owner is still not found 40 s into the alarm. *(Planned: generalize to tier-based pre-emption — a higher-priority tier always interrupts a lower one; see 2.1.)*
+  2. **LLM Watchdog**: If the LLM takes longer than `NUDGE_WATCHDOG_S` (default 4.0 s) to answer after an event, deterministic fallback rules take over immediately (logged as `watchdog` in the GUI).
   3. **Proximity Speed Cap**: Clamp speed <= 0.4 m/s whenever within 1.0 m of the owner.
 
 ### 6.1 LLM Plan: local at runtime, Modal only for offline training (agreed)
@@ -257,7 +263,7 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 ### 6.2 LLM reasoning roadmap: reflex layer + thinking layer (ideas, agreed direction, not yet built)
 **Principle:** use the LLM to reason about what a sound *means in context*; keep it out of anything that has to happen instantly.
 - **Reflex layer (ordinary code, milliseconds):** a danger sound triggers the danger routine immediately; also obstacle stops, the stale-command watchdog that stops the robot, and the walking policy. The LLM can't override any of it, and nothing the person tells the robot can downgrade a smoke alarm. *(Today: `safety.py`, the sim's 0.6 s command timeout, LiDAR stops.)*
-- **Thinking layer (local LLM, 1–3 s, only when something happens):** anything that needs judgement. It reads a short summary of the situation, picks **one action from a fixed list**, and gives a one-line reason shown on screen. *(Today: Gemma picks which room to search + writes the owner message, constrained by a JSON-schema enum; see section 6.)*
+- **Thinking layer (local LLM, 1–3 s, only when something happens):** anything that needs judgement. It reads a short summary of the situation, picks **one action from a fixed list**, and gives a one-line reason shown on screen. *(Today: on each event Gemma picks one lettered option from a menu of legal actions built from live perception, gives a short reason, and writes the owner message when nudging is an option; JSON-schema constrained; see section 6.)*
 
 Reasoning to add, best demo value first:
 1. **"Is the sound real, and where is it?"** The LLM combines the classifier's top guesses, the stereo bearing, the floor plan and recent events. Demo: a doorbell plays on the **TV**; the bearing points at the TV (which is on) and the front door is the other way, so the robot keeps listening instead of fetching the person. Then the real doorbell rings in the hallway and it acts. A sound classifier alone can't make that call, which makes this the clearest proof of reasoning grounded in perception. *(Needs: a TV sound source + "TV on" state in the sim, top-k classifier scores and bearing in the prompt, an "ignore / keep listening" action.)*
@@ -274,6 +280,8 @@ Reasoning to add, best demo value first:
 - **`O` or `4`**: Cycle **Owner** room (`OWNER_ROOM_CYCLE`: `living_room` -> `guest` -> `dining` -> `family_room`)
 - **`C` or `5`**: Toggle **Chair** obstacle in `door_guest_living` (-7.6, 0.6)
 - **`X`**: Silence all active sounds
+- **`W`**: Toggle owner **wandering** (on by default; `--owner-static` starts with it off). The owner (`sim/owner_behavior.py`) walks between `OWNER_SPOTS` rooms on their own every ~35–90 s (never in the first 45 s), pauses at doorways, may miss the first nudge (70 % noticed), taps the handle to acknowledge, varies pace on the handle and occasionally lets go. `--owner-seed N` makes it reproducible.
+- **`E`**: Chair falls into the **back exit** (`CHAIR_EXIT_POS`) — LiDAR marks `exit_back` blocked and the evacuation re-chooses an exit. Press again to stow.
 - **`R`**: **Reset** the scene (robot to the entry-hall start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
 - **`N` or `6`**: Cycle **background noise** for hearing robustness tests: `quiet` → `fan` → `tv` → `vacuum` → `party` (start with `--noise NAME`)
 - **`V`**: Cycle **viewer camera**: `top` dollhouse view → `follow` (chase the robot) → `dog` (the head RGB-D camera = exactly what YOLO sees) (start with `--view NAME`)
@@ -307,4 +315,5 @@ One window: live 3D view streamed from the sim (drag = orbit, right-drag = pan, 
 - [ ] **M7b**: Multimodal alert outputs (2.2): tier-coloured LED, on-robot screen texture, local TTS speaker, owner profile; tier → haptic/LED/screen/speech mapping in `alerts.py`; new `alert` event in the `cmd` contract.
 - [x] **M8**: Event-driven local agent (`agent.py`, `gemma4:e2b` via Ollama HTTP with `think: false`, no ADK yet) + deterministic `safety.py` watchdog & pre-emption. On a GTX 1650 Gemma answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog often takes over — needs a faster GPU, a smaller prompt/model, or a team decision on the watchdog.
 - [x] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + detection box, 2D house map + path, and active agent plan.
+- [x] **M9b**: LLM decides from perception-built option menus (structured output) incl. emergencies; probabilistic owner search; sound localisation from the ears; fire-aware exit choice + exit-blocked re-choice + escalation; realistic owner (wander, acknowledge by handle tap, let go); dashboard heat map, sound bearings, fire/exit overlay, decision timeline, acknowledgement indicator.
 - [ ] **M10**: End-to-end 60-second continuous one-take demo rehearsal & recording.
