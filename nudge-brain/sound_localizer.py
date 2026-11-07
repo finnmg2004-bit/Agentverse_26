@@ -83,6 +83,8 @@ class SoundTrack:
         self.meas: List[Dict[str, Any]] = []  # {"pose", "rel_az_deg", "rms"}
         self.estimate: Optional[Tuple[float, float]] = None
         self.std: float = float("inf")
+        self.room_probs: Dict[str, float] = {}  # posterior mass per room (the mean point can sit in
+                                                # the wrong room while the spread straddles a wall)
 
 
 class SoundLocalizer:
@@ -92,6 +94,7 @@ class SoundLocalizer:
         ys = np.arange(b["y_min"] + GRID_RES / 2, b["y_max"], GRID_RES)
         pts = [(x, y) for y in ys for x in xs if get_room_at(x, y) in ROOMS]
         self.grid = np.array(pts, dtype=np.float64)
+        self.grid_rooms = [get_room_at(x, y) for x, y in pts]
         self.segs = np.array([[a[0], a[1], c[0], c[1]] for a, c in WALL_SEGMENTS_2D], dtype=np.float64)
         self.ref_rms = _clip_rms()
         self.tracks: Dict[str, SoundTrack] = {}
@@ -140,6 +143,10 @@ class SoundLocalizer:
         var = float(w @ ((self.grid[:, 0] - mx) ** 2 + (self.grid[:, 1] - my) ** 2))
         track.estimate = (mx, my)
         track.std = math.sqrt(max(var, 0.0))
+        probs: Dict[str, float] = {}
+        for room, wi in zip(self.grid_rooms, w):
+            probs[room] = probs.get(room, 0.0) + float(wi)
+        track.room_probs = dict(sorted(probs.items(), key=lambda kv: -kv[1]))
         return label
 
     def reset(self, sound: Optional[str] = None) -> None:
@@ -158,5 +165,7 @@ class SoundLocalizer:
         if t is None or t.estimate is None:
             return None
         room = get_room_at(*t.estimate)
+        top = {r: round(p, 3) for r, p in list(t.room_probs.items())[:3]}
         return {"xy": t.estimate, "std": t.std, "n": len(t.meas), "room": room if room in ROOMS else None,
-                "converged": self.converged(sound), "meas": t.meas[-8:]}
+                "converged": self.converged(sound), "meas": t.meas[-8:],
+                "room_probs": top, "room_prob": dict(t.room_probs)}

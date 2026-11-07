@@ -25,6 +25,7 @@ from sim.house_layout import (
     EXIT_TARGETS,
     EXITS,
     LANDMARKS,
+    ROOMS,
     SMOKE_EVACUATION_TARGET,
     SOUND_SOURCES,
     get_room_at,
@@ -37,6 +38,8 @@ CROSS_MIN_SAVING_M = 3.0   # only consider breaking an owner's place rule if it 
 RULE_BREAK_COST_M = 2.0    # the default plan treats breaking a place rule as this many extra metres
 MIN_FIRE_MEAS = 4          # trust the ears' fire location only after this many windows...
 MAX_FIRE_STD = 4.5         # ...and once it has narrowed down to this spread (m)
+HEARD_OVERRIDE_MAX_P = 0.15  # hearing overrides the installed alarm's room only if that room has < 15 %
+HEARD_OVERRIDE_MIN_P = 0.5   # ...of the posterior mass and another room has >= 50 %
 
 
 def hazard_doors(fire_room: Optional[str]) -> Set[str]:
@@ -68,11 +71,25 @@ class EvacuationPlanner:
         self.planner = planner  # sim.nav_map.GridPlanner (shared with the navigator)
 
     def fire_estimate(self, localizer) -> Dict[str, Any]:
-        est = localizer.estimate("smoke_alarm") if localizer is not None else None
-        if est is not None and est["n"] >= MIN_FIRE_MEAS and est["std"] <= MAX_FIRE_STD and est["room"]:
-            return {"xy": est["xy"], "room": est["room"], "std": est["std"], "source": "heard"}
+        """Where the fire is: the installed alarm's room unless hearing clearly disagrees.
+
+        The ears' estimate is a spread (std up to MAX_FIRE_STD = 4.5 m) whose mean can sit just across
+        a wall from the alarm (rehearsal: "fire in laundry (heard)" for the kitchen alarm), so the
+        decision uses the posterior mass per room: hearing overrides the installed alarm only when
+        the alarm's room has < HEARD_OVERRIDE_MAX_P of the mass and another room >= HEARD_OVERRIDE_MIN_P.
+        """
         sx, sy, _ = SOUND_SOURCES["smoke_alarm"]["pos"]
-        return {"xy": (sx, sy), "room": get_room_at(sx, sy), "std": None, "source": "installed alarm"}
+        inst_room = get_room_at(sx, sy)
+        installed = {"xy": (sx, sy), "room": inst_room, "std": None, "source": "installed alarm"}
+        est = localizer.estimate("smoke_alarm") if localizer is not None else None
+        if est is None or est["n"] < MIN_FIRE_MEAS or est["std"] > MAX_FIRE_STD or not est["room"]:
+            return installed
+        probs = est.get("room_prob") or {est["room"]: 1.0}
+        p_inst = float(probs.get(inst_room, 0.0))
+        best_room, p_best = max(probs.items(), key=lambda kv: kv[1])
+        if p_inst < HEARD_OVERRIDE_MAX_P and p_best >= HEARD_OVERRIDE_MIN_P and best_room in ROOMS:
+            return {"xy": est["xy"], "room": best_room, "std": est["std"], "source": f"heard (P={p_best:.2f})"}
+        return dict(installed, std=est["std"], source=f"installed alarm (by ear P={p_inst:.2f})")
 
     def choose(self, start: Tuple[float, float], fire: Dict[str, Any], blocked: Set[str],
                avoid: Optional[List[Tuple[float, float, float, float]]] = None) -> Dict[str, Any]:
