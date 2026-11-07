@@ -91,7 +91,7 @@ SCENARIOS: Dict[str, Dict] = {
     "carpet_rule": {
         "desc": "[needs user_command in the brain] Owner: don't step on the new carpet -> doorbell -> "
                 "robot reaches the owner and the front door without ever stepping on the carpet",
-        "experimental": True,  # run explicitly until Finn's user_command / avoid-area planner lands
+        # was experimental until the brain handled user_command; passes with rules.py + avoid-area planner
         "actions": [("cmd", 0.5, "Nudge, I've got a new carpet in the living room, please don't step on it."),
                     ("at", 4.0, "B")],
         "expect_complete": ["doorbell"],
