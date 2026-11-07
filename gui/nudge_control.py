@@ -83,7 +83,7 @@ PURPLE = (190, 140, 255, 255)
 # Sound buttons come from the sound registry (house_layout.SOUND_SOURCES: label, tier, rgba_active).
 # A sound listed here also gets a keyboard shortcut and is triggered through the sim's own hotkey
 # (keeps its side effects, e.g. doorbell stops knock); any other registry sound is triggered by name.
-SOUND_KEYS: Dict[str, str] = {"doorbell": "B", "knock": "K", "smoke_alarm": "M", "kettle": "J"}
+SOUND_KEYS: Dict[str, str] = {"doorbell": "B", "knock": "K", "smoke_alarm": "M", "kettle": "J", "oven_timer": "T"}
 # Scene controls: (button label, sim hotkey). Add a line here when the sim gets a new hotkey.
 SCENE_CONTROLS: List[tuple] = [
     ("Next room", "O"), ("Chair in door", "C"), ("Block back exit", "E"),
