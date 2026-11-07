@@ -10,6 +10,9 @@ Owners follow AGENTS.md section 9.1.
 - [x] End-to-end voice test (scenario `carpet_rule_voice`, LLM parse 1.5 s): real spoken sentence → Ricktho's mic + Whisper → `user_command` → Gemma (LLM on, not the keyword fallback) → rule → robot keeps off the carpet
 - [x] Align the voice port env var: `voice.py` now reads `NUDGE_VOICE_PUB` like the brain (`NUDGE_VOICE_ENDPOINT` kept as an alias)
 
+- [x] Rehearsal found Gemma choosing an exit **next to the fire** (terrace, "much closer to the fire") over the planner's front door; `safety.validate_action` now rejects LLM exits whose route passes > 1 m closer to the fire than the planner's (`6d367ee`, Eden; Finn please review)
+- [ ] **Fire estimate drifts** (Finn/Ricktho): after LiDAR sees the back exit blocked, the re-plan says "fire in laundry (heard)" instead of "kitchen (installed alarm)", so exits in the real fire room are not excluded. Prefer the installed alarm's room unless hearing clearly disagrees?
+
 ## Ricktho (sounds + voice)
 - [x] Voice input: mic -> Whisper -> wake word "Nudge" -> `user_command` (:5558)
 - [x] One new tiered sound: **kettle** (tier 2, hotkey `J`), registry fields `tier`/`file`/`yamnet`/`label`/`say`, scenarios `kettle`, `kettle_during_doorbell`
@@ -38,9 +41,10 @@ Owners follow AGENTS.md section 9.1.
 - [x] "Heard: '…'" display, active rules panel, no-go area on the map, "Nudge says" on the 3D view, mic indicator
 - [x] Kettle + scene buttons; sound buttons now generated from `SOUND_SOURCES` (new sounds appear automatically)
 - [x] **GUI plugin panels:** any `gui/panels/<name>.py` with `TITLE` + `build(ctx)` (+ `update(ctx)`) becomes a tab, no edits to `nudge_control.py` (see `gui/panels/__init__.py`); "Brain data" tab shows any new brain/sim field automatically
-- [ ] Demo storyboard + 1-page summary draft
+- [x] Demo storyboard + 1-page summary drafts: `docs/DEMO_STORYBOARD.md`, `docs/TECHNICAL_SUMMARY.md` (team: review + edit)
 
 ## Demo (M10)
+- [ ] **Decide how the take fits 60 s:** the full storyboard (carpet → doorbell → block exit → smoke) works end to end but measures ~115 s; options in `docs/DEMO_STORYBOARD.md` (Eden)
 - [ ] Demo scenario passes 3× in a row on the recording laptop
 - [ ] Record the ≤ 60 s one-take video (carpet rule → doorbell around the carpet → smoke pre-emption)
 - [ ] 1-page technical summary + 5-minute pitch
