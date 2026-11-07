@@ -80,6 +80,9 @@ from sim.house_layout import (
 )
 from sim.locomotion import Go2Locomotion
 from sim.nav_map import load_or_build
+from sim.lightbar import ALERT_MODE_SOUND
+from sim.robot_screen import RobotScreen
+from sim.robot_voice import RobotVoice
 from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
 from sim.owner_behavior import OwnerBehavior
@@ -163,6 +166,9 @@ class NudgeSimulator:
         self.sub_sock.connect(sub_endpoint)
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "cmd")
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "sim_event")
+        # Brain status (`brain`, ~10 Hz, same :5556 socket): read only for the robot outputs -
+        # mission.say ("Nudge says") and mission.sound (screen tier). Older brains just don't send it.
+        self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "brain")
         # Control GUI (gui/nudge_control.py) binds :5557 and sends `gui` messages: hotkeys,
         # "move owner to room", and 3D-view camera requests. Connecting before it exists is fine.
         self.sub_sock.connect(gui_endpoint)
@@ -200,6 +206,13 @@ class NudgeSimulator:
         self.in_avoid_area: str | None = None
         self.avoid_entered_at: float = 0.0
         self.avoid_steps: int = 0  # entries this episode
+
+        # Robot outputs (AGENTS.md 9.1): flank screens coloured by alert tier, the "Nudge says"
+        # message (viewer label + overlay + log) and speech (NUDGE_SPEECH=1, sim/robot_voice.py).
+        self.screen = RobotScreen(self.model)
+        self.voice = RobotVoice()
+        self.nudge_says: str = ""
+        self.mission_sound: str | None = None
 
     def _start_sound(self, name: str) -> None:
         if not self.active_sounds.get(name):
@@ -249,6 +262,19 @@ class NudgeSimulator:
                 self.sound_timed_out[name] = True
                 print(f"[sim] SCENARIO FAILED: {name} unresolved after {SCENARIO_TIMEOUT_S:.0f}s "
                       f"(owner at {ox:.2f}, {oy:.2f}, {dist:.1f} m from {target}).")
+
+    def handle_brain_status(self, status: dict) -> None:
+        """Robot outputs from the brain status: what Nudge says to the owner + which sound."""
+        if int(status.get("episode", self.episode) or 0) != self.episode:
+            return  # stale status from before an [R] reset
+        mission = status.get("mission") or {}
+        self.mission_sound = mission.get("sound")
+        say = str(mission.get("say") or "").strip() if mission.get("status") == "active" else ""
+        if say != self.nudge_says:
+            self.nudge_says = say
+            if say:
+                print(f"[sim] NUDGE SAYS: {say}")
+            self.voice.say_if_changed(say, urgent=self.mission_sound == "smoke_alarm")
 
     def check_avoid_areas(self) -> None:
         """Print once on entering / leaving an avoid area (robot centre within the footprint margin)."""
@@ -402,6 +428,9 @@ class NudgeSimulator:
         self.mission_text = ""
         self.in_avoid_area = None
         self.avoid_steps = 0
+        self.nudge_says = ""
+        self.mission_sound = None
+        self.voice.last_text = ""
         print(f"[sim] HOTKEY [R]: Scene RESET (episode {self.episode}): robot in "
               f"{get_room_at(*ROBOT_START_POSE[:2])}, owner in {ROOM_ORDER[0]}, chair stowed, sounds off")
 
@@ -512,6 +541,8 @@ class NudgeSimulator:
                     self.handle_hotkey(key)
             elif topic == "gui":
                 self.handle_gui(payload)
+            elif topic == "brain":
+                self.handle_brain_status(payload)
 
         # Safety timeout if brain disconnects for > 0.6s
         if time.monotonic() - self.last_cmd_time > 0.6:
@@ -546,6 +577,7 @@ class NudgeSimulator:
                 "in_avoid_area": self.in_avoid_area,
                 "avoid_steps": self.avoid_steps,
                 "avoid_areas": {k: list(v) for k, v in AVOID_AREAS.items()},
+                "nudge_says": self.nudge_says,  # what the robot screen shows / speaks
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -610,6 +642,10 @@ class NudgeSimulator:
         )
         self.check_scenario_end()
         self.check_avoid_areas()
+        # Screen tier: the brain's mission sound if it sent one, else inferred from the alert mode.
+        self.screen.update(self.model, float(self.data.time),
+                           self.mission_sound or ALERT_MODE_SOUND.get(self.cmd_alert_mode),
+                           self.mission_status)
         self.publish_telemetry(float(self.data.time))
         self.publish_view(float(self.data.time))
 
@@ -728,11 +764,17 @@ def main() -> None:
                             sim.apply_view(viewer.cam)
                     now_wall = time.perf_counter()
                     if now_wall - last_sync >= (1.0 / 60.0):
-                        overlay = sim.status_overlay()
+                        overlay = sim.status_overlay() + (sim.nudge_says,)
                         if overlay != shown_overlay:
-                            viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_200,
-                                              mujoco.mjtGridPos.mjGRID_TOPLEFT, overlay[0], overlay[1]))
+                            texts = [(mujoco.mjtFontScale.mjFONTSCALE_200,
+                                      mujoco.mjtGridPos.mjGRID_TOPLEFT, overlay[0], overlay[1])]
+                            if sim.nudge_says:  # robot output: what Nudge tells the owner
+                                texts.append((mujoco.mjtFontScale.mjFONTSCALE_200,
+                                              mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, "Nudge says:", sim.nudge_says))
+                            viewer.set_texts(texts)
                             shown_overlay = overlay
+                        with viewer.lock():  # floating "Nudge says" label above the robot
+                            sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.nudge_says)
                         viewer.sync()
                         last_sync = now_wall
                     if args.duration > 0.0 and (now_wall - start_wall) >= args.duration:

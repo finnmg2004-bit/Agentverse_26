@@ -296,6 +296,8 @@ Reasoning to add, best demo value first:
 
 **Mission complete indicator**: when the owner has been delivered, the brain reports `mission_status: "complete"`; the MuJoCo viewer shows a `MISSION COMPLETE` overlay (with sound, target and sim-time duration), the robot's halo turns steady green, and the dashboard shows a green banner. It stays until the next mission starts or `R` is pressed.
 
+**Robot outputs ("Nudge says" screen, LEDs, speech)** (Sean, `sim/robot_screen.py`, `sim/robot_voice.py`): the sim subscribes to the brain's `brain` status and shows `mission.say` as a floating label above the robot and a bottom-left viewer overlay, logs `[sim] NUDGE SAYS: ...` on every change, and adds `nudge_says` to `state`. Two flank screens on the trunk take the alert-tier colour from the light bar palette (doorbell green, knock yellow, smoke red/orange flashing, complete white, idle dark). Speech: `NUDGE_SPEECH=1` speaks each new message once via Teo's `speak(text)` (first of `voice`/`tts`/`nudge_tts`/`voice_out` modules found), else logs `[voice] would say: ...`.
+
 **Note:** in the MuJoCo viewer every letter and the digits 0-5 are also MuJoCo display shortcuts (e.g. `2` hides geom group 2 = the robot, `X` turns textures off, `K` hides the skybox), so our hotkeys also toggle those. Use the control GUI (7.1) or the OpenCV dashboard window to trigger events cleanly.
 
 ### 7.1 Nudge Control GUI (`gui/nudge_control.py`, Dear PyGui) — recommended for demos

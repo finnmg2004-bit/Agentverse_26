@@ -41,6 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from sim import house_layout as H  # noqa: E402
 from sim.guide_handle import add_guide_handle  # noqa: E402
 from sim.lightbar import add_lightbar  # noqa: E402
+from sim.robot_screen import add_robot_screen  # noqa: E402
 
 SCENE_XML = PROJECT_ROOT / H.WORLD_SCENE_XML
 
@@ -269,6 +270,7 @@ def add_nudge_entities(spec: mujoco.MjSpec) -> None:
     owner.add_geom(name="owner_head", type=G.mjGEOM_SPHERE, pos=[0, 0, 1.46], size=[0.13, 0, 0], rgba=skin)
     _add_scanned_owner(spec, owner)
     add_lightbar(spec, "base")
+    add_robot_screen(spec, "base")  # "Nudge says" flank screens (sim/robot_screen.py)
 
     # Avoid-area rugs (house_layout.AVOID_AREAS): flat, visual only (contype/conaffinity 0 ->
     # the static nav map, LiDAR rays at 0.32 m and physics all ignore them). A dark-red field
