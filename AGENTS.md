@@ -378,6 +378,7 @@ Gemma turns the sentence into a structured rule (Ollama JSON schema with enums o
 2. **Doorbell** → robot goes to the owner **around the carpet**, nudges, screen shows the "Nudge says" message, guides to the front door (~25 s).
 3. **Smoke alarm** pre-empts → continuous vibration → fire-aware exit; crosses the carpet only if that is safest, and says why (~20 s).
 Backup: if voice isn't solid by the freeze, type the same sentence in the GUI. Voice gets its own short clip in the pitch.
+**Rehearsed (Eden, automated GUI run):** the full take works end to end but takes **~115 s**, not 60 s; options and the recommended cut are in `docs/DEMO_STORYBOARD.md` (team decision, see 9.7).
 
 ### 9.5b Voice input + sounds — status (Ricktho)
 - **Done**: `pixi run voice` = separate process. Listens all the time on the real laptop mic (PipeWire `pw-record` → PulseAudio → ALSA → sounddevice; `--mic` / `NUDGE_MIC`), Silero VAD (bundled with faster-whisper) cuts sentences (end after 0.8 s silence; steady fan/hum ignored), **Whisper base.en** (faster-whisper int8 on CPU, ~0.5 s per sentence, `NUDGE_STT_MODEL=tiny.en` is faster) → wake word: `"Nudge, take me to the kitchen"` publishes `take me to the kitchen`; `"Nudge."` alone arms the next sentence for 6 s; sentences starting `"Nudge says"` are ignored (our own TTS). `confidence` = exp(mean Whisper token log-prob).
@@ -420,6 +421,32 @@ Ricktho's voice input is on `main` (commits "Add faster-whisper and sounddevice 
 3. New behaviour behind a flag/env until its scenario test passes. Small commits, push often.
 4. On Windows PowerShell, commit with `git commit -F msg.txt` if your message has quotes (PowerShell 5.1 mangles them).
 5. **Windows + Whisper:** numpy's MKL and ctranslate2 (faster-whisper) each load an OpenMP runtime, so the process aborts with "OMP: Error #15". `pixi.toml` pins `libblas = { build = "*openblas" }` for win-64 to fix it (verified: Piper says "Nudge, take me to the kitchen." and Whisper hears it exactly). Don't remove it. Also: don't pass a whole sentence as Whisper's `initial_prompt` (it hallucinates that sentence on plain noise); use a word list.
+
+### 9.7 Working session plan: Sean, Ricktho, Eden (agreed 2026-11-07, Eden = merge captain)
+**Model: everyone on `main`, rebase before every push, own files only, quick test before push, full suite at the syncs.**
+| Time (from start) | What |
+|---|---|
+| 0:00 | `git switch main`, `git pull --rebase`, `pixi install` if `pixi.lock` changed |
+| 0:00–0:25 | Work block 1; commit locally whenever something works |
+| 0:25 | **Push deadline 1** → Eden pulls, runs `doorbell kettle carpet_rule` (~4 min), posts green/red |
+| 0:30–0:50 | Work block 2 |
+| 0:50 | **Push deadline 2**, then **freeze** `main` while Eden runs the full suite (~13 min); keep committing locally |
+| ~1:05 | Eden posts the result; if red, the owner of the failing area fixes it first |
+
+**Every push:** `git add <your files only>` (never `-A`) → `git commit -F msg.txt` → `git pull --rebase origin main` → `pixi run python scripts/test_scenarios.py <scenario you touched>` → `git push origin main` → one chat line: "pushed: <what> · tested: <scenario>".
+**Rules:** rebase conflict in someone else's file → `git rebase --abort` and tell the owner; this session only Eden edits `TODO.md` (mention ticks in chat/commit messages); AGENTS.md only your own section; announce `pixi add` in chat and commit `pixi.toml` + `pixi.lock` alone; never force-push `main`; risky changes behind a flag or on `<name>/<topic>` until their scenario passes; close GUI/voice/sim before `test-scenarios` (ports 5555–5558); unattended/overnight runs only on their own branch, merged by Eden after reading the branch's REPORT.md.
+
+| Person | This session | Files |
+|---|---|---|
+| **Sean** | kettle colour on the light bar (shows as knock), robot speech via `speech.tts.speak()`, the flaky doorbell judge | `sim/run_sim.py`, `sim/robot_screen.py`, `sim/robot_voice.py`, `sim/lightbar.py`, `scripts/test_scenarios.py` |
+| **Ricktho** | knock false-fires under `party` noise, voice robustness, fire-estimate drift (with Finn, see TODO), *stretch* real recordings | `nudge-brain/hearing.py`, `nudge-brain/voice.py`, `assets/audio/`, `SOUND_SOURCES` |
+| **Eden** | merge captain, GUI (plugins), demo storyboard + rehearsals, 1-page summary, pitch outline, `TODO.md` | `gui/`, `docs/`, `TODO.md`, AGENTS.md 9.x |
+
+**Status (Eden, latest):**
+- GUI now grows by itself: sound buttons come from `SOUND_SOURCES`; scene controls from `SCENE_CONTROLS`; **add a tab by dropping `gui/panels/<name>.py`** with `TITLE` + `build(ctx)` (+ `update(ctx)`), see `gui/panels/__init__.py`; the **Brain data** tab shows any new brain/sim field automatically. New sim hotkey → one line in `SCENE_CONTROLS`; a sound without a hotkey can be started via the `gui` action `{"action": "sound", "name": ...}`.
+- Safety fix pushed (`6d367ee`): Gemma had chosen the exit next to the kitchen fire; `safety.validate_action` now rejects LLM exits whose route passes > 1 m closer to the fire than the planner's (Finn: please review).
+- Drafts to review/edit: `docs/DEMO_STORYBOARD.md`, `docs/TECHNICAL_SUMMARY.md`.
+- **Decision needed (whole team):** how the take fits 60 s (full take ~115 s). Eden's recommendation: carpet rule → doorbell around the carpet → nudge + "Nudge says" for the video (~40 s), the blocked-exit/smoke run in the pitch.
 
 ---
 
