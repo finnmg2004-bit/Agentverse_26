@@ -19,14 +19,21 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from sim.legacy_box_house import LANDMARKS, ROOMS, SOUND_SOURCES
+from sim.legacy_box_house import HOUSE_BOUNDS, LANDMARKS, ROOMS, SOUND_SOURCES, WALL_THICK_HALF, get_room_at
 
 from alerts import HapticAlerts
-from navigator import Navigator, wrap
+from navigator import LIDAR_ANGLES, Navigator, wrap
 
 CRUISE_SPEED = 0.9
 GUIDE_SPEED = 0.35
 STANDOFF = 0.75
+OWNER_AT_GOAL_TOL = 0.7   # owner within this distance of a landmark counts as delivered
+FINAL_PUSH_SPEED = 0.25   # robot creeps on after reaching the goal so the owner (behind it) gets there
+FINAL_PUSH_MAX_S = 8.0    # give up (event "timeout", not a false "guide_complete") after this
+FINAL_PUSH_WALL_STOP = 0.3
+# Evacuated = owner's whole body past the outer face of the north wall, not just its centre.
+OWNER_BODY_RADIUS = 0.2
+EXIT_CLEAR_Y = HOUSE_BOUNDS["y_max"] + WALL_THICK_HALF + OWNER_BODY_RADIUS
 
 
 @dataclass
@@ -197,7 +204,13 @@ class OfferHandle(Skill):
 
 
 class GuideOwner(Skill):
-    """Lead the owner (holding the handle) to a room or landmark, waiting if they let go."""
+    """Lead the owner (holding the handle) to a room or landmark, waiting if they let go.
+
+    Success is judged on where the OWNER is, not the robot: the owner walks ~0.5 m behind the
+    robot on the handle, so when the robot reaches the goal the owner is still short of it
+    (e.g. still inside the house during a smoke-alarm evacuation). After the robot arrives it
+    keeps creeping on until the owner is delivered, and reports "timeout" if that fails.
+    """
 
     name = "guide_owner_to"
     timeout_s = 120.0
@@ -207,12 +220,45 @@ class GuideOwner(Skill):
         self.target = target
         self.goal = LANDMARKS[target] if target in LANDMARKS else ROOMS[target]["center"]
         self.lost_since: Optional[float] = None
-        self.arrived_at: Optional[float] = None
+        self.push_started: Optional[float] = None
         self.regrabbing = False
         nav.set_goal(self.goal, world.robot_pose[:2], world.active_blocked_doors(), final_tol=0.3)
 
     def label(self) -> str:
-        return f"guide_owner_to({self.target})" + (" [owner let go]" if self.regrabbing else "")
+        if self.regrabbing:
+            return f"guide_owner_to({self.target}) [owner let go]"
+        if self.push_started is not None:
+            return f"guide_owner_to({self.target}) [bringing owner in]"
+        return f"guide_owner_to({self.target})"
+
+    def _owner_delivered(self, world) -> bool:
+        if world.owner_pos is None:
+            return False
+        ox, oy = world.owner_pos
+        if self.target == "back_exit_outside":
+            return oy >= EXIT_CLEAR_Y  # owner must be fully outside, not standing in the doorway
+        if self.target in ROOMS:
+            return get_room_at(ox, oy) == self.target
+        return math.hypot(ox - self.goal[0], oy - self.goal[1]) <= OWNER_AT_GOAL_TOL
+
+    def _final_push(self, world) -> SkillOutput:
+        """Robot is at the goal but the owner is not: keep walking the way the owner must go."""
+        if self._owner_delivered(world):
+            return SkillOutput(guiding=True, event="guide_complete", done=True)
+        if time.monotonic() - self.push_started > FINAL_PUSH_MAX_S:
+            world.log(f"Guide to {self.target} FAILED: owner not delivered")
+            return SkillOutput(guiding=True, event="timeout", done=True)
+        if world.owner_pos is None:
+            return SkillOutput(guiding=True)
+        ox, oy = world.owner_pos
+        rx, ry, yaw = world.robot_pose
+        err = wrap(math.atan2(self.goal[1] - oy, self.goal[0] - ox) - yaw)
+        wz = max(-1.5, min(1.5, 2.4 * err))
+        vx = FINAL_PUSH_SPEED if abs(err) < 0.5 else 0.0
+        front = min(r for a, r in zip(LIDAR_ANGLES, world.lidar_ranges) if abs(a) <= math.radians(22))
+        if front < FINAL_PUSH_WALL_STOP:
+            vx = 0.0
+        return SkillOutput(vx=vx, wz=wz, guiding=True)
 
     def step(self, world, nav, alerts) -> SkillOutput:
         now = time.monotonic()
@@ -221,15 +267,17 @@ class GuideOwner(Skill):
             self.lost_since = None
             if self.regrabbing:
                 self.regrabbing = False
+                self.push_started = None
                 nav.set_goal(self.goal, world.robot_pose[:2], world.active_blocked_doors(), final_tol=0.3)
+            if self.push_started is not None:
+                return self._final_push(world)
             vx, vy, wz, status = nav.step(world.robot_pose, world.lidar_ranges, GUIDE_SPEED)
             if status == "arrived":
-                # Hold still on the handle until the owner has caught up (max 3 s).
-                self.arrived_at = self.arrived_at or now
-                if world.dist_to_owner() < 0.7 or now - self.arrived_at > 3.0:
-                    nav.clear()
+                nav.clear()
+                if self._owner_delivered(world):
                     return SkillOutput(guiding=True, event="guide_complete", done=True)
-                return SkillOutput(guiding=True)
+                self.push_started = now
+                return self._final_push(world)
             return SkillOutput(vx, vy, wz, guiding=True)
 
         # Owner not on the handle: stop, then back up toward their last known position.
