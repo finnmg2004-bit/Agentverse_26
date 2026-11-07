@@ -6,8 +6,15 @@ Owners follow AGENTS.md section 9.1.
 ## Verify
 - [ ] Full `pixi run test-scenarios` green on the merged code (all 9 scenarios, incl. `carpet_rule`)
 - [ ] Fix the flaky `doorbell` scenario: the brain reports delivered, but the sim's judge sometimes doesn't count it (the owner may let go of the handle near the door)
-- [ ] End-to-end voice test: real spoken sentence → Ricktho's mic + Whisper → `user_command` → Gemma (LLM on, not the keyword fallback) → rule → robot keeps off the carpet
-- [ ] Align the voice port env var: `voice.py` reads `NUDGE_VOICE_ENDPOINT`, the brain (`rules.py`) reads `NUDGE_VOICE_PUB` (both default to `tcp://127.0.0.1:5558`) — Ricktho + Finn
+- [x] End-to-end voice test (scenario `carpet_rule_voice`, LLM parse 1.5 s): real spoken sentence → Ricktho's mic + Whisper → `user_command` → Gemma (LLM on, not the keyword fallback) → rule → robot keeps off the carpet
+- [x] Align the voice port env var: `voice.py` now reads `NUDGE_VOICE_PUB` like the brain (`NUDGE_VOICE_ENDPOINT` kept as an alias)
+
+## Ricktho (sounds + voice)
+- [x] Voice input: mic -> Whisper -> wake word "Nudge" -> `user_command` (:5558)
+- [x] One new tiered sound: **kettle** (tier 2, hotkey `J`), registry fields `tier`/`file`/`yamnet`/`label`/`say`, scenarios `kettle`, `kettle_during_doorbell`
+- [ ] Knock rule false-fires under `party` noise (0.67 with nothing knocking) — older issue in `hearing.py`
+- [ ] Real recordings instead of the synthesized placeholder clips (stretch)
+- [ ] Tell Sean: light bar shows the kettle as "knock" (yellow x2) because it infers the sound from `2_pulse`; add `SOUND_INFO["kettle"]` (amber) once the `alert` event carries the sound. Tell Eden: GUI has no kettle button / bar yet (`gui` key action `{"action": "key", "key": "J"}` works)
 
 ## Finn (brain), stretch
 - [ ] "Is the sound real?": a doorbell on the TV vs the real front door (bearing + TV state → keep listening)

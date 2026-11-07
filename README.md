@@ -66,6 +66,7 @@ Press the hotkeys with the **MuJoCo window** focused (they also work in the dash
 | `B` / `1` | Doorbell rings at the front door |
 | `K` / `2` | Knock on the front door |
 | `M` / `3` | Smoke alarm in the kitchen (emergency) |
+| `J` / `7` | Kettle whistling on the kitchen stove (Nudge takes the owner to it) |
 | `O` / `4` | Move the owner to the next room: living room → guest bedroom → dining room → family room |
 | `C` / `5` | Toggle the chair in the guest bedroom ↔ living room door |
 | `X` | Silence all sounds |
