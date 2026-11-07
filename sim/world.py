@@ -191,3 +191,100 @@ def load_world(verbose: bool = True) -> Tuple[mujoco.MjModel, mujoco.MjData]:
     data = mujoco.MjData(model)
     set_robot_pose(model, data, *H.ROBOT_START_XY, H.ROBOT_START_YAW)
     return model, data
+
+
+# --------------------------------------------------------------------------- #
+# Nudge entities (added at load time; never written into the upstream XML)
+# --------------------------------------------------------------------------- #
+NUDGE_BODIES = ("owner_body", "chair_body")   # dynamic obstacles: excluded from the static nav map
+BEACON_PREFIX = "beacon_"
+UPPER_STOREY_GROUP = 5                         # cutaway: geoms above the ground floor move here
+
+
+def _xyaxes_quat(xaxis, yaxis) -> list:
+    x = np.asarray(xaxis, float)
+    y = np.asarray(yaxis, float)
+    z = np.cross(x, y)
+    mat = np.column_stack([x, y, z]).reshape(-1)
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, mat)
+    return q.tolist()
+
+
+def add_nudge_entities(spec: mujoco.MjSpec) -> None:
+    """
+    Head camera, guide handle and haptic halo on the Go2; owner and chair mocap bodies;
+    sound beacons. Same geometry as the original box-house scene.
+    """
+    G = mujoco.mjtGeom
+    base = spec.body("base")
+    # Forward-looking head camera (camera looks along -Z: x=(0,-1,0), y=(0,0,1) -> looks along +X)
+    base.add_camera(name="head_cam", pos=[0.30, 0.0, 0.12], quat=_xyaxes_quat([0, -1, 0], [0, 0, 1]), fovy=60.0)
+    # Guide handle bar + haptic pulse halo (robot-visual group 2, no contacts)
+    base.add_geom(name="guide_handle_bar", type=G.mjGEOM_CAPSULE, fromto=[-0.05, 0.08, 0.08, -0.22, 0.14, 0.24],
+                  size=[0.014, 0, 0], rgba=[0.9, 0.85, 0.2, 1.0], contype=0, conaffinity=0, group=2)
+    base.add_geom(name="alert_halo", type=G.mjGEOM_SPHERE, pos=[-0.15, 0.0, 0.26], size=[0.065, 0, 0],
+                  rgba=[0.2, 0.9, 0.4, 0.0], contype=0, conaffinity=0, group=2)
+
+    wb = spec.worldbody
+    # Sound beacons (visual only)
+    for name, src in H.SOUND_SOURCES.items():
+        wb.add_geom(name=f"{BEACON_PREFIX}{name}", type=G.mjGEOM_SPHERE, pos=list(src["pos"]), size=[0.14, 0, 0],
+                    rgba=list(src["rgba_idle"]), contype=0, conaffinity=0, group=0)
+
+    # Owner: humanoid mocap body (teal jacket for the HSV detector; legs/hips at LiDAR height)
+    ox, oy = H.ROOMS[H.OWNER_START_ROOM]["owner_spot"]
+    owner = wb.add_body(name="owner_body", mocap=True, pos=[ox, oy, 0.0])
+    jacket, trousers, skin = [0.05, 0.72, 0.88, 1.0], [0.16, 0.20, 0.30, 1.0], [0.92, 0.74, 0.60, 1.0]
+    owner.add_geom(name="owner_leg_left", type=G.mjGEOM_CAPSULE, fromto=[0, 0.11, 0.06, 0, 0.11, 0.72], size=[0.075, 0, 0], rgba=trousers)
+    owner.add_geom(name="owner_leg_right", type=G.mjGEOM_CAPSULE, fromto=[0, -0.11, 0.06, 0, -0.11, 0.72], size=[0.075, 0, 0], rgba=trousers)
+    owner.add_geom(name="owner_hips", type=G.mjGEOM_BOX, pos=[0, 0, 0.42], size=[0.12, 0.19, 0.26], rgba=[0.05, 0.68, 0.85, 1.0])
+    owner.add_geom(name="owner_torso", type=G.mjGEOM_BOX, pos=[0, 0, 1.02], size=[0.14, 0.22, 0.30], rgba=jacket)
+    owner.add_geom(name="owner_arm_left", type=G.mjGEOM_CAPSULE, fromto=[0, 0.26, 1.24, 0.08, 0.26, 0.76], size=[0.055, 0, 0], rgba=jacket)
+    owner.add_geom(name="owner_arm_right", type=G.mjGEOM_CAPSULE, fromto=[0, -0.26, 1.24, 0.08, -0.26, 0.76], size=[0.055, 0, 0], rgba=jacket)
+    owner.add_geom(name="owner_head", type=G.mjGEOM_SPHERE, pos=[0, 0, 1.46], size=[0.13, 0, 0], rgba=skin)
+
+    # Movable chair obstacle (starts stowed)
+    cx, cy, cz = H.CHAIR_STOWED_POS
+    chair = wb.add_body(name="chair_body", mocap=True, pos=[cx, cy, cz])
+    chair.add_geom(name="chair_base", type=G.mjGEOM_CYLINDER, pos=[0, 0, 0.26], size=[0.22, 0.24, 0], rgba=[0.72, 0.42, 0.16, 1.0])
+    chair.add_geom(name="chair_back", type=G.mjGEOM_BOX, pos=[-0.16, 0, 0.62], size=[0.04, 0.20, 0.22], rgba=[0.65, 0.36, 0.12, 1.0])
+
+
+def geom_world_zrange(model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray:
+    """(ngeom, 2) world-frame z-min / z-max of every geom's bounding box."""
+    c, h = model.geom_aabb[:, :3], model.geom_aabb[:, 3:]
+    signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
+    corners = c[:, None, :] + signs[None, :, :] * h[:, None, :]                      # (n, 8, 3) local
+    rot = data.geom_xmat.reshape(-1, 3, 3)
+    world = np.einsum("nij,nkj->nki", rot, corners) + data.geom_xpos[:, None, :]       # (n, 8, 3)
+    return np.stack([world[:, :, 2].min(1), world[:, :, 2].max(1)], axis=1)
+
+
+def apply_cutaway(model: mujoco.MjModel, data: mujoco.MjData, z_cut: float = H.WALL_HEIGHT - 0.1) -> int:
+    """Move house geoms that sit entirely above the ground-floor rooms (upper storeys, roof)
+    to group 5, which MuJoCo does not render by default -> dollhouse view of the ground floor.
+    Ceilings stay in group 1 (hide them with the viewer's group-1 toggle)."""
+    mujoco.mj_forward(model, data)
+    zr = geom_world_zrange(model, data)
+    # Never touch ceilings (group 1): the head camera must keep seeing them, otherwise it looks
+    # straight into the (blue, teal-ish) sky. The viewer hides group 1 via its own option.
+    mask = (zr[:, 0] > z_cut) & np.isin(model.geom_group, [0, 4])
+    model.geom_group[mask] = UPPER_STOREY_GROUP
+    return int(mask.sum())
+
+
+def build_nudge_model(verbose: bool = True, cutaway: bool = True) -> Tuple[mujoco.MjModel, mujoco.MjData]:
+    """Full Nudge scene: house + Go2 + head_cam/handle/halo + owner + chair + beacons."""
+    spec = load_spec(verbose)
+    add_nudge_entities(spec)
+    model = spec.compile()
+    # Plan B is kinematic (qpos + mj_forward): skip contact detection over ~3.3k geoms.
+    model.opt.disableflags |= int(mujoco.mjtDisableBit.mjDSBL_CONTACT)
+    data = mujoco.MjData(model)
+    set_robot_pose(model, data, *H.ROBOT_START_XY, H.ROBOT_START_YAW)
+    if cutaway:
+        n = apply_cutaway(model, data)
+        if verbose:
+            print(f"[world] cutaway: {n} upper-storey geoms hidden (group {UPPER_STOREY_GROUP})")
+    return model, data

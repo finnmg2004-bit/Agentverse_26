@@ -20,15 +20,17 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from sim.legacy_box_house import DOORWAYS, LANDMARKS, ROOMS, SOUND_SOURCES, WALL_SEGMENTS_2D
+from sim.house_layout import DOORWAYS, HOUSE_BOUNDS, LANDMARKS, ROOMS, SOUND_SOURCES, WALL_SEGMENTS_2D
 
 from navigator import LIDAR_ANGLES
 
 W, H = 1280, 720
 MAP_X0, MAP_Y0, MAP_W, MAP_H = 650, 10, 620, 460
-SCALE = 50.0  # px per metre
-MAP_CX = MAP_X0 + MAP_W / 2
-MAP_CY = MAP_Y0 + 12 + 4.6 * SCALE  # leave room above y=+4 for the back exit
+# Fit the house footprint plus a margin for the outside exits into the map panel.
+_VIEW = (HOUSE_BOUNDS["x_min"] - 2.5, HOUSE_BOUNDS["y_min"] - 2.3, HOUSE_BOUNDS["x_max"] + 1.5, HOUSE_BOUNDS["y_max"] + 0.5)
+SCALE = min(MAP_W / (_VIEW[2] - _VIEW[0]), (MAP_H - 12) / (_VIEW[3] - _VIEW[1]))  # px per metre
+MAP_CX = MAP_X0 + MAP_W / 2 - 0.5 * (_VIEW[0] + _VIEW[2]) * SCALE
+MAP_CY = MAP_Y0 + MAP_H / 2 + 0.5 * (_VIEW[1] + _VIEW[3]) * SCALE
 
 BG = (24, 22, 20)
 PANEL = (38, 35, 32)
@@ -78,10 +80,10 @@ class Dashboard:
             p1, p2 = w2p(xa, yb), w2p(xb, ya)
             fill = (52, 48, 44) if name not in world.searched_rooms else (45, 60, 45)
             cv2.rectangle(img, p1, p2, fill, -1)
-            cx, cy = w2p(*room["center"])
-            put(img, name.replace("_", " "), (cx - 40, cy - 40), DIM, 0.45)
+            cx, cy = w2p(*room.get("geo_center", room["center"]))
+            put(img, name.replace("_", " "), (cx - 30, cy - 6), DIM, 0.4)
             if name in world.searched_rooms:
-                put(img, "searched", (cx - 30, cy - 24), GREEN, 0.4)
+                put(img, "searched", (cx - 26, cy + 10), GREEN, 0.38)
         for a, b in WALL_SEGMENTS_2D:
             cv2.line(img, w2p(*a), w2p(*b), (200, 200, 200), 3)
         for door, (dx, dy) in DOORWAYS.items():
@@ -92,7 +94,11 @@ class Dashboard:
         for name, (lx, ly) in LANDMARKS.items():
             px, py = w2p(lx, ly)
             cv2.drawMarker(img, (px, py), AMBER, cv2.MARKER_DIAMOND, 10, 2)
-            put(img, name, (px + 8, py + 4), AMBER, 0.38)
+            if name.endswith("_outside") and name != "front_door_outside":
+                continue  # marker only: its label would sit on top of the matching door's
+            (tw, _), _ = cv2.getTextSize(name, FONT, 0.38, 1)
+            tx = px + 8 if px + 8 + tw < MAP_X0 + MAP_W - 4 else px - 8 - tw
+            put(img, name, (tx, py + 4), AMBER, 0.38)
         label = world.sound.get("label")
         for name, spec in SOUND_SOURCES.items():
             sx, sy, _ = spec["pos"]

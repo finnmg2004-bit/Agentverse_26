@@ -18,7 +18,7 @@ import math
 import time
 from typing import Any, Dict, Optional, Sequence, Tuple
 
-from sim.legacy_box_house import LANDMARKS, ROOMS, SOUND_SOURCES
+from sim.house_layout import LANDMARKS, ROOMS, SOUND_SOURCES
 
 SMOKE_THRESHOLD = 0.60
 WATCHDOG_S = 2.0

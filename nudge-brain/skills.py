@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from sim.legacy_box_house import HOUSE_BOUNDS, LANDMARKS, ROOMS, SOUND_SOURCES, WALL_THICK_HALF, get_room_at
+from sim.house_layout import EXITS, LANDMARKS, OUTSIDE, ROOMS, SOUND_SOURCES, WALL_THICK, get_room_at
 
 from alerts import HapticAlerts
 from navigator import LIDAR_ANGLES, Navigator, wrap
@@ -31,9 +31,20 @@ OWNER_AT_GOAL_TOL = 0.7   # owner within this distance of a landmark counts as d
 FINAL_PUSH_SPEED = 0.25   # robot creeps on after reaching the goal so the owner (behind it) gets there
 FINAL_PUSH_MAX_S = 8.0    # give up (event "timeout", not a false "guide_complete") after this
 FINAL_PUSH_WALL_STOP = 0.3
-# Evacuated = owner's whole body past the outer face of the north wall, not just its centre.
+# Evacuated = owner's whole body past the outer face of the exit wall, not just its centre.
 OWNER_BODY_RADIUS = 0.2
-EXIT_CLEAR_Y = HOUSE_BOUNDS["y_max"] + WALL_THICK_HALF + OWNER_BODY_RADIUS
+
+
+def owner_clear_of_exit(ox: float, oy: float, goal: Tuple[float, float]) -> bool:
+    """True if the owner is outside the house and fully past the wall of the exit leading to `goal`."""
+    if get_room_at(ox, oy) != OUTSIDE:
+        return False
+    exit_ = min(EXITS.values(), key=lambda e: math.hypot(e["outside"][0] - goal[0], e["outside"][1] - goal[1]))
+    (px, py), (gx, gy) = exit_["pos"], exit_["outside"]
+    margin = WALL_THICK / 2 + OWNER_BODY_RADIUS
+    if exit_["axis"] == "x":  # exit in a vertical wall
+        return math.copysign(1.0, gx - px) * (ox - px) >= margin
+    return math.copysign(1.0, gy - py) * (oy - py) >= margin
 
 
 @dataclass
@@ -235,8 +246,8 @@ class GuideOwner(Skill):
         if world.owner_pos is None:
             return False
         ox, oy = world.owner_pos
-        if self.target == "back_exit_outside":
-            return oy >= EXIT_CLEAR_Y  # owner must be fully outside, not standing in the doorway
+        if get_room_at(*self.goal) == OUTSIDE:
+            return owner_clear_of_exit(ox, oy, self.goal)  # fully outside, not standing in the doorway
         if self.target in ROOMS:
             return get_room_at(ox, oy) == self.target
         return math.hypot(ox - self.goal[0], oy - self.goal[1]) <= OWNER_AT_GOAL_TOL

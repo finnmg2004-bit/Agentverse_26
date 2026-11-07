@@ -62,22 +62,8 @@ def check_spot(model, data, name, xy, need_floor=True):
     print(f"  [{status}] {name:<28} {str(xy):<16} clearance {min(nearest, 9.99):.2f} m")
 
 
-def wall_axis(pos):
-    """Return the unit normal of the wall a doorway sits in (axis-aligned)."""
-    x, y = pos
-    for r in H.ROOMS.values():
-        x0, y0, x1, y1 = r["rect"]
-        if abs(y - y0) < 1e-6 or abs(y - y1) < 1e-6:
-            if x0 - 1e-6 <= x <= x1 + 1e-6:
-                return (0.0, 1.0)
-        if abs(x - x0) < 1e-6 or abs(x - x1) < 1e-6:
-            if y0 - 1e-6 <= y <= y1 + 1e-6:
-                return (1.0, 0.0)
-    raise ValueError(f"doorway {pos} is not on any room edge")
-
-
-def check_door(model, data, name, pos):
-    nx, ny = wall_axis(pos)
+def check_door(model, data, name, pos, axis):
+    nx, ny = (1.0, 0.0) if axis == "x" else (0.0, 1.0)
     ok = True
     for z in (0.3, 1.0):
         start = (pos[0] - 0.6 * nx, pos[1] - 0.6 * ny, z)
@@ -86,6 +72,37 @@ def check_door(model, data, name, pos):
             ok = False
             failures.append(f"{name} {pos}: blocked at z={z} ({d:.2f} m into the 1.2 m crossing)")
     print(f"  [{'ok ' if ok else 'BAD'}] {name:<28} {pos}")
+
+
+def check_navigation(model, data) -> None:
+    """Static nav map: every room / owner spot / landmark reachable from the robot start."""
+    from sim.nav_map import GridPlanner, build_map
+    print("\nNavigation (static map + planner)")
+    nav = build_map(model, data, verbose=True)
+    planner = GridPlanner(nav)
+    targets = {f"room:{k}": r["center"] for k, r in H.ROOMS.items()}
+    targets.update({f"owner:{k}": v for k, v in H.OWNER_SPOTS.items()})
+    targets.update({f"landmark:{k}": v for k, v in H.LANDMARKS.items()})
+    for name, goal in targets.items():
+        wps = planner.plan(H.ROBOT_START_XY, goal)
+        if wps is None:
+            failures.append(f"no path from robot start to {name} {goal}")
+            print(f"  [BAD] {name:<28} no path")
+            continue
+        end = wps[-1][:2]
+        miss = math.hypot(end[0] - goal[0], end[1] - goal[1])
+        length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip([H.ROBOT_START_XY] + [w[:2] for w in wps], [w[:2] for w in wps]))
+        ok = miss < 0.35
+        if not ok:
+            failures.append(f"path to {name} ends {miss:.2f} m from the goal")
+        print(f"  [{'ok ' if ok else 'BAD'}] {name:<28} {length:5.1f} m, {len(wps)} waypoints")
+    # Chair blocking door_guest_living must still leave a route living_room -> guest.
+    wps = planner.plan(H.ROOMS["living_room"]["center"], H.OWNER_SPOTS["guest"], ["door_guest_living"])
+    doors = [w[2] for w in (wps or []) if w[2]]
+    reroute_ok = wps is not None and "door_guest_living" not in doors
+    if not reroute_ok:
+        failures.append("no reroute living_room -> guest with door_guest_living blocked")
+    print(f"  [{'ok ' if reroute_ok else 'BAD'}] {'reroute (chair in door)':<28} via {doors}")
 
 
 def main() -> int:
@@ -105,15 +122,22 @@ def main() -> int:
     print("\nLandmarks")
     for name, xy in H.LANDMARKS.items():
         check_spot(model, data, name, xy)
+    print("\nRoom navigation points (ROOMS[...]['center'])")
+    for room, r in H.ROOMS.items():
+        if H.room_at(*r["center"]) != room:
+            failures.append(f"room centre {room} {r['center']} is in room {H.room_at(*r['center'])}")
+        check_spot(model, data, f"center@{room}", r["center"])
     print("\nChair parking spot")
-    check_spot(model, data, "chair_parked", H.CHAIR_PARKED_POS)
+    check_spot(model, data, "chair_parked", H.CHAIR_STOWED_POS[:2])
 
     print("\nInterior doorways")
-    for name, d in H.DOORWAYS.items():
-        check_door(model, data, name, d["pos"])
+    for name, d in H.DOORWAY_INFO.items():
+        check_door(model, data, name, d["pos"], d["axis"])
     print("\nExterior doors")
     for name, e in H.EXITS.items():
-        check_door(model, data, name, e["pos"])
+        check_door(model, data, name, e["pos"], e["axis"])
+
+    check_navigation(model, data)
 
     base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
     bx, by = data.xpos[base][:2]

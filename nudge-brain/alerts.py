@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 
-from sim.legacy_box_house import SOUND_SOURCES
+from sim.house_layout import SOUND_SOURCES
 
 PRIORITY = {"none": 0, "1_pulse": 1, "2_pulse": 1, "continuous": 2}
 

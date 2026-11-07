@@ -79,18 +79,17 @@ Agentverse_26/
 ├── sim/                      # PROCESS 1: MuJoCo Physics, House, Locomotion & Sensors
 │   ├── house_layout.py       # ★ Single source of truth for OUR coordinates (nerv-world house): rooms, doorways, exits, owner spots, sounds
 │   ├── world.py              # Loads house-go2.xml via MjSpec, patches missing furniture meshes, StandingPD, set_robot_pose
-│   ├── check_world.py        # Headless ray-test: every house_layout.py coordinate vs the compiled scene (`pixi run check-world`)
-│   ├── view_house.py         # Viewer: nerv-world house + Go2 standing at the start pose (`pixi run house`)
-│   ├── legacy_box_house.py   # ⏳ OLD 10x8 m 4-room box house + XML builder; used by run_sim/locomotion/sensors until ported
-│   ├── locomotion.py         # Velocity interface (vx, vy, wz) -> Plan B kinematic or Plan A policy   (⏳ legacy house)
-│   ├── sensors.py            # Head RGB-D renderer, 2D LiDAR raycasts, stereo ear audio synth          (⏳ legacy house)
-│   └── run_sim.py            # Main MuJoCo viewer loop, keyboard hotkeys, ZMQ PUB/SUB server           (⏳ legacy house)
+│   ├── nav_map.py            # Static floor-plan occupancy map (walls + furniture) + GridPlanner (Dijkstra w/ clearance cost)
+│   ├── check_world.py        # Headless check: coordinates vs scene, doorways, planner routes (`pixi run check-world`)
+│   ├── locomotion.py         # Velocity interface (vx, vy, wz) -> Plan B kinematic (nav-map clearance clamp) or Plan A policy
+│   ├── sensors.py            # Head RGB-D renderer, 2D LiDAR raycasts, stereo ear audio synth
+│   └── run_sim.py            # Main MuJoCo viewer loop, keyboard hotkeys, ZMQ PUB/SUB server (`pixi run sim`)
 └── nudge-brain/              # PROCESS 2: Perception, Navigation, Local Agent & Dashboard
     ├── bridge.py             # ZeroMQ client (subscribes to sensors :5555, publishes cmds :5556)
     ├── hearing.py            # Local YAMNet classifier + stereo ILD/ITD azimuth estimator
     ├── vision.py             # Local YOLOv8n person detector + depth-to-world (x, y) projection
     ├── world_model.py        # Tracks robot pose, owner belief state, active sounds, task status
-    ├── navigator.py          # Room graph (house_layout.room_graph()) + doorway waypoints + LiDAR obstacle stop/skirt
+    ├── navigator.py          # Path planning on the static map (GridPlanner) + doorway tags + LiDAR skirt / blocked-door re-plan
     ├── safety.py             # Hard invariants: smoke alarm pre-emption, 2.0s LLM watchdog, speed cap
     ├── alerts.py             # Haptic handle pulse state machine (1 pulse, 2 pulses, continuous)
     ├── skills.py             # Executes agent tool calls as behaviours (go_to_room, look_around, alert_owner, guide...)
@@ -104,28 +103,27 @@ Agentverse_26/
 git clone --recurse-submodules --shallow-submodules <this repo>   # or, in an existing clone:
 pixi run fetch-world      # git submodule update --init --depth 1 worlds/nerv-world (~390 MB)
 pixi run check-world      # must print "[check] all checks passed"
-pixi run house            # MuJoCo viewer: nerv-world house + Go2 standing in the entry hall
 pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
-# Legacy full pipeline (box house, hotkeys, ZMQ) — still works until ported:
-pixi run fetch-go2 && pixi run sim     # terminal 1
-pixi run brain                          # terminal 2
+pixi run sim              # terminal 1: MuJoCo viewer (cutaway view), hotkeys, ZMQ server
+pixi run brain            # terminal 2: brain + dashboard
 ```
+`pixi run sim --no-cutaway` shows the full house (upper storeys + roof). Headless test run:
+`MUJOCO_GL=egl python sim/run_sim.py --headless --render-camera` + `python nudge-brain/main.py --no-dashboard`.
 See README.md for the step-by-step guide.
 
-### ⏳ Migration status: legacy box house → nerv-world house
-The nerv-world house is the **target world** and `sim/house_layout.py` describes it. The sim pipeline (`run_sim.py`, `locomotion.py`, `sensors.py`) and every brain module that reads the map (`hearing`, `alerts`, `agent`, `dashboard`, `navigator`, `safety`, `skills`, `vision`, `world_model`) were written for the old box house and now import `sim/legacy_box_house.py`. Porting checklist:
-1. `run_sim.py`: build the model with `sim.world.load_spec()` and add owner body, chair, beacons, `head_cam`, handle/halo geoms with `MjSpec` (instead of `populate_house_xml` on the Menagerie XML); use `set_robot_pose(..., *ROBOT_START_XY, ROBOT_START_YAW)`.
-2. `locomotion.py`: the nerv Go2 has **torque motors** — replace `data.ctrl[:12] = joints` with `StandingPD.q_target = joints; StandingPD.apply(data)`; replace the `WALL_BOXES` clamp with `mj_ray` using `HOUSE_RAY_GROUPS`.
-3. `sensors.py`: LiDAR ray mask → `HOUSE_RAY_GROUPS`; acoustic occlusion `count_walls_crossed` → wall segments of the new house (or `mj_ray` hit count).
-4. Owner cycle → `OWNER_ROOM_CYCLE` / `OWNER_SPOTS`; chair → `CHAIR_BLOCK_POS` / `CHAIR_PARKED_POS`; sound sources → new `SOUND_SOURCES`.
-5. Brain modules: switch imports back to `sim.house_layout`. API differences to bridge: `ROOMS[k]["rect"]` (not `center`/`owner_spot`/`bounds_x/y`) + `ROOM_CENTERS` / `OWNER_SPOTS` / `ROOM_SCAN_POINTS`; `DOORWAYS[k]["pos"]` (dict, not tuple); `room_graph()` (not `ROOM_GRAPH`); `room_at()` (not `get_room_at`, returns `None` outside); `HOUSE_BOUNDS` is a `(x0, y0, x1, y1)` tuple; no `WALL_SEGMENTS_2D` yet (derive from room rects minus doorways for the dashboard / acoustic occlusion).
-6. Delete `legacy_box_house.py`, `fetch-go2`, and `mujoco_menagerie/` once nothing imports them.
+### World implementation notes
+- **Model**: `sim.world.build_nudge_model()` = upstream house + Go2, plus (via MjSpec) `head_cam`, guide handle, `alert_halo`, `owner_body` + `chair_body` (mocap), `beacon_*` spheres. Contacts are disabled (`mjDSBL_CONTACT`): Plan B is kinematic (`qpos` + `mj_forward`, never `mj_step`), so the nerv Go2's torque motors are never driven.
+- **Cutaway** (default): house geoms entirely above the ground-floor rooms (upper storeys, roof) move to group 5, which MuJoCo doesn't render; the viewer also hides ceilings (group 1). Ceilings stay visible to the robot's camera — hiding them shows blue sky, which looks like the owner's teal jacket.
+- **Static nav map** (`sim/nav_map.py`): every collidable house geom overlapping z ∈ [0.10, 0.55] m rasterized at 5 cm, cached in `assets/maps/nerv_house_nav.npz` (git-ignored, rebuilt automatically when the scene changes; `pixi run build-map`). Locomotion clamps the robot (radius 0.25 m) against its clearance field and slides along walls; the brain plans on a 10 cm copy (robot radius 0.30 m, clearance cost keeps routes centred). Owner and chair are NOT in the map — LiDAR handles them.
+- **Sound**: each source has a `level` (smoke alarm 4.0, doorbell/knock 1.0); wall occlusion is 0.45× per wall, capped at 3 walls (sound leaks through archways). Hearing gates the smoke score on 3.1 kHz narrowband prominence, so a smoke alarm is detected anywhere in the house even while the doorbell rings next to the robot.
+- **Beacons** are hidden from the robot camera while it renders (viewer still shows them).
+- **Vision** keeps the first teal blob that has valid depth on ≥ 50 % of its pixels and projects inside the house (+2.5 m margin for the outside exits); sky through windows / the open front door is rejected.
 
 ### World rules (nerv-world)
 - **Never edit `worlds/nerv-world/`** (it is someone else's repo; bump the submodule commit to update). In particular `build/house-go2.xml` is a generated artifact.
 - Anything Nudge-specific (owner body, chair, sound beacons, sensor sites) is **added at load time** in `sim/world.py` / `sim/run_sim.py` via `MjSpec`, never written into the upstream XML.
 - **Furniture meshes**: upstream keeps third-party furniture meshes out of git. On our checkout they are missing, so `sim/world.py` drops them and substitutes stand-ins: fridge/stove/sink → their existing collision box made visible; armchairs, coffee tables, 6 dining chairs → visible proxy boxes (`proxy_*` geoms). Camera, LiDAR and collisions all see the stand-ins. (Optional, upstream tooling: `python -m decor.fetch` etc. inside the submodule restores the real meshes; then no stand-ins are added.)
-- **Geom groups are a shared contract**: `0` house visible, `1` ceilings, `2/3` robot visual/collision, `4` hidden house collision boxes, `5` reserved. Anything we add to the house uses group 0 (or 4 if invisible). **LiDAR / any `mj_ray` must use `sim.world.HOUSE_RAY_GROUPS` (`[1,1,0,0,1,1]`)** so beams ignore the robot itself but still hit hidden collision boxes. Never hide a geom with `rgba` alpha 0 — `mj_ray` skips it.
+- **Geom groups are a shared contract**: `0` house visible, `1` ceilings, `2/3` robot visual/collision, `4` hidden house collision boxes, `5` reserved upstream — we use it for the cutaway's hidden upper storeys. Anything we add to the house uses group 0 (or 4 if invisible). **LiDAR / any `mj_ray` must use `sim.world.HOUSE_RAY_GROUPS` (`[1,1,0,0,1,1]`)** so beams ignore the robot itself but still hit hidden collision boxes. Never hide a geom with `rgba` alpha 0 — `mj_ray` skips it.
 - The scene is big (~3.3k geoms, compiles in ~0.3 s). Only the **ground floor** is used; stairs/upper floors are out of bounds.
 
 ---
@@ -160,25 +158,28 @@ The nerv-world house is the **target world** and `sim/house_layout.py` describes
   | `kitchen` | Kitchen (smoke alarm) | (6, 0.6, 15, 6.08) | (8.4, 3.2) | (8.0, 2.4) |
   | `lobby0`, `robot_home` | Stair lobby, robot dock | (3.2..6), (6..10) × (-4.5, 0.6) | — | (4.6,-2.0), (8.0,-2.0) |
 
-  `gallery`, `garden_room`, `laundry`, `stair_f0` exist but are not search targets.
-- **Doorways** (`DOORWAYS`, center on the wall line; "open" = wide archway):
+  `gallery`, `garden_room`, `laundry` are in `ROOMS` too (navigable, not searched); the stair core is not.
+  Each `ROOMS[k]` has `label`, `rect`, `bounds_x`, `bounds_y`, `center` (= clear scan/nav point), `geo_center`, `owner_spot`, `search`.
+  `ROOM_ORDER` (= `OWNER_ROOM_CYCLE`) is the owner cycle for `[O]` and the brain's search order.
+- **Doorways** (`DOORWAYS[name] = (x, y)`, centre of the wall gap; details incl. `width`/`axis` in `DOORWAY_INFO`; "open" = wide archway):
   - `door_entry_dining` (-1.4, 0.6) open 8.6 m · `door_dining_living` (-6.0, 3.34) open 4.9 m
   - `door_guest_entry` (-6.0, -1.95) 2.4 m · `door_guest_living` (-7.6, 0.6) 1.8 m
   - `door_living_family` (-10.5, 6.08) open · `door_dining_family` (-4.5, 6.08) open · `door_dining_gallery` (0.1, 6.08) open
   - `door_entry_lobby` (3.2, -1.95) · `door_lobby_robothome` (6.0, -1.95) · `door_robothome_kitchen` (8.0, 0.6) · `door_robothome_laundry` (10.0, -1.95)
   - `door_kitchen_garden` (13.4, 6.08) · `door_gallery_garden` (6.0, 11.79) open · `door_family_gallery` (-3.0, 11.79) open
   - ⚠️ Kitchen is reached from the west only via entry → lobby0 → robot_home → kitchen (the stair core blocks dining ↔ kitchen). The upstream kitchen↔laundry door is blocked by a cabinet and is excluded.
-- **Exits / Landmarks** (`LANDMARKS`, `EXITS`):
+- **Exits** (`EXITS`, also in `DOORWAYS`): `exit_front`, `exit_back`, `exit_terrace`. `ROOM_GRAPH` links their rooms to the pseudo-room `"outside"` (`get_room_at()` returns `"outside"` beyond the walls; routes never pass through the garden between rooms).
+- **Landmarks** (`LANDMARKS`):
   - `front_door` (-1.4, -3.9) inside the entry; door in south wall at (-1.4, -4.5); `front_door_outside` (-1.4, -6.0)
   - `back_door` (-14.2, 3.6) inside the living room; door in west wall at (-15.0, 3.6); **`back_exit_outside` (-16.6, 3.6)** = smoke evacuation target
   - `terrace_door` (14.2, 2.6) kitchen east door → pool terrace; `robot_dock` (8.0, -2.7)
-- **Robot start**: `ROBOT_START_XY = (-1.4, -2.5)`, yaw `+π/2` (north), room `entry`.
-- **Sound Sources** (`SOUND_SOURCES`, x, y, z):
-  - `doorbell`: (-0.2, -4.35, 1.9) in `entry`
-  - `knock`: (-1.4, -4.45, 1.0) in `entry` (front door leaf)
-  - `smoke_alarm`: (11.0, 4.2, 2.65) in `kitchen` (ceiling)
-- **Chair obstacle**: blocks `door_guest_living` at (-7.6, 0.6); parked at (-13.8, -3.6); size 0.5 × 0.5 × 0.9 m.
-- **Helpers**: `room_at(x, y)`, `room_graph()` (room → [(neighbor, doorway)]), `nudge_rooms()`.
+- **Robot start**: `ROBOT_START_POSE = (-1.4, -2.5, +π/2)` (facing north), room `entry`.
+- **Sound Sources** (`SOUND_SOURCES`: `pos`, `room`, `target_landmark`, `alert_mode`, `level`, beacon colours):
+  - `doorbell`: (-0.2, -4.35, 1.9) in `entry` → `front_door`, `1_pulse`, level 1
+  - `knock`: (-1.4, -4.45, 1.0) in `entry` (front door leaf) → `front_door`, `2_pulse`, level 1
+  - `smoke_alarm`: (11.0, 4.2, 2.55) in `kitchen` (ceiling) → `back_exit_outside`, `continuous`, level 4
+- **Chair obstacle**: `CHAIR_DOORWAY_POS` (-7.6, 0.6, 0) blocks `door_guest_living`; `CHAIR_STOWED_POS` (-13.8, -3.6, 0); radius 0.22 m.
+- **Helpers**: `get_room_at(x, y)` (room / `"stair_core"` / `"outside"`), `room_at()` (None outside), `get_landmark_room()`, `room_graph()`, `count_walls_crossed(p1, p2)`, `WALL_SEGMENTS_2D` (dashboard + acoustic occlusion).
 
 ---
 
@@ -186,20 +187,20 @@ The nerv-world house is the **target world** and `sim/house_layout.py` describes
 
 ### Robot model facts (upstream `worlds/nerv-world/robots/go2/go2.xml`)
 - Free-floating body `base` (freejoint = `qpos[0:7]`), 12 leg joints, keyframe `home` (base z 0.27 m).
-- ⚠️ Actuators are **torque `<motor>`s** (explicit PD, zero model damping), *not* Menagerie position servos. Never write joint angles into `data.ctrl`. Use `sim.world.StandingPD` (`tau = kp(q* − q) − kd·q̇`, kp 40, kd 1) to hold a pose; verified stable standing.
-- Head camera **`head_front`** already exists on the base (pos 0.30 0 0.06, fovy 95°) — use it for the RGB-D stream.
+- ⚠️ Actuators are **torque `<motor>`s** (explicit PD, zero model damping), *not* Menagerie position servos. Plan B never steps physics, so this only matters for Plan A / dynamic simulation: never write joint angles into `data.ctrl`; `sim.world.StandingPD` (`tau = kp(q* − q) − kd·q̇`, kp 40, kd 1) holds a pose stably.
+- The upstream model also ships a `head_front` camera (fovy 95°); Nudge adds and uses its own `head_cam` (below).
 - Robot geoms are in groups 2/3 (see LiDAR rule above).
 
 ### Locomotion Interface (`sim/locomotion.py`)
 The brain NEVER sends raw joint torques. It only sends body-frame velocity commands:
 - `cmd_vel = (vx, vy, wz)` where `vx` is forward (m/s), `vy` is left (m/s), `wz` is yaw rate (rad/s).
-- **Plan B (Default / Kinematic Base)**: Directly integrates `(vx, vy, wz)` on the Go2 freejoint (`qpos[0:7]`) with wall/obstacle collision clamping (use `mj_ray` with `HOUSE_RAY_GROUPS`) while `StandingPD` holds the legs in `home` (plus subtle sinusoidal trotting swing proportional to speed, via `StandingPD.q_target`).
+- **Plan B (Default / Kinematic Base)**: Directly integrates `(vx, vy, wz)` on the Go2 freejoint (`qpos[0:7]`), clamped against the static nav-map clearance field (walls + furniture, slides along them) plus chair/owner circle push-out, with leg joints in the `"home"` pose plus a sinusoidal trot proportional to speed (written to `qpos`; `mj_forward` only).
 - **Plan A (Optional Policy)**: Feeds `(vx, vy, wz)` to a MuJoCo Playground ONNX/JAX policy at 50 Hz (must match the explicit-PD torque convention above).
 - **Owner Guiding Physics (`guiding: bool`)**: When `guiding=True` and the robot is within `1.4 m` of the owner, the owner smoothly follows a handle offset `0.55 m` behind/beside the robot at up to `0.4 m/s`.
 
 ### Sensor & Asset Specifications (`sim/sensors.py` & `assets/audio/`)
-- **Head RGB-D Camera (`head_cam`)**: Mounted on Go2 base at `pos=(0.30, 0.0, 0.12)` looking forward, `fovy=60°`, resolution `320x240` rendered via `mujoco.Renderer` at 10 Hz (`rgb` JPEG + `depth` float16 meters). (The nerv Go2 also ships `head_front`, fovy 95°; either may be used after the port — keep the name in the `camera` metadata.)
-- **2D LiDAR Rangefinders**: 36 horizontal rays spanning `[-90°, +90°]` in body frame at height `z=0.32 m`, `max_range=4.0 m`, computed via `mujoco.mj_multiRay` (excluding the robot's own geoms — in the nerv house use `HOUSE_RAY_GROUPS`).
+- **Head RGB-D Camera (`head_cam`)**: Mounted on Go2 base at `pos=(0.30, 0.0, 0.12)` looking forward, `fovy=60°`, resolution `320x240` rendered via `mujoco.Renderer` at 10 Hz (`rgb` JPEG + `depth` float16 meters). Sound beacons are hidden from it.
+- **2D LiDAR Rangefinders**: 36 horizontal rays spanning `[-90°, +90°]` in body frame at height `z=0.32 m`, `max_range=4.0 m`, computed via per-ray `mj_ray` with geom-group mask `[1,1,0,0,1,1]` (house incl. hidden collision boxes + owner/chair; never the robot's groups 2/3).
 - **Stereo Ear Audio (`assets/audio/*.wav`)**: 16 kHz mono WAV files (`doorbell.wav`, `knock.wav`, `smoke_alarm.wav`; currently synthesized placeholder tones, see 2.1). Left/right ear microphones at `(0.22, +0.08, 0.15)` and `(0.22, -0.08, 0.15)` synthesize 16 kHz stereo PCM with inverse-distance attenuation, wall occlusion attenuation (`0.45x` per wall crossed), Interaural Level Difference (ILD), and Interaural Time Difference (ITD).
 - **Owner Representation & Vision Detection**: Full humanoid articulated/composite MuJoCo mocap body with skin/clothing colors and a procedural person texture billboard so `vision.py` (local YOLOv8n + HSV/depth silhouette fallback) reliably detects the owner and projects their 3D `(x, y)` world position from the depth map.
 
@@ -245,14 +246,13 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 ---
 
 ## 7. Keyboard Event Hotkeys in MuJoCo Viewer (`sim/run_sim.py`)
-> Target mapping for the nerv-world house. The current `run_sim.py` still uses the legacy mapping (owner cycle `living_room → kitchen → bedroom → hallway`, chair at (-2.5, 0)) until ported.
 - **`B` or `1`**: Ring **Doorbell** (Entry hall, front door)
 - **`K` or `2`**: **Knock** on Front Door (Entry hall)
 - **`M` or `3`**: Trigger **Smoke Alarm** (Kitchen ceiling — Emergency)
 - **`O` or `4`**: Cycle **Owner** room (`OWNER_ROOM_CYCLE`: `living_room` -> `guest` -> `dining` -> `family_room`)
 - **`C` or `5`**: Toggle **Chair** obstacle in `door_guest_living` (-7.6, 0.6)
 - **`X`**: Silence all active sounds
-- **`R`**: **Reset** the scene (robot to hallway start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
+- **`R`**: **Reset** the scene (robot to the entry-hall start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
 
 **Mission complete indicator**: when the owner has been delivered, the brain reports `mission_status: "complete"`; the MuJoCo viewer shows a `MISSION COMPLETE` overlay (with sound, target and sim-time duration), the robot's halo turns steady green, and the dashboard shows a green banner. It stays until the next mission starts or `R` is pressed.
 
@@ -260,17 +260,14 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 
 ## 8. 10-Milestone Roadmap & Current Status
 - [x] **M1**: Go2 loaded in MuJoCo viewer on Linux with Pixi (`pixi.toml` + `sim/run_sim.py`).
-> M3–M9 below are implemented and run on the **legacy box house**; each needs re-verification after the nerv-world port.
-- [ ] **M2**: Owner body, movable Chair, sound beacons, and hotkeys (`B, K, M, O, C, X`).
-  - [x] Implemented on the **legacy box house** (`sim/legacy_box_house.py`).
-  - [x] nerv-world house imported as submodule; `sim/world.py` loader (missing-mesh stand-ins, `StandingPD`, start pose); `sim/house_layout.py` for the new house; `sim/check_world.py` passes.
-  - [ ] Port sim + brain to the nerv-world house (see *Migration status* in §3).
+- [x] **M2**: nerv-world house (submodule + `sim/world.py` loader, furniture stand-ins, cutaway view), Owner body, movable Chair, sound beacons, and hotkeys (`B, K, M, O, C, X, R`). The original 10×8 m box house is retired (see git history).
 - [x] **M3**: Velocity interface (`vx, vy, wz`) in `sim/locomotion.py` (Plan B kinematic + trotting legs, wall collision stop, and owner-following when guiding).
 - [x] **M4**: Simulated sensors (`sim/sensors.py`): Head RGB-D camera, 2D LiDAR rangefinders (per-ray `mj_ray`), and synthetic stereo ear audio from WAV clips (currently synthesized placeholder tones, see 2.1) with distance/wall attenuation.
 - [x] **M5**: ZeroMQ bridge (`sim/run_sim.py` <-> `nudge-brain/bridge.py`).
 - [x] **M6**: Local perception. Models via `pixi run fetch-models` (gitignored, SHA-256 pinned, into `assets/models/`). `hearing.py`: YAMNet TFLite (`ai-edge-litert`) on a rolling ~1 s buffer, fused per sound with the spectral rules (`sources` says which won; `NUDGE_HEARING_FALLBACK=0` = YAMNet only) + stereo azimuth. YAMNet hears the smoke alarm clip, but the synthesized doorbell/knock placeholders read as "Music", so those still come from the spectral rules until real recordings land (M6b). `vision.py`: YOLOv8n ONNX via onnxruntime (~60 ms/frame CPU), HSV + depth fallback when YOLO finds nobody (`NUDGE_VISION_FALLBACK=0` = YOLO only); the current box-figure owner is not detected by YOLO — needs the scanned human mesh.
 - [ ] **M6b**: Sound registry with response tiers (2.1): move all per-sound data into the registry, add kettle (+ hotkey), real audio clips, YAMNet class mapping.
-- [x] **M7**: Plain-code navigator (`navigator.py` doorway graph + LiDAR skirt + LiDAR blocked-doorway re-planning), `world_model.py`, and `alerts.py`.
+- [x] **M7**: Plain-code navigator (`navigator.py`: static floor-plan map + Dijkstra with clearance cost, doorway tags, LiDAR skirt + LiDAR blocked-doorway re-planning), `world_model.py`, and `alerts.py`.
+- Verified headless in the nerv house (real head-camera renders): demo story doorbell → owner moved → search → alert → guide → smoke pre-emption (0.6 s) → evacuation outside the back door; chair-blocked door → LiDAR re-plan via the entry hall.
 - [ ] **M7b**: Multimodal alert outputs (2.2): tier-coloured LED, on-robot screen texture, local TTS speaker, owner profile; tier → haptic/LED/screen/speech mapping in `alerts.py`; new `alert` event in the `cmd` contract.
 - [x] **M8**: Event-driven local agent (`agent.py`, `gemma4:e2b` via Ollama HTTP with `think: false`, no ADK yet) + deterministic `safety.py` watchdog & pre-emption. On a GTX 1650 Gemma answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog often takes over — needs a faster GPU, a smaller prompt/model, or a team decision on the watchdog.
 - [x] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + detection box, 2D house map + path, and active agent plan.

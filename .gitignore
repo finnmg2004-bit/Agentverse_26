@@ -2,8 +2,11 @@
 .pixi/
 *.egg-info/
 
-# Cloned externally via `pixi run fetch-go2`
+# Old Menagerie Go2 clone (no longer used; the Go2 comes from worlds/nerv-world)
 mujoco_menagerie/
+
+# Static nav-map cache, rebuilt automatically from the scene (sim/nav_map.py)
+assets/maps/
 
 # Python caches
 __pycache__/

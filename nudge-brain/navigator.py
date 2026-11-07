@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Milestone 7b: Plain-code Navigator (`nudge-brain/navigator.py`).
-  - Topological room graph (from `sim/legacy_box_house.py` until ported) searched with BFS, skipping
-    doorways currently believed blocked.
-  - Each doorway becomes three waypoints (approach -> door centre -> exit) so the
-    robot always crosses walls square-on.
+  - Path planning on the house's static floor-plan map (sim/nav_map.py GridPlanner:
+    shortest path with a clearance cost, so routes go around furniture and through the
+    middle of doorways), skipping doorways currently believed blocked. Every doorway the
+    route crosses becomes a tagged waypoint.
   - Pure-pursuit heading controller producing body-frame (vx, vy, wz).
   - LiDAR obstacle skirt: sidesteps toward the freer side when something is ahead.
   - LiDAR doorway check: if obstacle hits land inside an upcoming doorway the door is
@@ -17,7 +17,8 @@ import math
 from collections import deque
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-from sim.legacy_box_house import DOORWAYS, LANDMARKS, ROOM_GRAPH, ROOMS, get_room_at
+from sim.house_layout import DOORWAYS, OUTSIDE, ROOM_GRAPH
+from sim.nav_map import GridPlanner, load_or_build
 
 Point = Tuple[float, float]
 
@@ -33,7 +34,7 @@ def wrap(a: float) -> float:
 
 
 def room_path(start: str, goal: str, blocked: Set[str]) -> Optional[List[str]]:
-    """BFS over rooms; returns [start, ..., goal] or None."""
+    """BFS over rooms; returns [start, ..., goal] or None. OUTSIDE is never a shortcut."""
     if start == goal:
         return [start]
     prev: Dict[str, str] = {}
@@ -43,6 +44,8 @@ def room_path(start: str, goal: str, blocked: Set[str]) -> Optional[List[str]]:
         room = q.popleft()
         for (a, b), door in ROOM_GRAPH.items():
             if a != room or b in seen or door in blocked:
+                continue
+            if b == OUTSIDE and goal != OUTSIDE:
                 continue
             prev[b] = room
             if b == goal:
@@ -59,6 +62,7 @@ class Navigator:
     """Waypoint planner + follower with LiDAR obstacle handling."""
 
     def __init__(self) -> None:
+        self.planner = GridPlanner(load_or_build(verbose=True))
         self.goal: Optional[Point] = None
         self.final_tol: float = 0.25
         # Each waypoint: (x, y, door_name or None). door_name is set on the door-centre waypoint.
@@ -80,41 +84,16 @@ class Navigator:
 
     def _plan(self, robot_xy: Point) -> bool:
         assert self.goal is not None
-        start_room = get_room_at(*robot_xy)
-        if start_room == "back_exit_outside":
-            start_room = "bedroom"
-        goal_room = get_room_at(*self.goal)
-        exiting = goal_room == "back_exit_outside"
-        if exiting:
-            goal_room = "bedroom"
-
-        rooms = room_path(start_room, goal_room, self.blocked_doors)
-        if rooms is None:
+        wps = self.planner.plan(robot_xy, self.goal, self.blocked_doors)
+        if wps is None:
             # Every route is blocked: ignore blocks rather than freeze.
-            rooms = room_path(start_room, goal_room, set()) or [start_room]
-
-        wps: List[Tuple[float, float, Optional[str]]] = []
-        for a, b in zip(rooms, rooms[1:]):
-            door = ROOM_GRAPH[(a, b)]
-            dx, dy = DOORWAYS[door]
-            ax, ay = ROOMS[a]["center"]
-            bx, by = ROOMS[b]["center"]
-            if abs(dx) < 1e-6:  # door in the vertical wall x = 0 -> cross along x
-                s = 1.0 if bx > ax else -1.0
-                wps += [(dx - s * DOOR_APPROACH, dy, None), (dx, dy, door), (dx + s * DOOR_APPROACH, dy, None)]
-            else:  # door in the horizontal wall y = 0 -> cross along y
-                s = 1.0 if by > ay else -1.0
-                wps += [(dx, dy - s * DOOR_APPROACH, None), (dx, dy, door), (dx, dy + s * DOOR_APPROACH, None)]
-
-        if exiting:
-            bdx, bdy = LANDMARKS["back_door"]
-            wps += [(bdx, bdy - DOOR_APPROACH, None), (bdx, bdy, "back_door")]
-        wps.append((self.goal[0], self.goal[1], None))
-
-        # Drop leading approach points we are already past / standing on.
+            wps = self.planner.plan(robot_xy, self.goal, ())
+        if wps is None:
+            wps = [(self.goal[0], self.goal[1], None)]
+        # Drop leading points we are already standing on.
         while len(wps) > 1 and wps[0][2] is None and math.hypot(wps[0][0] - robot_xy[0], wps[0][1] - robot_xy[1]) < 0.3:
             wps.pop(0)
-        self.waypoints = wps
+        self.waypoints = list(wps)
         return True
 
     def path_points(self, robot_xy: Point) -> List[Point]:
