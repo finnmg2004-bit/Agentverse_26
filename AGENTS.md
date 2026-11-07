@@ -296,12 +296,12 @@ Reasoning to add, best demo value first:
 - **`R`**: **Reset** the scene (robot to the entry-hall start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
 - **`N` or `6`**: Cycle **background noise** for hearing robustness tests: `quiet` → `fan` → `tv` → `vacuum` → `party` (start with `--noise NAME`)
 - **`V`**: Cycle **viewer camera**: `top` dollhouse view → `follow` (chase the robot) → `dog` (the head RGB-D camera = exactly what YOLO sees) (start with `--view NAME`)
-- **Scenario end condition** (sim ground truth): owner held ≥1 s within 1.15 m of the front door ends a doorbell/knock (sound stops, `SCENARIO COMPLETE`); owner at the back door or outside ends the smoke alarm (all alarms clear). Unresolved after 120 s → `SCENARIO FAILED`.
+- **Scenario end condition** (sim ground truth): owner held ≥1 s within 1.4 m of the sound's target (front door for doorbell/knock, the stove for the kettle) ends it (sound stops, `SCENARIO COMPLETE`; 1.4 m because the owner lags ~1.2 m behind the handle); owner at the back door or outside ends the smoke alarm (all alarms clear). Unresolved after 120 s → `SCENARIO FAILED`.
 - Prefer **letters** in the MuJoCo window: its built-in number-key shortcuts may also toggle geom-group visibility.
 
 **Mission complete indicator**: when the owner has been delivered, the brain reports `mission_status: "complete"`; the MuJoCo viewer shows a `MISSION COMPLETE` overlay (with sound, target and sim-time duration), the robot's halo turns steady green, and the dashboard shows a green banner. It stays until the next mission starts or `R` is pressed.
 
-**Robot outputs ("Nudge says" screen, LEDs, speech)** (Sean, `sim/robot_screen.py`, `sim/robot_voice.py`): the sim subscribes to the brain's `brain` status and shows `mission.say` as a floating label above the robot and a bottom-left viewer overlay, logs `[sim] NUDGE SAYS: ...` on every change, and adds `nudge_says` to `state`. Two flank screens on the trunk take the alert-tier colour from the light bar palette (doorbell green, knock yellow, smoke red/orange flashing, complete white, idle dark). Speech: `NUDGE_SPEECH=1` speaks each new message once via Teo's `speak(text)` (first of `voice`/`tts`/`nudge_tts`/`voice_out` modules found), else logs `[voice] would say: ...`.
+**Robot outputs ("Nudge says" screen, LEDs, speech)** (Sean, `sim/robot_screen.py`, `sim/robot_voice.py`): the sim subscribes to the brain's `brain` status and shows `mission.say` as a floating label above the robot and a bottom-left viewer overlay, logs `[sim] NUDGE SAYS: ...` on every change, and adds `nudge_says` to `state`. Two flank screens on the trunk take the alert-tier colour from the light bar palette (doorbell green, knock yellow, smoke red/orange flashing, complete white, idle dark). Speech: `NUDGE_SPEECH=1` speaks each new message once via Teo's `speech.tts.speak` (smoke alarm with `interrupt=True`), always prefixed "Nudge says: ..." so the voice input ignores the robot's own speech; without a TTS backend it logs `[voice] would say: ...`.
 
 **Note:** in the MuJoCo viewer every letter and the digits 0-5 are also MuJoCo display shortcuts (e.g. `2` hides geom group 2 = the robot, `X` turns textures off, `K` hides the skybox), so our hotkeys also toggle those. Use the control GUI (7.1) or the OpenCV dashboard window to trigger events cleanly.
 
@@ -507,6 +507,32 @@ Kick-off: agree the interfaces below (45 min). **At the ~2 h checkpoint:** if A 
 - Self-hearing: who plays Nudge's speech (`speech.tts.speak`) — brain or sim? Voice needs a `speaking` flag (or `tts {text, t_start, t_end}` events) to mute the mic; "Nudge says" prefixes don't work for `say(text)` sentences.
 - Wake word in answer mode: proposal not required for `timeout_s` after a question, required otherwise.
 - Taught tasks naming sounds: the teach schema's enum of sounds = `SOUND_SOURCES` keys (+ labels for the prompt); unknown sound -> "I can't hear that yet" (B) / ask (A).
+
+#### 10.5b Sean — robot actions + sim + tests: what I would build (for the kick-off)
+**Already on `main` (section 9):** "Nudge says" screen + viewer label, light-bar / screen colour by tier, speech via `speech.tts.speak` (`NUDGE_SPEECH=1`, spoken as "Nudge says: ..."), living-room carpet + `AVOID_AREAS`, ground-truth scenario judge, `scripts/run_all.py`, `scripts/test_scenarios.py`.
+
+**Shared by A and B (build first, nothing is wasted):**
+1. **Sim clock** — time of day in `state`: `clock: {"hhmm": "21:59", "day": 1, "sim_t": float}`; start with `--clock 21:58`; set live from tests / GUI ("jump to 21:59") via `sim_event {"key": "clock", "set": "21:59"}` (today `sim_event` only carries a hotkey; this adds an optional payload).
+2. **Output primitives on the robot** — the brain says *what*, the sim renders it: `show(text)` (screen + viewer label, as now), `say(text, interrupt)` (sim plays it through `speech.tts`), `lights(pattern)` (`sim/lightbar.py` patterns: off / info / warn / emergency / complete / custom colour). Each request carries an `id`, so the same sentence can be said twice on purpose and the brain can see it finished.
+3. **Speaking flag for voice input** — while the robot talks the sim publishes `speaking: {"id", "text", "t_start", "t_end"}` in `state`, so Ricktho's mic can mute itself; this also covers `say(text)` sentences that don't start with "Nudge says".
+4. **Owner states** (`sim/owner_behavior.py`, with Finn): `awake | asleep | bathroom | idle`, set by hotkey / GUI / `sim_event`; asleep = in bed, needs `vibrate` (not just a voice) to respond; idle = not moved for N sim-minutes. Ground truth stays in `owner_state_gt` (debug only).
+5. **Scenario tests for taught tasks** — clock jump + `user_command` + expected outcome, e.g. `teach_bedtime` ("Every day at 10 pm take me to bed" -> jump to 21:59 -> owner delivered to the guest bed), `cant_do_that` (unsupported request -> "I can't do that yet" on screen + voice), plus a looped soak run of the demo to catch flaky judges.
+
+**Option A only:**
+- **Real objects for YOLO / the robot's own map:** COCO-class stand-ins where the house has them (bed, couch, tv, chair, dining table, refrigerator, oven, toilet), visible to the head camera; an `objects_gt` list (sim only — judge/tests, never read by the brain).
+- **Change events for live map tests:** `sim_event {"key": "move_object", "id": "chair", "to": [x, y]}` (the chair today, more objects later) + a ground-truth `objects_moved` log, so Teo's change detection can be scored.
+- **Body actions the primitives need:** `turn(angle)` / `scan_room()` as clean in-place rotations, `offer_handle()` / `vibrate(pattern)` on the existing guide handle, all reporting `running | ok | failed` back for the runner.
+- **Exploration judge:** headless test that runs the scan from the start pose and scores the robot's map against `house_layout.py` (rooms found, object positions within X m).
+
+**Option B only:** sim clock + "jump to 21:59" + screen + speech + owner `asleep` state; tests `teach_bedtime` and `cant_do_that`.
+
+**Interface questions for 10.4:**
+- **Who plays speech — brain or sim?** Proposal: the **sim** (it is the robot's speaker; it already has `speech.tts`); the brain only sends `say {id, text, interrupt}`; the sim publishes `speaking` for the mic and `said {id}` when done.
+- **Output command shape:** extend `cmd` with an add-only `outputs: {"show": {"id", "text"}, "say": {"id", "text", "interrupt"}, "lights": {"id", "pattern"}}`? Or a separate `robot_out` topic on :5556?
+- **Clock owner:** sim time of day as the single source (brain, GUI and tests read `state.clock`)? Does the GUI clock button send `sim_event` to the sim (proposal) or tell the brain?
+- **Owner states:** who owns `owner_behavior.py` changes (Finn or Sean), and does `nudge()` wake an asleep owner or only `vibrate`?
+- **Task status for tests:** can the brain status carry `tasks: [{name, state: idle|running|done|failed, last_run}]` so scenario tests assert a taught task ran?
+- **Ground truth isolation (A):** agree that `objects_gt`, `owner_pos_gt`, `owner_state_gt` are judge-only and the brain must never read them.
 
 ### 10.6 Overnight runs (1–2 machines, unattended)
 Overnight work must run **headless**, on its **own branch** (never push to `main` unattended), and end with a short report file + passing scenario tests. In the morning Eden merges at the kick-off.
