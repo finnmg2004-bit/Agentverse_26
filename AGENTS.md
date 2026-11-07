@@ -441,9 +441,11 @@ Ricktho's voice input is on `main` (commits "Add faster-whisper and sounddevice 
 
 | Person | This session | Files |
 |---|---|---|
-| **Sean** | kettle colour on the light bar (shows as knock), robot speech via `speech.tts.speak()`, the flaky doorbell judge | `sim/run_sim.py`, `sim/robot_screen.py`, `sim/robot_voice.py`, `sim/lightbar.py`, `scripts/test_scenarios.py` |
-| **Ricktho** | knock false-fires under `party` noise, voice robustness, fire-estimate drift (with Finn, see TODO), *stretch* real recordings | `nudge-brain/hearing.py`, `nudge-brain/voice.py`, `assets/audio/`, `SOUND_SOURCES` |
-| **Eden** | merge captain, GUI (plugins), demo storyboard + rehearsals, 1-page summary, pitch outline, `TODO.md` | `gui/`, `docs/`, `TODO.md`, AGENTS.md 9.x |
+| **Sean** | kettle colour on the light bar (shows as knock), robot speech via `speech.tts.speak()`; **covering Finn:** the flaky doorbell judge incl. `GuideOwner._owner_delivered` (owner lags behind the handle), and **reviewing Eden's exit-safety guard** by adding a scenario: block back exit `[E]` + smoke → never routes past the fire, owner outside | `sim/run_sim.py`, `sim/robot_screen.py`, `sim/robot_voice.py`, `sim/lightbar.py`, `scripts/test_scenarios.py`, **+ `nudge-brain/skills.py` (GuideOwner only) this session** |
+| **Ricktho** | voice robustness, *stretch* real recordings; **covering Finn:** fire-estimate drift (re-plan says "fire in laundry (heard)" instead of "kitchen (installed alarm)") | `nudge-brain/hearing.py`, `nudge-brain/voice.py`, `assets/audio/`, `SOUND_SOURCES`, **+ `nudge-brain/sound_localizer.py`, `nudge-brain/evacuation.py` (fire estimate only) this session** |
+| **Eden** | merge captain, GUI (plugins), demo + rehearsals, summary, pitch, `TODO.md`; **covering Finn:** Gemma's exit reasons contradict its choice ("much closer to the fire") → clearer exit facts in the menu; **covering Teo:** measure Gemma latency on the recording laptop | `gui/`, `docs/`, `TODO.md`, AGENTS.md 9.x, **+ `nudge-brain/agent.py` (menu text only) this session** |
+
+**Finn and Teo are not working this session**, so their open items are covered above; everything else of theirs is **parked** until they are back: "Is the sound real?" (TV doorbell), full tier-based handling of simultaneous sounds (Ricktho's kettle deferral covers the basic case), the Gemma fine-tune, and Option A mapping (section 10). Whoever touches Finn's files leaves a one-line note under "For Finn when back" in `TODO.md` so he can review.
 
 **Status (Eden, latest):**
 - GUI now grows by itself: sound buttons come from `SOUND_SOURCES`; scene controls from `SCENE_CONTROLS`; **add a tab by dropping `gui/panels/<name>.py`** with `TITLE` + `build(ctx)` (+ `update(ctx)`), see `gui/panels/__init__.py`; the **Brain data** tab shows any new brain/sim field automatically. New sim hotkey → one line in `SCENE_CONTROLS`; a sound without a hotkey can be started via the `gui` action `{"action": "sound", "name": ...}`.

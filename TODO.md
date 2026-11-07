@@ -1,30 +1,37 @@
 # Nudge: open to-dos
 
 Status after `baf3de5` (rules + carpet + voice merged). Tick an item off when it lands on `main`.
-Owners follow AGENTS.md section 9.1.
+Owners follow AGENTS.md section 9.1. **This session only Sean, Ricktho and Eden are working: Finn's and Teo's
+open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
 
 ## Verify
 - [x] Full `pixi run test-scenarios` green on the merged code (all 9 scenarios, incl. `carpet_rule`, at `2ae9978`, Gemma live, 0 watchdog fallbacks)
-- [ ] Fix the flaky `doorbell` scenario: the brain reports delivered, but the sim's judge sometimes doesn't count it (the owner may let go of the handle near the door)
+- [x] **→ Sean (covering Finn)** Fix the flaky `doorbell` scenario: the brain reports delivered, but the sim's judge sometimes doesn't count it (the owner may let go of the handle near the door). Sim side done (`722bf74`); the brain-side "keep creeping" idea is PARKED for Finn.
   - Same root cause seen in `kettle_during_doorbell` (now experimental): `GuideOwner._owner_delivered` uses the handle-offset estimate (~0.6 m behind the robot), but the real owner lags further behind; arriving at the kettle from the south the owner stops 1.2 m away (judge radius 1.15 m) and the final push never runs. Fix idea (Finn/Sean): judge delivery on the owner's sensed/lagged position or keep creeping until the owner is within ~0.5 m of the goal.
   - Sim side done (Sean): judge radius 1.15 -> 1.4 m, still needs the owner to stay 1 s (walk-past never counts); doorbell 2/2 PASS, `kettle_during_doorbell` PASS (owner 1.3 m from the kettle). Brain-side creeping (Finn) is optional now.
 - [x] End-to-end voice test (scenario `carpet_rule_voice`, LLM parse 1.5 s): real spoken sentence → Ricktho's mic + Whisper → `user_command` → Gemma (LLM on, not the keyword fallback) → rule → robot keeps off the carpet
 - [x] Align the voice port env var: `voice.py` now reads `NUDGE_VOICE_PUB` like the brain (`NUDGE_VOICE_ENDPOINT` kept as an alias)
 
-- [x] Rehearsal found Gemma choosing an exit **next to the fire** (terrace, "much closer to the fire") over the planner's front door; `safety.validate_action` now rejects LLM exits whose route passes > 1 m closer to the fire than the planner's (`6d367ee`, Eden; Finn please review)
-- [ ] **Fire estimate drifts** (Finn/Ricktho): after LiDAR sees the back exit blocked, the re-plan says "fire in laundry (heard)" instead of "kitchen (installed alarm)", so exits in the real fire room are not excluded. Prefer the installed alarm's room unless hearing clearly disagrees?
+- [x] Rehearsal found Gemma choosing an exit **next to the fire** (terrace, "much closer to the fire") over the planner's front door; `safety.validate_action` now rejects LLM exits whose route passes > 1 m closer to the fire than the planner's (`6d367ee`, Eden)
+- [ ] **→ Sean (covering Finn)** Review that guard with a scenario: block back exit `[E]` + smoke alarm → the robot never routes past the fire and the owner gets outside
+- [ ] **→ Ricktho (covering Finn)** **Fire estimate drifts**: after LiDAR sees the back exit blocked, the re-plan says "fire in laundry (heard)" instead of "kitchen (installed alarm)", so exits in the real fire room are not excluded. Prefer the installed alarm's room unless hearing clearly disagrees?
+- [ ] **→ Eden (covering Finn)** Gemma's exit reasons contradict its choice ("Terrace exit is much closer to the fire"): state each exit's fire distance as plain safety facts in the menu (`agent.py` menu text only)
 
 ## Ricktho (sounds + voice)
 - [x] Voice input: mic -> Whisper -> wake word "Nudge" -> `user_command` (:5558)
 - [x] One new tiered sound: **kettle** (tier 2, hotkey `J`), registry fields `tier`/`file`/`yamnet`/`label`/`say`, scenarios `kettle`, `kettle_during_doorbell`
 - [x] Knock rule false-fired under `party` noise (64 % of windows with nothing knocking): burstiness gate in `hearing.py`; now 0 false alerts from noise alone under all 5 profiles, knocks still heard at entry / start / front door
 - [x] Second tier-2 sound: **oven timer** (hotkey `T`, landmark `stove`, scenario `oven_timer`)
-- [ ] Real recordings instead of the synthesized placeholder clips (stretch)
-- [ ] Tell Sean: light bar shows the kettle as "knock" (yellow x2) because it infers the sound from `2_pulse`; add `SOUND_INFO["kettle"]` (amber) once the `alert` event carries the sound. Tell Eden: GUI has no kettle button / bar yet (`gui` key action `{"action": "key", "key": "J"}` works)
+- [x] Real recordings: opt-in with `NUDGE_REAL_AUDIO=1`, evaluated (`458a782`)
+- [x] Kettle shows its own amber on the light bar (Sean, `722bf74`); GUI kettle button (Eden; buttons come from `SOUND_SOURCES`)
 
-## Finn (brain), stretch
+## Finn (brain), stretch: PARKED until Finn is back
 - [ ] "Is the sound real?": a doorbell on the TV vs the real front door (bearing + TV state → keep listening)
-- [ ] Simultaneous sounds handled by tier (a higher tier pre-empts, a lower one is queued)
+- [ ] Simultaneous sounds handled by tier (a higher tier pre-empts, a lower one is queued); basic case covered by Ricktho's kettle deferral
+
+## For Finn when back (changes made in his files while he was away; please review)
+- `nudge-brain/safety.py`: exit-safety guard `FIRE_MARGIN_M` (`6d367ee`, Eden)
+- (add a line here whenever you touch Finn's files this session)
 
 ## Sean (sim, outputs, tests)
 - [x] On-robot screen shows the "Nudge says" text (`77bbc21`)
@@ -35,8 +42,8 @@ Owners follow AGENTS.md section 9.1.
 ## Teo (models)
 - [x] Local text-to-speech (Piper): `from speech.tts import speak, synthesize, warmup, stop` (voice en_US-ljspeech-medium, MIT; `pixi run fetch-models`)
 - [x] Windows fix: Whisper + numpy crashed with "OMP Error #15"; win-64 now uses OpenBLAS (`pixi.toml`)
-- [ ] Measure Gemma latency on an RTX 5060 recording laptop (accuracy is 97.8 %; speed is the open question, AGENTS.md 6.1)
-- [ ] Fine-tune (paused): add a Modal payment method, then follow AGENTS.md 6.1
+- [ ] **→ Eden (covering Teo)** Measure Gemma latency on the recording laptop (accuracy is 97.8 %; on Eden's RTX 5050 laptop ~0.4–0.9 s, 0 watchdog fallbacks)
+- [ ] Fine-tune (paused): PARKED until Teo is back (add a Modal payment method, then follow AGENTS.md 6.1)
 
 ## Eden (GUI, integration, story)
 - [x] GUI command/rule text box (sends `user_command`) + example sentences
