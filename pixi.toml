@@ -24,6 +24,9 @@ sim = { cmd = "python sim/run_sim.py", depends-on = ["fetch-world"] }
 # Run the Nudge Brain process (default / Windows)
 brain = "python nudge-brain/main.py"
 
+# Nudge Control GUI: 3D view, event buttons, agent reasoning. Pair with `pixi run sim --no-viewer`
+gui = "python gui/nudge_control.py"
+
 [target.linux-64.tasks]
 # Simulator (forces X11/GLFW compatibility on Linux Wayland/X11)
 sim = { cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" }, depends-on = ["fetch-world"] }
@@ -48,3 +51,4 @@ mujoco = ">=3.1.6"
 opencv-python = ">=4.9.0"
 onnxruntime = ">=1.18"
 ai-edge-litert = ">=1.2"
+dearpygui = ">=2.0"

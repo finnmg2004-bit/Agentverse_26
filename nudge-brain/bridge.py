@@ -133,6 +133,17 @@ class BrainBridge:
             payload["episode"] = int(episode)
         self.pub_sock.send_multipart([b"cmd", json.dumps(payload).encode("utf-8")])
 
+    def send_status(self, status: Dict[str, Any]) -> None:
+        """Publish the brain's status (mission, perception, agent reasoning) for the control GUI.
+        Topic `brain` on the same :5556 socket; the sim only subscribes to `cmd`/`sim_event`."""
+        def _plain(o: Any) -> Any:  # numpy scalars/arrays -> JSON
+            if isinstance(o, np.generic):
+                return o.item()
+            if isinstance(o, np.ndarray):
+                return o.tolist()
+            return str(o)
+        self.pub_sock.send_multipart([b"brain", json.dumps(status, default=_plain).encode("utf-8")])
+
     def send_sim_event(self, key: str) -> None:
         """Forward hotkey press from the OpenCV dashboard window or test runner to `sim`."""
         payload = {"key": str(key).upper()}

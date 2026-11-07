@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 
 def _prefer_wsl_nvidia_gpu() -> None:
@@ -48,6 +49,7 @@ _prefer_wsl_nvidia_gpu()
 
 import mujoco  # noqa: E402
 import mujoco.viewer
+import cv2
 import numpy as np
 import zmq
 
@@ -80,7 +82,9 @@ class NudgeSimulator:
         sub_endpoint: str = "tcp://127.0.0.1:5556",
         enable_camera: bool = True,
         cutaway: bool = True,
+        gui_endpoint: str = "tcp://127.0.0.1:5557",
     ) -> None:
+        self.cutaway = cutaway
         self.model, self.data = build_nudge_model(verbose=True, cutaway=cutaway)
         self.nav_map = load_or_build(self.model, self.data)
 
@@ -128,11 +132,25 @@ class NudgeSimulator:
         self.sub_sock.connect(sub_endpoint)
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "cmd")
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "sim_event")
+        # Control GUI (gui/nudge_control.py) binds :5557 and sends `gui` messages: hotkeys,
+        # "move owner to room", and 3D-view camera requests. Connecting before it exists is fine.
+        self.sub_sock.connect(gui_endpoint)
+        self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "gui")
 
         # Publication timers
         self.last_state_pub: float = 0.0
         self.last_cam_pub: float = 0.0
         self.last_audio_pub: float = 0.0
+
+        # 3D view stream for the control GUI: rendered only while a GUI keeps requesting it.
+        self.view_req: Optional[dict] = None
+        self.view_req_wall: float = 0.0
+        self.view_renderer: Optional[mujoco.Renderer] = None
+        self.view_cam = mujoco.MjvCamera()
+        self.view_opt = mujoco.MjvOption()
+        if cutaway:
+            self.view_opt.geomgroup[1] = 0  # hide ceilings, same as the viewer's dollhouse view
+        self.last_view_pub: float = 0.0
 
     def handle_hotkey(self, key_name: str) -> None:
         """Process a single-character hotkey or scripted event command."""
@@ -166,6 +184,70 @@ class NudgeSimulator:
             print("[sim] HOTKEY [X]: Silenced all active sounds.")
         elif k == "R":
             self.reset_scene()
+
+    def set_owner_room(self, room: str) -> None:
+        """Move the owner straight to `room` (control GUI dropdown), instead of cycling with [O]."""
+        if room not in ROOMS:
+            print(f"[sim] GUI: unknown room {room!r}")
+            return
+        ox, oy = ROOMS[room]["owner_spot"]
+        self.locomotion.set_owner_pos(ox, oy)
+        if room in ROOM_ORDER:
+            self.owner_room_idx = ROOM_ORDER.index(room)
+        print(f"[sim] GUI: Moved Owner to {room} at ({ox}, {oy})")
+
+    def handle_gui(self, payload: dict) -> None:
+        """`gui` topic from the control GUI: {"action": "key"|"owner_room"|"view", ...}."""
+        action = payload.get("action")
+        if action == "key":
+            self.handle_hotkey(str(payload.get("key", "")))
+        elif action == "owner_room":
+            self.set_owner_room(str(payload.get("room", "")))
+        elif action == "view":
+            self.view_req = payload
+            self.view_req_wall = time.monotonic()
+
+    def publish_view(self, now: float) -> None:
+        """Render the GUI's 3D view (free or robot-follow camera) and publish it as JPEG on `view`.
+        Only while a GUI has asked for it in the last 2 s, so it costs nothing without a GUI."""
+        req = self.view_req
+        if req is None or time.monotonic() - self.view_req_wall > 2.0:
+            return
+        fps = float(req.get("fps", 25.0))
+        if now - self.last_view_pub < 1.0 / max(1.0, fps):
+            return
+        self.last_view_pub = now
+        w = int(min(1600, max(160, req.get("width", 960))))
+        h = int(min(1200, max(120, req.get("height", 540))))
+        r = self.view_renderer
+        if r is None or r.width != w or r.height != h:
+            if r is not None:
+                r.close()
+            self.model.vis.global_.offwidth = max(self.model.vis.global_.offwidth, w)
+            self.model.vis.global_.offheight = max(self.model.vis.global_.offheight, h)
+            r = self.view_renderer = mujoco.Renderer(self.model, height=h, width=w)
+        cam = self.view_cam
+        cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+        mode = req.get("mode", "free")
+        rx, ry, ryaw = self.locomotion.get_pose()
+        if mode in ("follow", "chase"):
+            cam.lookat[:] = [rx, ry, 0.3]
+        else:
+            cam.lookat[:] = req.get("lookat", [-6.5, 1.0, 0.0])
+        cam.distance = float(req.get("distance", 21.0))
+        # chase: camera sits behind the robot and turns with it (azimuth offset from the heading)
+        cam.azimuth = (math.degrees(ryaw) + float(req.get("azimuth", 0.0))) if mode == "chase" \
+            else float(req.get("azimuth", 90.0))
+        cam.elevation = float(req.get("elevation", -62.0))
+        r.update_scene(self.data, camera=cam, scene_option=self.view_opt)
+        rgb = r.render()
+        ok, jpg = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
+                               [int(cv2.IMWRITE_JPEG_QUALITY), int(req.get("quality", 85))])
+        if ok:
+            meta = {"t": round(float(self.data.time), 3), "width": w, "height": h,
+                    "episode": self.episode, "mission_status": self.mission_status,
+                    "mission_text": self.mission_text}
+            self.pub_sock.send_multipart([b"view", json.dumps(meta).encode("utf-8"), jpg.tobytes()])
 
     def reset_scene(self) -> None:
         """Put robot, owner, chair and sounds back to the demo start state; start a new episode."""
@@ -264,6 +346,8 @@ class NudgeSimulator:
                 key = str(payload.get("key", ""))
                 if key:
                     self.handle_hotkey(key)
+            elif topic == "gui":
+                self.handle_gui(payload)
 
         # Safety timeout if brain disconnects for > 0.6s
         if time.monotonic() - self.last_cmd_time > 0.6:
@@ -290,6 +374,7 @@ class NudgeSimulator:
                 "owner_pos_gt": [round(owner_pos[0], 3), round(owner_pos[1], 3)],
                 "chair_blocking": self.chair_blocking,
                 "episode": self.episode,
+                "active_sounds": [s for s, on in self.active_sounds.items() if on],
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -349,8 +434,11 @@ class NudgeSimulator:
             dt=dt,
         )
         self.publish_telemetry(float(self.data.time))
+        self.publish_view(float(self.data.time))
 
     def close(self) -> None:
+        if self.view_renderer is not None:
+            self.view_renderer.close()
         self.pub_sock.close()
         self.sub_sock.close()
 
@@ -392,6 +480,10 @@ def main() -> None:
                         help="Headless only: render the real head camera offscreen (EGL) instead of the synthetic fallback")
     parser.add_argument("--no-cutaway", action="store_true",
                         help="Show the whole house (upper storeys + roof) instead of the ground-floor cutaway view")
+    parser.add_argument("--no-viewer", action="store_true",
+                        help="No MuJoCo window, but keep the real head camera and 3D-view rendering "
+                             "(use with the control GUI: `pixi run gui`)")
+    parser.add_argument("--gui-sub", default="tcp://127.0.0.1:5557", help="Control GUI command address")
     args = parser.parse_args()
 
     print("[sim] Building nerv-world house + Unitree Go2 + Owner + Chair + Sound Beacons...")
@@ -400,6 +492,7 @@ def main() -> None:
         sub_endpoint=args.sub,
         enable_camera=(not args.headless) or args.render_camera,
         cutaway=not args.no_cutaway,
+        gui_endpoint=args.gui_sub,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
@@ -408,8 +501,11 @@ def main() -> None:
     print(f"[sim] Owner started in {get_room_at(ox, oy)} at ({ox:.2f}, {oy:.2f})")
     print("[sim] Hotkeys: [B/1] Doorbell | [K/2] Knock | [M/3] Smoke Alarm | [O/4] Move Owner | [C/5] Chair | [X] Silence | [R] Reset")
 
+    if args.no_viewer:
+        print("[sim] No MuJoCo window: open the control GUI with `pixi run gui` (Ctrl+C here to stop)")
+
     try:
-        if args.headless:
+        if args.headless or args.no_viewer:
             pacer = RealTimePacer(dt)
             start_wall = time.perf_counter()
             while True:

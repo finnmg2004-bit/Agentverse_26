@@ -21,7 +21,7 @@ for p in (str(HERE.parent), str(HERE)):
         sys.path.insert(0, p)
 
 import safety  # noqa: E402
-from agent import NudgeAgent  # noqa: E402
+from agent import DEFAULT_SAY, NudgeAgent  # noqa: E402
 from alerts import HapticAlerts  # noqa: E402
 from bridge import BrainBridge  # noqa: E402
 from hearing import StereoHearing  # noqa: E402
@@ -31,6 +31,7 @@ from vision import OwnerDetector  # noqa: E402
 from world_model import WorldModel  # noqa: E402
 
 LOOP_HZ = 20.0
+STATUS_HZ = 10.0  # `brain` status for the control GUI (gui/nudge_control.py)
 ALERT_SOUNDS = ("doorbell", "knock")
 NEW_SOUND_CONF = 0.5
 SILENCE_WINDOWS_TO_UNLATCH = 3  # 1.5 s of silence before the same sound can start a new mission
@@ -57,12 +58,14 @@ class Brain:
         self.latched: dict = {}  # sound -> consecutive windows not heard
         self.last_owner_seen_event = 0.0
         self.episode = None  # sim episode we are acting on; a change means the sim was reset ([R])
+        self.last_status_pub = 0.0
         self.world.log(f"Brain up | hearing={self.hearing.backend_name} vision={self.vision.backend} "
                        f"agent={self.agent.backend}")
 
     def reset(self, episode) -> None:
         """Sim was reset: drop the mission, plan, alerts, owner belief and pending agent decision."""
         self.agent.cancel()
+        self.agent.decisions.clear()
         self.nav.clear()
         self.alerts.clear()
         self.executor.skill = Skill()
@@ -170,6 +173,10 @@ class Brain:
         status, status_text = self.world.mission_status()
         self.bridge.send_cmd(vx, vy, wz, alert_mode=self.alerts.mode, guiding=out.guiding,
                              mission_status=status, mission_text=status_text, episode=self.episode)
+        now = time.monotonic()
+        if now - self.last_status_pub >= 1.0 / STATUS_HZ:
+            self.last_status_pub = now
+            self.bridge.send_status(self.status(status, status_text))
 
         if self.dashboard is not None:
             key = self.dashboard.render(self.world, self.agent, self.bridge.latest_camera,
@@ -179,6 +186,37 @@ class Brain:
             if key:
                 self.bridge.send_sim_event(key)
         return True
+
+    def status(self, mission_status: str, mission_text: str) -> dict:
+        """Everything the control GUI shows about the brain (published on topic `brain`)."""
+        w = self.world
+        snd = w.sound or {}
+        det = w.last_detection or {}
+        return {
+            "t": round(w.t_sim, 2),
+            "episode": self.episode,
+            "mission": {"status": mission_status, "text": mission_text,
+                        "sound": w.mission["sound"] if w.mission else None,
+                        "emergency": w.is_emergency(),
+                        # what Nudge tells the owner (Gemma's message, else a default per sound)
+                        "say": (w.mission.get("say") or DEFAULT_SAY.get(w.mission["sound"], ""))
+                        if w.mission else ""},
+            "phase": w.phase,
+            "skill": self.executor.skill.label(),
+            "alert_mode": self.alerts.mode,
+            "sound": {k: snd.get(k) for k in ("label", "confidence", "scores", "world_azimuth_deg",
+                                              "estimated_room", "backend")},
+            "detection": {k: det.get(k) for k in ("found", "bbox", "confidence", "distance", "backend")},
+            "owner": {"pos": w.owner_pos, "room": w.owner_room, "source": w.owner_source,
+                      "seen_recently": w.owner_recently_seen(2.0)},
+            "nav_path": [[round(x, 2), round(y, 2)] for x, y in (w.nav_path or [])],
+            "searched_rooms": sorted(w.searched_rooms),
+            "blocked_doors": sorted(w.blocked_doors),
+            "agent": {"backend": self.agent.backend, "pending": self.agent.pending_info(),
+                      "decisions": list(self.agent.decisions), "llm": self.agent.stats()},
+            "events": list(w.events),
+            "backends": {"hearing": self.hearing.backend_name, "vision": self.vision.backend},
+        }
 
     def run(self, duration: float = 0.0) -> None:
         period = 1.0 / LOOP_HZ

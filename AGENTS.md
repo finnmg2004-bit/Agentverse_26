@@ -213,12 +213,18 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   - Topic `cmd` (20 Hz JSON): `{"vx": float, "vy": float, "wz": float, "alert_mode": "none"|"1_pulse"|"2_pulse"|"continuous", "guiding": bool, "mission_status": "idle"|"active"|"complete", "mission_text": str, "episode": int}`. The sim ignores `cmd` packets whose `episode` doesn't match its own (stale commands from before an `R` reset).
   - `state` also carries `"episode": int` (incremented by the `R` reset hotkey).
 - `robot_room` values are `house_layout.ROOMS` keys (`entry`, `living_room`, `guest`, …) or `"outside"`.
+- **Control GUI (`gui/nudge_control.py`, see 7.1)** — all additive, nothing else depends on them:
+  - `nudge-brain` also publishes topic `brain` (10 Hz JSON) on :5556: mission status, phase, skill, alert mode, hearing scores, owner detection, owner belief, nav path, searched/blocked rooms, event log, and `agent.decisions` (each: `t, event, source` = `llm`|`rules`|`safety`|`watchdog`, `model, tool, args, reasoning, latency, llm_raw, note`). The sim only subscribes to `cmd`/`sim_event`, so it ignores this.
+  - The GUI binds PUB `tcp://127.0.0.1:5557`; the sim's SUB also connects there and handles topic `gui`: `{"action": "key", "key": "B"}`, `{"action": "owner_room", "room": "kitchen"}`, `{"action": "view", "mode": "free"|"follow"|"chase", "lookat", "distance", "azimuth", "elevation", "width", "height", "fps"}`.
+  - While a GUI keeps sending `view` requests (heartbeat < 2 s), the sim renders that camera and publishes topic `view` on :5555: `[topic, metadata_json, jpeg_bytes]`. No GUI = no rendering cost.
+  - `state` also carries `"active_sounds": [str]`.
   - **Planned change (not yet implemented — coordinate before changing the contract)**: replace `alert_mode` with an alert event `"alert": {"sound": str, "tier": 1|2|3, "room": str, "message": str} | null` so the sim drives the haptic handle, LED, screen and speaker from one event (see 2.2). The brain only decides; the sim's output devices act.
 
 ---
 
 ## 6. Agent Tools & Safety Layer Rules
-- **Agent Model**: Local Gemma 4 E2B via Google ADK / local Ollama HTTP API (`http://127.0.0.1:11434`, model `gemma4:e2b` / `gemma3:4b` with automatic deterministic tool-policy fallback if Ollama server takes > 2.0s or is offline). Wakes ONLY on discrete events: `new_sound`, `arrived_in_room`, `owner_seen`, `owner_not_found`, `timeout`.
+- **Agent Model**: Local Gemma 4 E2B via local Ollama HTTP API (`http://127.0.0.1:11434`, model `gemma4:e2b` / `gemma3:4b`). Wakes ONLY on discrete events: `new_sound`, `arrived_in_room`, `owner_seen`, `owner_not_found`, `owner_alerted`, `timeout`.
+- **Gemma = the robot's reasoning for judgement calls only** (`nudge-brain/agent.py`): on `new_sound` and `owner_not_found`, while the owner hasn't been seen in the last 3 s, Gemma gets the facts in plain language (sound + where it comes from, where the owner was last seen and how long ago / usual room, searched rooms, candidate rooms with hop distance) and answers `{"room", "reason", "say"}`: which room to search, a one-sentence reason (shown in the control GUI), and the message Nudge gives the owner (shown as "Nudge says: …"; for the planned screen/speech outputs). `room` is constrained by an Ollama JSON-schema `enum` of the valid unsearched rooms, so it can't pick an invalid room. Budget `NUDGE_LLM_TIMEOUT` (default **4 s**; measured 0.5–0.9 s warm on an RTX 5050 laptop). Routine steps (arrived -> look_around, owner seen -> alert_owner, alerted -> guide_owner_to), emergencies, timeouts and errors are decided by the deterministic policy / safety layer instantly. `DEFAULT_SAY` gives the owner message when Gemma didn't write one. Setup: install Ollama (`winget install Ollama.Ollama`), then `pixi run fetch-models`.
 - **Agent Tools**:
   - `get_state() -> dict`
   - `go_to_room(room: str)` — `room` ∈ `house_layout.nudge_rooms()`
@@ -229,7 +235,7 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   - `investigate_sound()`
 - **Plain-Code Safety Layer (`nudge-brain/safety.py`)**:
   1. **Smoke Alarm Pre-emption**: If `smoke_alarm` is detected with confidence >= 0.6, immediately interrupt any current plan, find owner, set `continuous` alert, and execute `guide_owner_to(SMOKE_EVACUATION_TARGET)` (= `"back_exit_outside"`). *(Planned: generalize to tier-based pre-emption — a higher-priority tier always interrupts a lower one; see 2.1.)*
-  2. **2.0 s Watchdog**: If the LLM takes > 2.0s to return a tool call after an event, deterministic fallback rules take over immediately.
+  2. **LLM Watchdog**: If Gemma takes longer than `NUDGE_LLM_TIMEOUT` (default 4.0 s) to answer a judgement call, deterministic fallback rules take over immediately (logged as `watchdog` in the GUI).
   3. **Proximity Speed Cap**: Clamp speed <= 0.4 m/s whenever within 1.0 m of the owner.
 
 ### 6.1 LLM Plan: local at runtime, Modal only for offline training (agreed)
@@ -243,6 +249,17 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   5. **Ship only if** it beats the base model on the eval set: ≥ 90 % correct tool calls and answers reliably under 1 s on the demo laptop. Otherwise keep `gemma4:e2b` and the watchdog.
 - Keep `safety.py` (smoke pre-emption, watchdog, speed cap) regardless of which model ships.
 
+### 6.2 LLM reasoning roadmap: reflex layer + thinking layer (ideas, agreed direction, not yet built)
+**Principle:** use the LLM to reason about what a sound *means in context*; keep it out of anything that has to happen instantly.
+- **Reflex layer (ordinary code, milliseconds):** a danger sound triggers the danger routine immediately; also obstacle stops, the stale-command watchdog that stops the robot, and the walking policy. The LLM can't override any of it, and nothing the person tells the robot can downgrade a smoke alarm. *(Today: `safety.py`, the sim's 0.6 s command timeout, LiDAR stops.)*
+- **Thinking layer (local LLM, 1–3 s, only when something happens):** anything that needs judgement. It reads a short summary of the situation, picks **one action from a fixed list**, and gives a one-line reason shown on screen. *(Today: Gemma picks which room to search + writes the owner message, constrained by a JSON-schema enum; see section 6.)*
+
+Reasoning to add, best demo value first:
+1. **"Is the sound real, and where is it?"** The LLM combines the classifier's top guesses, the stereo bearing, the floor plan and recent events. Demo: a doorbell plays on the **TV**; the bearing points at the TV (which is on) and the front door is the other way, so the robot keeps listening instead of fetching the person. Then the real doorbell rings in the hallway and it acts. A sound classifier alone can't make that call, which makes this the clearest proof of reasoning grounded in perception. *(Needs: a TV sound source + "TV on" state in the sim, top-k classifier scores and bearing in the prompt, an "ignore / keep listening" action.)*
+2. **Deciding what comes first and how to alert.** When two things happen at once (e.g. oven timer + doorbell), the LLM uses the person's state (on the sofa, asleep, in the bathroom) and the time of day to choose the order and the kind of alert: nudge and wait, persistent wake-up, or wait outside the bathroom door. It also writes the message shown on the robot's screen. **Keep messages short and plain: for many BSL users English is a second language.** *(Fits the sound tiers in 2.1.)*
+3. **Personal rules in the person's own words.** They type e.g. "I'm expecting a parcel today" or "don't wake me for the oven timer after 11pm"; the LLM turns that into a **structured rule** that ordinary code enforces and the screen displays. Covers "learning on the fly", and stays safe because danger sounds are outside what any rule can change.
+4. *(Optional)* **Visual check on arrival:** ask a small vision-language model "is there visible smoke?" / "is someone at the door?". It can only **add** information; it never cancels an alarm.
+
 ---
 
 ## 7. Keyboard Event Hotkeys in MuJoCo Viewer (`sim/run_sim.py`)
@@ -255,6 +272,16 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - **`R`**: **Reset** the scene (robot to the entry-hall start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
 
 **Mission complete indicator**: when the owner has been delivered, the brain reports `mission_status: "complete"`; the MuJoCo viewer shows a `MISSION COMPLETE` overlay (with sound, target and sim-time duration), the robot's halo turns steady green, and the dashboard shows a green banner. It stays until the next mission starts or `R` is pressed.
+
+**Note:** in the MuJoCo viewer every letter and the digits 0-5 are also MuJoCo display shortcuts (e.g. `2` hides geom group 2 = the robot, `X` turns textures off, `K` hides the skybox), so our hotkeys also toggle those. Use the control GUI (7.1) or the OpenCV dashboard window to trigger events cleanly.
+
+### 7.1 Nudge Control GUI (`gui/nudge_control.py`, Dear PyGui) — recommended for demos
+```
+pixi run sim --no-viewer        # sim without the MuJoCo window (keeps head camera + 3D-view rendering)
+pixi run brain --no-dashboard   # optional: skip the OpenCV dashboard
+pixi run gui
+```
+One window: live 3D view streamed from the sim (drag = orbit, right-drag = pan, wheel = zoom; presets West wing / Whole house / Top-down / Follow robot / Chase cam), mission banner (READY / MISSION ACTIVE / EMERGENCY / MISSION COMPLETE), event buttons (Doorbell, Knock, Smoke alarm, Silence, Reset, move owner to a chosen room, next room, chair) with keyboard shortcuts `B K M O C X R`, **agent reasoning** (every decision: event -> tool call, source LLM/rules/SAFETY/watchdog, latency, reasoning text, raw LLM reply, safety rejections), head camera with the detection box, 2D map (walls, robot + LiDAR, planned path, owner truth vs belief, active sounds, chair, searched/blocked), hearing bars, phase/skill, haptic handle lamp, event log. Works alongside the MuJoCo viewer and the OpenCV dashboard too. Testing helpers: `--auto "R@2,M@5,cam=Chase cam@6"` presses buttons on a schedule, `--screenshot shot.png@30` saves the window and quits.
 
 ---
 
