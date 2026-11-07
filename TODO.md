@@ -31,6 +31,8 @@ open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
 
 ## For Finn when back (changes made in his files while he was away; please review)
 - `nudge-brain/safety.py`: exit-safety guard `FIRE_MARGIN_M` (`6d367ee`, Eden)
+- `nudge-brain/evacuation.py` `fire_estimate` (installed alarm's room unless hearing clearly disagrees) + `nudge-brain/sound_localizer.py` `room_probs` (`d4aaa8c`, Ricktho)
+- (earlier, before this session) `nudge-brain/main.py`: `ALERT_SOUNDS` from the registry, kettle deferral, `SoundEvents` feed + status fields; `agent.py` / `world_model.py`: registry defaults (Ricktho)
 - (add a line here whenever you touch Finn's files this session)
 
 ## Sean (sim, outputs, tests)
