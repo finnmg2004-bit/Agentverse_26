@@ -445,8 +445,8 @@ Ricktho's voice input is on `main` (commits "Add faster-whisper and sounddevice 
 **Status (Eden, latest):**
 - GUI now grows by itself: sound buttons come from `SOUND_SOURCES`; scene controls from `SCENE_CONTROLS`; **add a tab by dropping `gui/panels/<name>.py`** with `TITLE` + `build(ctx)` (+ `update(ctx)`), see `gui/panels/__init__.py`; the **Brain data** tab shows any new brain/sim field automatically. New sim hotkey → one line in `SCENE_CONTROLS`; a sound without a hotkey can be started via the `gui` action `{"action": "sound", "name": ...}`.
 - Safety fix pushed (`6d367ee`): Gemma had chosen the exit next to the kitchen fire; `safety.validate_action` now rejects LLM exits whose route passes > 1 m closer to the fire than the planner's (Finn: please review).
-- Drafts to review/edit: `docs/DEMO_STORYBOARD.md`, `docs/TECHNICAL_SUMMARY.md`.
-- **Decision needed (whole team):** how the take fits 60 s (full take ~115 s). Eden's recommendation: carpet rule → doorbell around the carpet → nudge + "Nudge says" for the video (~40 s), the blocked-exit/smoke run in the pitch.
+- Drafts to review/edit: `docs/DEMO_STORYBOARD.md`, `docs/TECHNICAL_SUMMARY.md`, `docs/PITCH.md` (+ screenshots in `docs/img/`).
+- **60 s take: solved and rehearsed (team: please confirm).** Carpet rule (voice) → doorbell → robot goes around the carpet, nudges, "Nudge says", starts guiding (~38 s) → **smoke alarm at the "guiding" cue** → EMERGENCY + Gemma's exit choice on screen → stop at ~60 s (the video only needs the evacuation *starting*). Press buttons on visual cues (the owner sometimes needs a 2nd nudge). Full script + frames: `docs/DEMO_STORYBOARD.md` (★ section). The blocked-exit/safety-rejection story goes in the pitch.
 
 ---
 
