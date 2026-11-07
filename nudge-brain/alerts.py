@@ -19,7 +19,8 @@ PRIORITY = {"none": 0, "1_pulse": 1, "2_pulse": 1, "continuous": 2}
 
 
 def mode_for_sound(sound: str) -> str:
-    return str(SOUND_SOURCES.get(sound, {}).get("alert_mode", "none"))
+    # Owner requests ("take me to the kitchen") have no sound: one pulse = "I'm here, take the handle".
+    return str(SOUND_SOURCES.get(sound, {}).get("alert_mode", "1_pulse"))
 
 
 class HapticAlerts:

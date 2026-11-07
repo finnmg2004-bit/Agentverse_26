@@ -31,6 +31,7 @@ from vision import OwnerDetector  # noqa: E402
 from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
+from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, validate  # noqa: E402
 
 LOOP_HZ = 20.0
 STATUS_HZ = 10.0  # `brain` status for the control GUI (gui/nudge_control.py)
@@ -53,6 +54,11 @@ class Brain:
         self.agent = NudgeAgent()
         self.localizer = SoundLocalizer()
         self.evac = EvacuationPlanner(self.nav.planner)
+        # What the owner tells the robot (GUI text box / voice): rules.py
+        self.cmd_listener = CommandListener()
+        self.cmd_parser = CommandParser(self.agent)
+        # The owner's no-go areas; read self.world at call time (reset() replaces the world).
+        self.nav.avoid_provider = lambda: self.world.avoid_for_planning()
         self.last_tick = time.monotonic()
         self.dashboard = None
         if show_dashboard:
@@ -127,8 +133,16 @@ class Brain:
             if self.world.is_emergency():
                 return
             if self.world.mission is None:
+                pref = self.world.rules.sound_rule(label)  # never applies to danger sounds
+                if pref is not None and pref["policy"] in ("ignore", "quiet_hours"):
+                    self.world.log(f"Heard {label} - not alerting: owner's rule '{pref['summary']}'")
+                    return
                 self.world.log(f"Heard {label} ({conf:.2f}) az {res.get('world_azimuth_deg'):+.0f} deg")
                 self.world.start_mission(label)
+                if pref is not None and pref["policy"] == "expect":
+                    name = label.replace("_", " ").capitalize()
+                    self.world.mission["say"] = (f"{name}. Maybe your parcel. Hold my handle. "
+                                                 f"I will take you to the front door.")
                 self.agent.submit("new_sound", self.world)
             elif self.world.mission["sound"] != label:
                 self.world.log(f"Mission sound updated: {label}")
@@ -148,19 +162,71 @@ class Brain:
             self.world.log(f"Owner seen in {self.world.owner_room} at {det['world_xy']} ({det['backend']})")
             self.agent.submit("owner_seen", self.world)
 
+    # ------------------------------------------------------------------ owner commands
+    def on_user_command(self, msg: dict) -> None:
+        """A sentence from the owner (GUI text box or voice). Parsed in the background by Gemma."""
+        text = str(msg.get("text", "")).strip()
+        source = str(msg.get("source", "gui"))
+        if not text:
+            return
+        conf = float(msg.get("confidence", 1.0) or 0.0)
+        if source == "voice" and conf < MIN_VOICE_CONFIDENCE:
+            self.world.log(f'OWNER SAID ({source}, {conf:.2f}, too unsure): "{text}"')
+            self.world.say("Sorry, I did not catch that. Please say it again.", "confirm")
+            return
+        self.world.log(f'OWNER SAID ({source}): "{text}"')
+        self.cmd_parser.submit(dict(msg, text=text, source=source))
+
+    def apply_command(self, result: dict) -> None:
+        """Validate a parsed instruction in plain code, enforce it, and confirm it to the owner."""
+        w = self.world
+        msg, parsed = result["msg"], result["parsed"]
+        instr, say = validate(parsed, w.is_emergency(), str(msg.get("text", "")))
+        w.log(f"COMMAND parsed by {result['source']} in {result['latency']:.2f}s: {parsed.get('kind')}"
+              + (f" -> {instr['type']}" if instr else " -> refused / not understood"))
+        if instr is not None:
+            kind = instr["type"]
+            if kind in ("avoid_area", "sound_preference"):
+                rule = w.rules.add(dict(instr, text=msg.get("text"), source=msg.get("source")))
+                w.log(f"RULE #{rule['id']}: {rule['summary']}")
+                if kind == "avoid_area" and self.nav.goal is not None:
+                    self.nav._plan(w.robot_pose[:2])  # the new rule applies to the current route at once
+            elif kind == "allow_area":
+                if not w.rules.remove_area(instr["area"]):
+                    say = "OK. That place was not blocked."
+                elif self.nav.goal is not None:
+                    self.nav._plan(w.robot_pose[:2])
+            elif kind == "go_to":
+                self.agent.cancel()
+                w.start_request(instr["target"], str(msg.get("text", "")))
+                w.mission["say"] = say
+                self.agent.submit("user_command", w)
+            elif kind == "stop":
+                self.agent.cancel()
+                self.nav.clear()
+                self.executor.skill = Skill()
+                self.alerts.clear()
+                if w.mission is not None:
+                    w.log(f"Mission {w.mission['sound']} CANCELLED by the owner")
+                    w.mission = None
+                    w.phase = "idle"
+        w.say(say, "confirm")
+
     # ------------------------------------------------------------------ emergency
     def plan_evacuation(self, why: str) -> bool:
         """Choose the safest exit for the owner given the fire's location. Returns True if it changed."""
         w = self.world
         fire = self.evac.fire_estimate(self.localizer)
         start = w.owner_pos if (w.owner_pos is not None and w.owner_recently_seen(30.0)) else w.robot_pose[:2]
-        decision = self.evac.choose(start, fire, set(w.blocked_doors))
+        decision = self.evac.choose(start, fire, set(w.blocked_doors), avoid=w.rules.avoid_rects())
         old = w.evac_target() if w.evac else None
         w.fire, w.evac = fire, decision
         if w.mission is not None and w.is_emergency():
             w.mission["target"] = decision["target"]
         if decision["target"] != old:
-            w.log(f"EVAC ({why}): fire in {fire['room']} ({fire['source']}) -> exit {decision['target']}, "
+            via = " ACROSS the owner's no-go area (much shorter)" if decision.get("via") == "across" else ""
+            keep = " keeping off " + ", ".join(w.rules.avoid_areas()) if w.rules.avoid_areas() and not via else ""
+            w.log(f"EVAC ({why}): fire in {fire['room']} ({fire['source']}) -> exit {decision['target']}{via}{keep}, "
                   f"avoiding {len(decision['hazard_doors'])} doorways")
             return True
         return False
@@ -193,6 +259,10 @@ class Brain:
             self.on_audio()
         if upd["camera"]:
             self.on_camera()
+        for msg in self.cmd_listener.poll():
+            self.on_user_command(msg)
+        for result in self.cmd_parser.poll():
+            self.apply_command(result)
 
         # LiDAR doorway check: re-plan around a blocked doorway (e.g. the chair).
         door = self.nav.check_doorways(self.world.robot_pose, self.world.lidar_ranges,
@@ -264,8 +334,12 @@ class Brain:
                         "sound": w.mission["sound"] if w.mission else None,
                         "emergency": w.is_emergency(),
                         # what Nudge tells the owner (Gemma's message, else a default per sound)
-                        "say": (w.mission.get("say") or DEFAULT_SAY.get(w.mission["sound"], ""))
+                        "say": (w.mission.get("say") or DEFAULT_SAY.get(w.mission["sound"], "")
+                                or (w.nudge_says or {}).get("text", ""))
                         if w.mission else ""},
+            # What the owner told the robot, as enforced (rules.py), and the latest message for the owner
+            "rules": w.rules.status(),
+            "nudge_says": w.nudge_says,
             "phase": w.phase,
             "skill": self.executor.skill.label(),
             "alert_mode": self.alerts.mode,
@@ -300,6 +374,7 @@ class Brain:
         finally:
             self.bridge.send_cmd(0.0, 0.0, 0.0)
             self.bridge.close()
+            self.cmd_listener.close()
             if self.dashboard is not None:
                 self.dashboard.close()
 

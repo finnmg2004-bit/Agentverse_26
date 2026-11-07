@@ -69,12 +69,18 @@ class Navigator:
         self.waypoints: List[Tuple[float, float, Optional[str]]] = []
         self.blocked_doors: Set[str] = set()
         self._block_counts: Dict[str, int] = {}
+        # Owner's no-go areas (rules.py): () -> (rects, cost|None). Set by main.py.
+        self.avoid_provider = None
+        self.cross_areas = False      # the agent decided to break a place rule (emergency only)
+        self.rule_note: str = ""      # how the current route relates to the owner's rules
 
     # ------------------------------------------------------------------ planning
-    def set_goal(self, goal: Point, robot_xy: Point, blocked: Set[str], final_tol: float = 0.25) -> bool:
+    def set_goal(self, goal: Point, robot_xy: Point, blocked: Set[str], final_tol: float = 0.25,
+                 cross_areas: bool = False) -> bool:
         self.goal = goal
         self.final_tol = final_tol
         self.blocked_doors = set(blocked)
+        self.cross_areas = cross_areas
         self._block_counts.clear()
         return self._plan(robot_xy)
 
@@ -84,7 +90,18 @@ class Navigator:
 
     def _plan(self, robot_xy: Point) -> bool:
         assert self.goal is not None
-        wps = self.planner.plan(robot_xy, self.goal, self.blocked_doors)
+        avoid, cost = (self.avoid_provider() if self.avoid_provider else ([], None))
+        self.rule_note = ""
+        if avoid and self.cross_areas:
+            avoid, self.rule_note = [], "crossing the owner's no-go area (emergency decision)"
+        wps = self.planner.plan(robot_xy, self.goal, self.blocked_doors, avoid, cost)
+        if wps is None and avoid and cost is None:
+            # No way around the owner's no-go area: cross as little of it as possible.
+            wps = self.planner.plan(robot_xy, self.goal, self.blocked_doors, avoid, 6.0)
+            self.rule_note = "no route around the owner's no-go area: crossing as little as possible"
+        elif avoid and wps is not None:
+            self.rule_note = "route keeps off the owner's no-go area" if cost is None else \
+                "fire: no-go area allowed only if much shorter"
         if wps is None:
             # Every route is blocked: ignore blocks rather than freeze.
             wps = self.planner.plan(robot_xy, self.goal, ())

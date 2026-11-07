@@ -16,6 +16,7 @@ from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 from owner_belief import OwnerBelief
+from rules import EMERGENCY_AREA_COST, RuleBook
 from sim.house_layout import (
     SMOKE_EVACUATION_TARGET,
     OUTSIDE,
@@ -98,6 +99,9 @@ class WorldModel:
         # Probabilistic owner search (owner_belief.py): P(owner in room), updated by vision
         # (positive + negative evidence) and a walking model.
         self.belief = OwnerBelief(OWNER_PRIOR_ROOM)
+        # What the owner told the robot (rules.py): place rules, sound preferences
+        self.rules = RuleBook()
+        self.nudge_says: Optional[Dict[str, Any]] = None  # {"text", "kind", "t"}
         # Owner acknowledgement via the handle's touch sensor
         self.last_tap_wall: float = -1e9
         self.owner_ack: Optional[str] = None  # None | "waiting n/N" | "acknowledged" | "no response"
@@ -193,8 +197,18 @@ class WorldModel:
         return self.belief.best_room(self.robot_room, lambda a, b: room_hops(a, b, blocked), exclude)
 
     # ------------------------------------------------------------------ mission
-    def start_mission(self, sound: str) -> None:
-        target = str(SOUND_SOURCES[sound]["target_landmark"])
+    def say(self, text: str, kind: str = "info") -> None:
+        """What Nudge shows / speaks to the owner right now (published as `nudge_says`)."""
+        self.nudge_says = {"text": text, "kind": kind, "t": round(self.t_sim, 1)}
+        self.log(f'NUDGE SAYS: "{text}"')
+
+    def start_request(self, target: str, text: str) -> None:
+        """Owner asked to be taken somewhere ("take me to the kitchen"): a mission with no sound."""
+        self.start_mission("request", target=target)
+        self.mission["request_text"] = text
+
+    def start_mission(self, sound: str, target: Optional[str] = None) -> None:
+        target = target or str(SOUND_SOURCES[sound]["target_landmark"])
         self.mission = {"sound": sound, "target": target, "started": time.monotonic(),
                         "started_sim": self.t_sim}
         self.last_result = None
@@ -251,4 +265,11 @@ class WorldModel:
             "owner_room_probability": {r: round(p, 2) for r, p in self.belief.top(4)},
             "owner_acknowledged": self.owner_ack == "acknowledged",
             "evacuation_exit": self.evac_target() if self.is_emergency() else None,
+            "owner_rules": self.rules.summaries(),
         }
+
+    def avoid_for_planning(self) -> Tuple[List[Tuple[float, float, float, float]], Optional[float]]:
+        """(rectangles, cost) for the navigator: owner's no-go areas are walls normally, and only a
+        cost during an emergency (danger sounds override place rules)."""
+        rects = self.rules.avoid_rects()
+        return rects, (EMERGENCY_AREA_COST if self.is_emergency() else None)

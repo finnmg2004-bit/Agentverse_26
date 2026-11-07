@@ -96,6 +96,12 @@ def deterministic_policy(event: str, world) -> Dict[str, Any]:
         return {"tool": "get_state", "args": {}}
     sound, target = mission["sound"], mission["target"]
 
+    if event == "user_command":  # owner asked to be taken somewhere
+        if world.guiding_active or world.dist_to_owner() < 1.6:
+            return {"tool": "guide_owner_to", "args": {"target": target}}
+        if world.owner_recently_seen(3.0):
+            return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
+        return {"tool": "go_to_room", "args": {"room": world.best_search_room()}}
     if event == "owner_no_response":
         if world.nudge_attempts < MAX_NUDGES:
             return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
@@ -131,7 +137,14 @@ EVENT_TEXT = {
     "handle_taken": "The owner took your handle.",
     "path_blocked": "Your LiDAR found the planned route blocked.",
     "timeout": "Your last action took too long.",
+    "user_command": "The owner just asked you to do something.",
 }
+
+
+def _areas_text(world) -> str:
+    """Owner's no-go areas in words, e.g. 'the new carpet in the living room' ('' if none)."""
+    from rules import area_label
+    return " and ".join(area_label(a) for a in world.rules.avoid_areas())
 
 
 def _label(room: Optional[str]) -> str:
@@ -149,7 +162,8 @@ def _walk_m(world, goal) -> float:
         if _PLANNER is None:
             from sim.nav_map import GridPlanner, load_or_build
             _PLANNER = GridPlanner(load_or_build(verbose=False))
-        wps = _PLANNER.plan((x, y), goal, set(world.blocked_doors))
+        rects, cost = world.avoid_for_planning()
+        wps = _PLANNER.plan((x, y), goal, set(world.blocked_doors), rects, cost)
         if wps:
             pts = [(x, y)] + [(w[0], w[1]) for w in wps]
             return sum(((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in zip(pts, pts[1:]))
@@ -178,6 +192,8 @@ def _situation(event: str, world) -> List[str]:
                              f"(more than 20 s: emergency services should be called now).")
             elif world.nudge_attempts >= 2 and not world.guiding_active:
                 lines.append("The owner is not responding in a fire (emergency services should be called).")
+        elif sound == "request":
+            lines.append(f"The owner asked: \"{m.get('request_text', '')}\". Goal: take the owner to {m['target']}.")
         else:
             lines.append(f"Sound: {sound}{where}. Goal: bring the owner to {m['target']}.")
     if world.guiding_active:
@@ -195,6 +211,12 @@ def _situation(event: str, world) -> List[str]:
         lines.append(f"The owner has not acknowledged yet after {world.nudge_attempts} nudge(s).")
     if world.blocked_doors:
         lines.append("Blocked doorways seen by LiDAR: " + ", ".join(sorted(world.blocked_doors)) + ".")
+    rules = world.rules.summaries()
+    if rules:
+        lines.append("The owner's rules: " + "; ".join(rules) + ".")
+        if world.is_emergency() and world.rules.avoid_areas():
+            lines.append("In a fire you may break a place rule ONLY if it is clearly faster or safer "
+                         "- then say why in your reason.")
     if world.is_emergency() and world.evac:
         for target, d in world.evac.get("details", {}).items():
             if d.get("unavailable"):
@@ -217,18 +239,31 @@ def build_menu(event: str, world) -> Tuple[List[str], List[Dict[str, Any]]]:
     sound, emergency = m["sound"], world.is_emergency()
 
     # Leading the owner (after an alert, or while they hold the handle)
-    lead_now = world.guiding_active or event in ("owner_alerted", "handle_taken", "path_blocked")
+    lead_now = (world.guiding_active or event in ("owner_alerted", "handle_taken", "path_blocked")
+                or (event == "user_command" and world.dist_to_owner() < 1.6))
+    keep_off = _areas_text(world)
     if lead_now or event == "owner_no_response":
         if emergency and world.evac:
             for target, d in world.evac.get("details", {}).items():
                 if d.get("unavailable"):
                     continue
-                add("guide_owner_to", {"target": target},
-                    f"lead the owner out via {target}: {d['length']:.0f} m walk, "
-                    f"route passes {d['fire_dist']:.1f} m from the fire")
+                if d.get("around_ok", True):
+                    add("guide_owner_to", {"target": target},
+                        f"lead the owner out via {target}: {d['length']:.0f} m walk, "
+                        f"route passes {d['fire_dist']:.1f} m from the fire"
+                        + (f", keeps off {keep_off}" if keep_off else ""))
+                if "cross_length" in d:
+                    add("guide_owner_to", {"target": target, "via": "across"},
+                        f"lead the owner out via {target} ACROSS {keep_off} (breaks the owner's rule): "
+                        f"{d['cross_length']:.0f} m walk"
+                        + (f" instead of {d['length']:.0f} m" if d.get("around_ok", True) else
+                           " (no other way)")
+                        + f", route passes {d['cross_fire_dist']:.1f} m from the fire")
         elif not emergency:
+            why = "where they asked to go" if sound == "request" else f"where the {sound} needs them"
             add("guide_owner_to", {"target": m["target"]},
-                f"lead the owner by the handle to {m['target']} (where the {sound} needs them)")
+                f"lead the owner by the handle to {m['target']} ({why})"
+                + (f", route keeps off {keep_off}" if keep_off else ""))
 
     # Nudging (again)
     if not world.guiding_active and world.owner_recently_seen(4.0) and world.owner_pos is not None:
@@ -254,7 +289,7 @@ def build_menu(event: str, world) -> Tuple[List[str], List[Dict[str, Any]]]:
             metres = _walk_m(world, ROOMS[r]["center"])
             add("go_to_room", {"room": r},
                 f"search the {_label(r)}: owner probability {p:.0%}, about {metres:.0f} m walk "
-                f"(~{metres / 0.9:.0f} s)")
+                f"(~{metres / 0.9:.0f} s)" + (f", keeping off {keep_off}" if keep_off else ""))
 
     # Make sure the rules' own choice is always on the menu (it is legal by construction).
     rule = deterministic_policy(event, world)
@@ -298,18 +333,22 @@ def explain_decision(event: str, action: Dict[str, Any], world) -> str:
     args = action.get("args") or {}
     mission = world.mission or {}
     prefix = "SMOKE ALARM protocol: " if world.is_emergency() else ""
+    keep_off = _areas_text(world)
     if tool == "alert_owner":
         return (f"{prefix}owner located in the {_label(world.owner_room)} -> walk up, nudge them and give "
                 f"the {args.get('sound', mission.get('sound', '?'))} vibration code")
     if tool == "go_to_room":
         searched = ", ".join(sorted(world.searched_rooms)) or "none yet"
         return (f"{prefix}owner not in view after '{event}' -> search the most likely room "
-                f"'{args.get('room')}' (searched: {searched})")
+                f"'{args.get('room')}' (searched: {searched})" + (f", keeping off {keep_off}" if keep_off else ""))
     if tool == "look_around":
         return f"{prefix}in the {_label(world.robot_room)} but owner not visible -> spin to scan with the camera"
     if tool == "guide_owner_to":
         why = "owner is holding the handle" if world.guiding_active else f"owner has been alerted ('{event}')"
-        return f"{prefix}{why} -> lead them to {args.get('target')}"
+        if args.get("via") == "across":
+            return (f"{prefix}{why} -> lead them to {args.get('target')} ACROSS {keep_off}: the fire overrides "
+                    f"the owner's place rule because that route is much shorter")
+        return f"{prefix}{why} -> lead them to {args.get('target')}" + (f", keeping off {keep_off}" if keep_off else "")
     if tool == "get_state":
         return "no active task -> stay put"
     return f"{prefix}{tool}({', '.join(str(v) for v in args.values())})"

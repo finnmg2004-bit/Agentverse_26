@@ -232,6 +232,20 @@ CHAIR_STOWED_POS: Vec3 = (-13.8, -3.6, 0.0)  # guest-room corner, out of the way
 # evacuation planner must pick another exit.
 CHAIR_EXIT_POS: Vec3 = (EXITS["exit_back"]["pos"][0], EXITS["exit_back"]["pos"][1], 0.0)
 
+# --------------------------------------------------------------------------- #
+# Named floor areas the owner can ask the robot to keep off (AGENTS.md 9.3 / 9.4 hand-off).
+# Rectangles (x0, y0, x1, y1). The brain plans around them once a rule is active
+# (nudge-brain/rules.py); the sim draws the visible object (Sean's lane: adjust here, one source).
+# living_room_carpet: open floor between the coffee table and the armchair by the dining arch;
+# the direct entry -> owner route crosses it, and a route around it (north side) exists.
+# --------------------------------------------------------------------------- #
+AVOID_AREAS: Dict[str, Rect] = {
+    "living_room_carpet": (-10.6, 2.6, -7.8, 4.2),
+}
+AVOID_AREA_LABELS: Dict[str, str] = {
+    "living_room_carpet": "the new carpet in the living room",
+}
+
 # Each exterior exit -> the LANDMARKS name just outside it (evacuation targets).
 EXIT_TARGETS: Dict[str, str] = {
     "exit_front": "front_door_outside",
