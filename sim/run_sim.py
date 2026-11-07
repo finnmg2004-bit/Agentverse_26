@@ -355,6 +355,33 @@ class NudgeSimulator:
         self.sub_sock.close()
 
 
+class RealTimePacer:
+    """Keeps simulated time locked to wall-clock time.
+
+    Sleeping after every 2 ms step loses time: each short sleep overshoots (~1.5 ms asked,
+    ~1.8 ms taken on Windows), which capped the sim at ~0.8x real time even though one step
+    only costs ~0.14 ms. Instead track a running deadline and sleep only when ahead of it,
+    so an overshoot on one step is made up on the next. If the sim falls far behind (e.g.
+    the window is being dragged), resync rather than fast-forwarding to catch up.
+    """
+
+    MAX_LAG_S = 0.25
+
+    def __init__(self, dt: float) -> None:
+        self.dt = dt
+        self.t0 = time.perf_counter()
+        self.steps = 0
+
+    def wait(self) -> None:
+        self.steps += 1
+        now = time.perf_counter()
+        ahead = self.t0 + self.steps * self.dt - now
+        if ahead > 0.002:
+            time.sleep(ahead - 0.001)
+        elif ahead < -self.MAX_LAG_S:
+            self.t0, self.steps = now, 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Nudge MuJoCo Simulator & ZMQ Server")
     parser.add_argument("--headless", action="store_true", help="Run without GUI window")
@@ -383,15 +410,13 @@ def main() -> None:
 
     try:
         if args.headless:
+            pacer = RealTimePacer(dt)
             start_wall = time.perf_counter()
             while True:
-                step_start = time.perf_counter()
                 sim.step_once(dt)
                 if args.duration > 0.0 and (time.perf_counter() - start_wall) >= args.duration:
                     break
-                elapsed = time.perf_counter() - step_start
-                if elapsed < dt:
-                    time.sleep(dt - elapsed)
+                pacer.wait()
         else:
             with mujoco.viewer.launch_passive(
                 sim.model, sim.data, key_callback=sim.glfw_key_callback
@@ -407,8 +432,8 @@ def main() -> None:
                 start_wall = time.perf_counter()
                 last_sync = 0.0
                 shown_overlay = None
+                pacer = RealTimePacer(dt)
                 while viewer.is_running():
-                    step_start = time.perf_counter()
                     sim.step_once(dt)
                     now_wall = time.perf_counter()
                     if now_wall - last_sync >= (1.0 / 60.0):
@@ -421,9 +446,7 @@ def main() -> None:
                         last_sync = now_wall
                     if args.duration > 0.0 and (now_wall - start_wall) >= args.duration:
                         break
-                    elapsed = time.perf_counter() - step_start
-                    if elapsed < dt:
-                        time.sleep(dt - elapsed)
+                    pacer.wait()
     finally:
         sim.close()
 
