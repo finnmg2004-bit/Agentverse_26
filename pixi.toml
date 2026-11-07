@@ -1,20 +1,14 @@
-[project]
+[workspace]
 name = "nudge"
 version = "0.1.0"
 description = "Nudge: Embodied quadruped assistance dog for deafblind owners (Agentverse 2026)"
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+platforms = ["linux-64", "win-64"]
 
 [tasks]
-# Clone Go2 model from MuJoCo Menagerie if not already present
+# Clone Go2 model from MuJoCo Menagerie if not already present (cross-platform Python)
 fetch-go2 = """
-bash -c 'if [ ! -d "mujoco_menagerie/unitree_go2" ]; then
-  git clone --depth 1 --filter=blob:none --sparse https://github.com/google-deepmind/mujoco_menagerie.git &&
-  cd mujoco_menagerie &&
-  git sparse-checkout set unitree_go2;
-else
-  echo "unitree_go2 already present.";
-fi'
+python -c "import os, subprocess; (subprocess.run(['git', 'clone', '--depth', '1', '--filter=blob:none', '--sparse', 'https://github.com/google-deepmind/mujoco_menagerie.git'], check=True), subprocess.run(['git', '-C', 'mujoco_menagerie', 'sparse-checkout', 'set', 'unitree_go2'], check=True)) if not os.path.isdir('mujoco_menagerie/unitree_go2') else print('unitree_go2 already present.')"
 """
 
 # Fetch the nerv-world house scene + its Unitree Go2 (git submodule, shallow, ~390 MB)
@@ -23,11 +17,21 @@ fetch-world = "git submodule update --init --depth 1 worlds/nerv-world"
 # Headless check that sim/house_layout.py coordinates agree with the compiled nerv-world house
 check-world = { cmd = "python sim/check_world.py", depends-on = ["fetch-world"] }
 
-# View the nerv-world house with the Go2 standing at the Nudge start pose
+# View the nerv-world house with the Go2 standing at the Nudge start pose (default / Windows)
+house = { cmd = "python sim/view_house.py", depends-on = ["fetch-world"] }
+
+# Full sim pipeline (hotkeys + ZMQ) — still on the LEGACY 10x8 m box house until ported (default / Windows)
+sim = "python sim/run_sim.py"
+
+# Run the Nudge Brain process (default / Windows)
+brain = "python nudge-brain/main.py"
+
+[target.linux-64.tasks]
+# View the nerv-world house (forces X11/GLFW compatibility on Linux Wayland/X11)
 house = { cmd = "python sim/view_house.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" }, depends-on = ["fetch-world"] }
 
-# Full sim pipeline (hotkeys + ZMQ) — still on the LEGACY 10x8 m box house until ported
-sim = { cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" } }
+# Full sim pipeline on the legacy box house (forces X11/GLFW compatibility on Linux Wayland/X11)
+sim ={ cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" } }
 
 # Run the Nudge Brain process (perception, navigation, agent, safety, live dashboard)
 brain = { cmd = "python nudge-brain/main.py", env = { GDK_BACKEND = "x11" } }
@@ -38,6 +42,8 @@ pip = ">=24.0"
 numpy = ">=1.26,<2.0"
 scipy = ">=1.12"
 pyzmq = ">=25.1"
+
+[target.linux-64.dependencies]
 # Linux GLFW / X11 / OpenGL runtime libs so MuJoCo viewer doesn't fail on missing .so files
 glfw = ">=3.3"
 libgl-devel = "*"

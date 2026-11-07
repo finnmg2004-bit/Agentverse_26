@@ -374,5 +374,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(f"\n[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"\n[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)

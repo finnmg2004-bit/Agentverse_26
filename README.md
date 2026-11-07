@@ -9,7 +9,7 @@ The world is the **nerv-world house** ([Yanshi-Robotics/nerv-assets](https://git
 ---
 
 ## Requirements
-- Linux x86-64 with an OpenGL-capable GPU/driver (X11 or Wayland via XWayland)
+- Linux x86-64 (X11 or Wayland via XWayland) or Windows x64, with an OpenGL-capable GPU/driver
 - [pixi](https://pixi.sh) (`curl -fsSL https://pixi.sh/install.sh | bash`)
 - git, plus about 1 GB of disk for the environment and the world assets
 
@@ -54,7 +54,7 @@ The sim/brain pipeline (hotkeys, owner, chair, sensors, ZMQ) still runs on the *
 ```bash
 pixi run fetch-go2     # once: Menagerie Go2 used by the legacy scene
 pixi run sim           # terminal 1: simulator + viewer + ZMQ server (:5555 out, :5556 in)
-pixi run brain         # terminal 2: brain process (nudge-brain/main.py, still being written)
+pixi run brain         # terminal 2: brain (perception, navigator, agent, safety, dashboard)
 ```
 Hotkeys in the viewer window:
 
