@@ -247,9 +247,11 @@ class OwnerBehavior:
                 print("[sim] owner LETS GO of the handle", flush=True)
         else:
             # Re-grab once they've steadied themselves and the handle is within reach.
+            from sim.locomotion import OWNER_OFFSET_BODY  # where the owner stands on the handle
             rx, ry, ryaw = robot_pose
-            hx = rx - 0.50 * math.cos(ryaw)
-            hy = ry - 0.50 * math.sin(ryaw)
+            bx, by = OWNER_OFFSET_BODY
+            hx = rx + bx * math.cos(ryaw) - by * math.sin(ryaw)
+            hy = ry + bx * math.sin(ryaw) + by * math.cos(ryaw)
             ox, oy = loco.get_owner_pos()
             if t >= self.let_go_until and math.hypot(hx - ox, hy - oy) < REGRAB_REACH:
                 loco.owner_grip = True
