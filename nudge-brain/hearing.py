@@ -3,7 +3,7 @@
 Milestone 6a: Local Acoustic Perception (`nudge-brain/hearing.py`).
 Performs:
   1. 16 kHz audio classification of every sound in the registry `SOUND_SOURCES`
-     (`doorbell`, `knock`, `smoke_alarm`, `kettle`) or `silence`
+     (`doorbell`, `knock`, `smoke_alarm`, `kettle`, `oven_timer`) or `silence`
      using local YAMNet TFLite (`assets/models/yamnet.tflite`, get it with `pixi run fetch-models`)
      fused with a multi-band spectral classifier fallback. YAMNet is multi-label, so
      simultaneous sounds (e.g. `smoke_alarm` pre-empting `doorbell`) are both scored.
@@ -37,6 +37,7 @@ YAMNET_CLASSES: Dict[str, Tuple[str, ...]] = {
 }
 SOUNDS: Tuple[str, ...] = tuple(SOUND_SOURCES)
 KETTLE_TONAL_GATE = 8.0
+OVEN_TONAL_GATE = 8.0
 # Knock = short wooden bursts. Burstiness = p95 / median energy of 10 ms frames in 110-600 Hz.
 # Party music (sustained chords at 175-392 Hz, inside the knock band) used to fire the knock rule
 # in 64 % of windows with nothing knocking; real knocks are >= 279 in a quiet room. Gate at 4:
@@ -115,6 +116,15 @@ class StereoHearing:
         mapped = {sound: float(max(s[i] for i in idx)) for sound, idx in self.yamnet_index.items()}
         top = int(np.argmax(s))
         return mapped, self.yamnet_names[top], float(s[top])
+
+    @staticmethod
+    def _tonality(freqs: np.ndarray, psd: np.ndarray, band, floors) -> float:
+        """Strongest PSD bin in `band` over the median bin of the `floors` bands (pure tone >> 1)."""
+        in_band = (freqs >= band[0]) & (freqs <= band[1])
+        floor = np.zeros_like(freqs, dtype=bool)
+        for lo, hi in floors:
+            floor |= (freqs >= lo) & (freqs <= hi)
+        return float(np.max(psd[in_band]) / (np.median(psd[floor]) + 1e-14))
 
     def _burstiness(self, mono: np.ndarray, frame: int = 160) -> float:
         """p95 / median energy of 10 ms frames in the knock band (110-600 Hz)."""
@@ -265,9 +275,7 @@ class StereoHearing:
         #    over the median bin of the neighbouring 1.7-2.9 kHz: >= 19 with the kettle on anywhere in
         #    the house under every noise profile (tv / vacuum / party included), <= 3.3 without it
         #    (doorbell, knock, smoke alarm, noise). Gate at 8; confidence grows with log tonality.
-        k_band = (freqs >= 2150.0) & (freqs <= 2400.0)
-        k_floor = ((freqs >= 1700.0) & (freqs < 2100.0)) | ((freqs > 2450.0) & (freqs <= 2900.0))
-        kettle_tonal = float(np.max(psd[k_band]) / (np.median(psd[k_floor]) + 1e-14))
+        kettle_tonal = self._tonality(freqs, psd, (2150.0, 2400.0), ((1700.0, 2100.0), (2450.0, 2900.0)))
         kettle_gate = kettle_tonal > KETTLE_TONAL_GATE
         kettle_ratio = self._band_energy(freqs, psd, 2150.0, 2400.0) / total_energy
         score_kettle = 0.0
@@ -275,11 +283,21 @@ class StereoHearing:
             score_kettle = float(np.clip(max(kettle_ratio * 1.1,
                                              0.55 + 0.15 * math.log10(kettle_tonal / KETTLE_TONAL_GATE)), 0.0, 0.97))
 
+        # 5. Oven timer: 5.2 kHz piezo beeps, a band no other sound uses. Same tonality test:
+        #    >= 82 with the timer on anywhere in the house under every noise profile, <= 2.8 without.
+        oven_tonal = self._tonality(freqs, psd, (5050.0, 5400.0), ((4400.0, 4900.0), (5600.0, 6000.0)))
+        score_oven = 0.0
+        if oven_tonal > OVEN_TONAL_GATE:
+            oven_ratio = self._band_energy(freqs, psd, 5050.0, 5400.0) / total_energy
+            score_oven = float(np.clip(max(oven_ratio * 1.1,
+                                           0.55 + 0.15 * math.log10(oven_tonal / OVEN_TONAL_GATE)), 0.0, 0.97))
+
         spectral = {
             "doorbell": round(score_doorbell, 3),
             "knock": round(score_knock, 3),
             "smoke_alarm": round(score_smoke, 3),
             "kettle": round(score_kettle, 3),
+            "oven_timer": round(score_oven, 3),
         }
         for name in SOUNDS:  # a registry sound without a spectral rule relies on YAMNet alone
             spectral.setdefault(name, 0.0)

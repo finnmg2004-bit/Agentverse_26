@@ -179,6 +179,7 @@ LANDMARKS: Dict[str, Vec2] = {
     "terrace_outside":    EXITS["exit_terrace"]["outside"],  # alternative evacuation target (kitchen exit)
     "robot_dock":         (8.0, -2.7),                     # upstream ROBOT_HOME_XY
     "kettle":             (13.2, 4.2),                     # kitchen, in front of the stove (kettle on the hob)
+    "stove":              (13.2, 4.2),                     # same spot: oven timer / cooking jobs
 }
 SMOKE_EVACUATION_TARGET = "back_exit_outside"
 
@@ -261,6 +262,22 @@ SOUND_SOURCES: Dict[str, Dict[str, object]] = {
         "say": "The kettle is boiling. Hold my handle. I will take you to the kitchen.",
         "rgba_active": (1.0, 0.55, 0.05, 0.95),
         "rgba_idle": (0.5, 0.28, 0.05, 0.35),
+    },
+    "oven_timer": {                       # tier 2 "needs action": the oven timer is beeping
+        "pos": (12.85, 5.55, 1.05),         # stove control panel (upstream h2_stove at 12.7, 5.25)
+        "room": "kitchen",
+        "target_landmark": "stove",
+        "tier": 2,
+        "alert_mode": "2_pulse",
+        "level": 1.5,
+        "file": "oven_timer.wav",
+        # No YAMNet class: "Beep, bleep" is generic (0.4-0.7 on the kettle whistle and the smoke
+        # alarm) and doesn't fire on the timer clip itself (0.01). Detection = spectral rule only.
+        "yamnet": (),
+        "label": "Oven timer",
+        "say": "The oven timer is beeping. Hold my handle. I will take you to the stove.",
+        "rgba_active": (1.0, 0.85, 0.3, 0.95),
+        "rgba_idle": (0.5, 0.42, 0.15, 0.35),
     },
 }
 SOUND_TIERS: Dict[str, int] = {name: int(spec["tier"]) for name, spec in SOUND_SOURCES.items()}

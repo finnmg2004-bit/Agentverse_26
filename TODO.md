@@ -14,6 +14,7 @@ Owners follow AGENTS.md section 9.1.
 - [x] Voice input: mic -> Whisper -> wake word "Nudge" -> `user_command` (:5558)
 - [x] One new tiered sound: **kettle** (tier 2, hotkey `J`), registry fields `tier`/`file`/`yamnet`/`label`/`say`, scenarios `kettle`, `kettle_during_doorbell`
 - [x] Knock rule false-fired under `party` noise (64 % of windows with nothing knocking): burstiness gate in `hearing.py`; now 0 false alerts from noise alone under all 5 profiles, knocks still heard at entry / start / front door
+- [x] Second tier-2 sound: **oven timer** (hotkey `T`, landmark `stove`, scenario `oven_timer`)
 - [ ] Real recordings instead of the synthesized placeholder clips (stretch)
 - [ ] Tell Sean: light bar shows the kettle as "knock" (yellow x2) because it infers the sound from `2_pulse`; add `SOUND_INFO["kettle"]` (amber) once the `alert` event carries the sound. Tell Eden: GUI has no kettle button / bar yet (`gui` key action `{"action": "key", "key": "J"}` works)
 

@@ -218,6 +218,18 @@ def ensure_audio_assets() -> Dict[str, np.ndarray]:
         sig = np.clip(sig / (np.max(np.abs(sig)) + 1e-6) * 0.9, -0.98, 0.98)
         wavfile.write(str(kettle_path), SAMPLE_RATE, (sig * 32767).astype(np.int16))
 
+    # 5. Oven timer (tier 2): piezo beeps at 5.2 kHz, 0.1 s on / 0.15 s off (two beeps in every
+    #    0.5 s window). 5.2 kHz is free of every other detector's bands (knock <= 0.6 kHz, doorbell
+    #    <= 2.05 kHz, kettle 1.7-2.9 kHz, smoke 2.45-3.9 and 6.1-6.5 kHz) and above the TV/party babble.
+    oven_path = AUDIO_DIR / "oven_timer.wav"
+    if not oven_path.exists():
+        t_mod = np.mod(t, 0.25)
+        on = t_mod < 0.10
+        ramp = np.clip(np.minimum(t_mod, 0.10 - t_mod) / 0.005, 0.0, 1.0) * on  # 5 ms fades: no clicks
+        tone = 0.85 * np.sin(2.0 * np.pi * 5200.0 * t) + 0.15 * np.sin(2.0 * np.pi * 5240.0 * t)
+        sig = np.clip(tone * ramp * 0.9, -0.98, 0.98)
+        wavfile.write(str(oven_path), SAMPLE_RATE, (sig * 32767).astype(np.int16))
+
     clips: Dict[str, np.ndarray] = {}
     for name, spec in SOUND_SOURCES.items():
         path = AUDIO_DIR / str(spec.get("file", f"{name}.wav"))

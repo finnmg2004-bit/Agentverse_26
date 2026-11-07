@@ -58,6 +58,13 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["alert_owner(kettle", "guide_owner_to(kettle)"],
         "expect_alert": ["2_pulse"],
     },
+    "oven_timer": {
+        "desc": "Oven timer (tier 2, kitchen) -> find owner in living room -> 2 pulses -> guide to the stove",
+        "actions": [("at", 1.0, "T")],
+        "expect_complete": ["oven_timer"],
+        "expect_log": ["alert_owner(oven_timer", "guide_owner_to(stove)"],
+        "expect_alert": ["2_pulse"],
+    },
     "kettle_during_doorbell": {
         "desc": "Doorbell mission running, kettle starts -> deferred (not merged into the doorbell) -> "
                 "doorbell completes first, then the kettle mission runs",

@@ -16,12 +16,12 @@
 
 ## 2. Project Summary: "Nudge"
 A quadruped robot assistance dog (**Unitree Go2**) for **deaf, blind, and deafblind owners**, living in a furnished house (the **nerv-world "house"** scene, ground floor).
-1. Listens continuously through simulated stereo ears (left/right microphones) and classifies household sounds locally via **YAMNet** (target: the full sound registry below; currently implemented: `doorbell`, `knock`, `smoke_alarm`, `kettle`).
+1. Listens continuously through simulated stereo ears (left/right microphones) and classifies household sounds locally via **YAMNet** (target: the full sound registry below; currently implemented: `doorbell`, `knock`, `smoke_alarm`, `kettle`, `oven_timer`).
 2. Finds the owner inside the house using room-to-room doorway navigation, 2D LiDAR rangefinders for obstacle avoidance, and a local **YOLO nano** person detector on the head RGB-D camera.
 3. Alerts the owner by physical contact (**nudge**) + **multimodal alert outputs** (haptic handle, coloured LED, on-robot screen, spoken message — see 2.2).
 4. Guides the owner to the sound source (e.g. Front Door, Kitchen) or evacuates them out the **Back Door** (living-room garden door, west side) in an emergency.
 
-### 2.1 Sound Registry & Response Tiers (agreed design — registry + kettle implemented; per-tier haptic patterns and tier pre-emption not yet)
+### 2.1 Sound Registry & Response Tiers (agreed design — registry + kettle + oven timer implemented; per-tier haptic patterns and tier pre-emption not yet)
 Modelled on what real hearing dogs are trained to alert to. Sounds are grouped by **what Nudge does**, not one rule per sound, so adding a sound is a data change (a registry entry in `sim/house_layout.py` + a YAMNet/AudioSet class mapping), and pre-emption is by **priority tier**, not a hardcoded `smoke_alarm` check.
 
 | Tier | Sounds | Haptic | LED | Nudge's response |
@@ -189,7 +189,8 @@ See README.md for the step-by-step guide.
   - `doorbell`: (-0.2, -4.35, 1.9) in `entry` → `front_door`, `1_pulse`, level 1
   - `knock`: (-1.4, -4.45, 1.0) in `entry` (front door leaf) → `front_door`, `2_pulse`, level 1
   - `smoke_alarm`: (11.0, 4.2, 2.55) in `kitchen` (ceiling) → `back_exit_outside`, `continuous`, level 4, tier 1
-  - `kettle`: (12.55, 5.2, 1.0) on the kitchen stove → landmark `kettle` (13.2, 4.2), `2_pulse`, level 2, tier 2. Hotkey `J` / `7`. Owner in the living room → kitchen is ~27 m of guiding (~100 s mission), so it is too long for the 60 s video unless the owner starts nearer the kitchen.
+  - `kettle`: (12.55, 5.2, 1.0) on the kitchen stove → landmark `kettle` (13.2, 4.2), `2_pulse`, level 2, tier 2. Hotkey `J` / `7`.
+  - `oven_timer`: (12.85, 5.55, 1.05) stove control panel → landmark `stove` (same spot as `kettle`), `2_pulse`, level 1.5, tier 2, 5.2 kHz beeps (spectral rule only; YAMNet's generic "Beep, bleep" fires on the kettle and smoke alarm, so it is not mapped). Hotkey `T` / `8`. Owner in the living room → kitchen is ~27 m of guiding (~100 s mission), so it is too long for the 60 s video unless the owner starts nearer the kitchen.
 - **Chair obstacle**: `CHAIR_DOORWAY_POS` (-7.6, 0.6, 0) blocks `door_guest_living`; `CHAIR_STOWED_POS` (-13.8, -3.6, 0); radius 0.22 m.
 - **Helpers**: `get_room_at(x, y)` (room / `"stair_core"` / `"outside"`), `room_at()` (None outside), `get_landmark_room()`, `room_graph()`, `count_walls_crossed(p1, p2)`, `WALL_SEGMENTS_2D` (dashboard + acoustic occlusion).
 
@@ -285,6 +286,7 @@ Reasoning to add, best demo value first:
 - **`B` or `1`**: Ring **Doorbell** (Entry hall, front door)
 - **`K` or `2`**: **Knock** on Front Door (Entry hall)
 - **`M` or `3`**: Trigger **Smoke Alarm** (Kitchen ceiling — Emergency)
+- **`T` or `8`**: **Oven timer** beeping on the kitchen stove (tier 2, like the kettle; Nudge guides the owner to the stove).
 - **`J` or `7`**: **Kettle** whistling on the kitchen stove (tier 2: 2 pulses, Nudge guides the owner to the kettle). During another mission for a different place it is deferred and alerted afterwards.
 - **`O` or `4`**: Cycle **Owner** room (`OWNER_ROOM_CYCLE`: `living_room` -> `guest` -> `dining` -> `family_room`)
 - **`C` or `5`**: Toggle **Chair** obstacle in `door_guest_living` (-7.6, 0.6)
@@ -320,7 +322,7 @@ One window: live 3D view streamed from the sim (drag = orbit, right-drag = pan, 
 - [x] **M4**: Simulated sensors (`sim/sensors.py`): Head RGB-D camera, 2D LiDAR rangefinders (per-ray `mj_ray`), and synthetic stereo ear audio from WAV clips (currently synthesized placeholder tones, see 2.1) with distance/wall attenuation.
 - [x] **M5**: ZeroMQ bridge (`sim/run_sim.py` <-> `nudge-brain/bridge.py`).
 - [x] **M6**: Local perception. Models via `pixi run fetch-models` (gitignored, SHA-256 pinned, into `assets/models/`). `hearing.py`: YAMNet TFLite (`ai-edge-litert`) on a rolling ~1 s buffer, fused per sound with the spectral rules (`sources` says which won; `NUDGE_HEARING_FALLBACK=0` = YAMNet only) + stereo azimuth. YAMNet hears the smoke alarm clip, but the synthesized doorbell/knock placeholders read as "Music", so those still come from the spectral rules until real recordings land (M6b). `vision.py`: YOLOv8n ONNX via onnxruntime (~60 ms/frame CPU), HSV + depth fallback when YOLO finds nobody (`NUDGE_VISION_FALLBACK=0` = YOLO only); with the scanned owner (`pixi run prepare-owner`) YOLO detects her on its own, so the demo can run with `NUDGE_VISION_FALLBACK=0`.
-- [~] **M6b**: Sound registry with response tiers (2.1): **done** — per-sound data in the registry (tier, clip, YAMNet classes, label, say), kettle + hotkey `J`, YAMNet class mapping. **Open** — real audio clips, per-tier haptic patterns, tier-based pre-emption.
+- [~] **M6b**: Sound registry with response tiers (2.1): **done** — per-sound data in the registry (tier, clip, YAMNet classes, label, say), kettle (`J`) + oven timer (`T`), YAMNet class mapping, knock no longer fooled by party music. **Open** — real audio clips, per-tier haptic patterns, tier-based pre-emption.
 - [x] **M7**: Plain-code navigator (`navigator.py`: static floor-plan map + Dijkstra with clearance cost, doorway tags, LiDAR skirt + LiDAR blocked-doorway re-planning), `world_model.py`, and `alerts.py`.
 - Verified headless in the nerv house (real head-camera renders): demo story doorbell → owner moved → search → alert → guide → smoke pre-emption (0.6 s) → evacuation outside the back door; chair-blocked door → LiDAR re-plan via the entry hall.
 - [ ] **M7b**: Multimodal alert outputs (2.2): tier-coloured LED, on-robot screen texture, local TTS speaker, owner profile; tier → haptic/LED/screen/speech mapping in `alerts.py`; new `alert` event in the `cmd` contract.
@@ -385,6 +387,7 @@ Backup: if voice isn't solid by the freeze, type the same sentence in the GUI. V
 - **Verified end to end (2026-11-07):** scenario `carpet_rule_voice` speaks `assets/audio/voice/carpet_rule.wav` through the real `voice.py` (Whisper, wake word, :5558) -> brain `OWNER SAID (voice)` -> Gemma parses `avoid_area` (1.5 s) -> `RULE #1` -> doorbell route never steps on the carpet. Test runner action `("voice", t, "<clip>")` runs `voice.py --file` (add clips with `speech.tts.save_wav`).
 - **Env var:** `voice.py` reads `NUDGE_VOICE_PUB` (same as the brain's `rules.py`; `NUDGE_VOICE_ENDPOINT` still works as an alias).
 - **Kettle (tier-2 sound) done:** see 2.1 and 4. Scenarios `kettle` (find owner -> 2 pulses -> guide to the stove, ~100 s) and `kettle_during_doorbell` (experimental, run by name: the sim judge flakes like the doorbell one, see TODO.md) (kettle during a doorbell mission is deferred, not merged into it — `main.py` used to rename the doorbell mission to the kettle while still heading for the front door — then runs once the doorbell is done). Hearing sweep: kettle heard >= 0.5 at every room / heading under all 5 noise profiles; no kettle false positives from doorbell / knock / smoke / noise (max 0.08); smoke still >= 0.6 with the kettle on. Known, older: under `party` noise the knock rule false-fires (0.67) with nothing knocking, and can outvote a distant kettle.
+- **2026-11-08 morning:** (1) knock rule no longer fires on party music (burstiness gate; noise-only false alerts 0/144 under every profile, was 92/144 under `party`); (2) **oven timer** (tier 2, 5.2 kHz beeps, hotkey `T`, landmark `stove`, scenario `oven_timer` 97 s). Full cross-sound sweep (5 sounds x 5 noise profiles x 17 spots): each sound heard as itself, kettle + oven both scored together, smoke >= 0.6 over both, no oven false positives, noise alone never >= 0.5.
 - **Laptop mic gotcha**: if the mic is clipping (Linux: `Internal Mic Boost` at max), voice prints `WARNING: mic is clipping`; fix with `amixer -c <card> sset 'Internal Mic Boost' 0`. Muted mic → `WARNING: mic muted or silent?` (`wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`).
 
 ### 9.5c Merging your work with the voice work (for teammates AND their AI assistants — read before `git pull`)
