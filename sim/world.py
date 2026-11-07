@@ -39,6 +39,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sim import house_layout as H  # noqa: E402
+from sim.guide_handle import add_guide_handle  # noqa: E402
 from sim.lightbar import add_lightbar  # noqa: E402
 
 SCENE_XML = PROJECT_ROOT / H.WORLD_SCENE_XML
@@ -238,18 +239,16 @@ def _add_scanned_owner(spec: mujoco.MjSpec, owner) -> bool:
 
 def add_nudge_entities(spec: mujoco.MjSpec) -> None:
     """
-    Head camera, guide handle and haptic halo on the Go2; owner and chair mocap bodies;
+    Head camera, pop-up guide handle and light bar on the Go2; owner and chair mocap bodies;
     sound beacons. Same geometry as the original box-house scene.
     """
     G = mujoco.mjtGeom
     base = spec.body("base")
     # Forward-looking head camera (camera looks along -Z: x=(0,-1,0), y=(0,0,1) -> looks along +X)
     base.add_camera(name="head_cam", pos=[0.30, 0.0, 0.12], quat=_xyaxes_quat([0, -1, 0], [0, 0, 1]), fovy=60.0)
-    # Guide handle bar + haptic pulse halo (robot-visual group 2, no contacts)
-    base.add_geom(name="guide_handle_bar", type=G.mjGEOM_CAPSULE, fromto=[-0.05, 0.08, 0.08, -0.22, 0.14, 0.24],
-                  size=[0.014, 0, 0], rgba=[0.9, 0.85, 0.2, 1.0], contype=0, conaffinity=0, group=2)
-    base.add_geom(name="alert_halo", type=G.mjGEOM_SPHERE, pos=[-0.15, 0.0, 0.26], size=[0.065, 0, 0],
-                  rgba=[0.2, 0.9, 0.4, 0.0], contype=0, conaffinity=0, group=2)
+    # Pop-up guide handle (sim/guide_handle.py): retracts flush into a dock, telescopes out for the owner
+    add_guide_handle(spec, "base")
+    # (The old floating `alert_halo` sphere is gone: the light bar shows alerts, the grip shows the haptic code.)
 
     wb = spec.worldbody
     # Sound beacons (visual only)
@@ -302,7 +301,7 @@ def apply_cutaway(model: mujoco.MjModel, data: mujoco.MjData, z_cut: float = H.W
 
 
 def build_nudge_model(verbose: bool = True, cutaway: bool = True) -> Tuple[mujoco.MjModel, mujoco.MjData]:
-    """Full Nudge scene: house + Go2 + head_cam/handle/halo + owner + chair + beacons."""
+    """Full Nudge scene: house + Go2 + head_cam/handle/light bar + owner + chair + beacons."""
     spec = load_spec(verbose)
     add_nudge_entities(spec)
     model = spec.compile()

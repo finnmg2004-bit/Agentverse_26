@@ -36,8 +36,8 @@ import mujoco
 import numpy as np
 
 LIGHTBAR_DIR = Path(__file__).resolve().parent.parent / "assets" / "lightbar"
-# Mounted across the back on `base`, behind the head camera (x = 0.30) and in front of the guide handle.
-MOUNT_POS = [0.04, 0.0, 0.072]
+# Mounted across the front of the back on `base`, behind the head camera (x = 0.30), ahead of the handle hinge.
+MOUNT_POS = [0.15, 0.0, 0.077]
 LENSES = ("red", "center", "blue")
 GLOW_SCALE = 1.45  # glow shell half-size relative to the lens bounding box
 

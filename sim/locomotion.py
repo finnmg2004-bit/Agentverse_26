@@ -8,9 +8,10 @@ Supports:
   - Plan B (Default): Kinematic base integration on `qpos[0:7]` with house (static nav-map
     clearance field: walls + furniture), chair and owner collision clamping, upright attitude stabilization, and speed-scaled sinusoidal
     trotting leg animation on `qpos[7:19]` (kinematic: no ctrl, no mj_step).
-  - Owner guiding physics: Smoothly moves the Owner mocap body behind the robot's
-    guide handle at <= 0.4 m/s when `guiding=True` and within 1.4 m.
-  - Visual haptic handle pulse indicator (`alert_halo`) on the Go2 back.
+  - Owner guiding physics: the owner walks (<= 0.4 m/s) to the guide handle when `guiding=True`
+    and within 1.55 m, then holds it rigidly on the robot's right (OWNER_OFFSET_BODY).
+  - Pop-up guide handle (`sim/guide_handle.py`) whose grip glows in the haptic code, and the
+    police-style light bar (`sim/lightbar.py`) on the Go2 back.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from sim.house_layout import (
     ROBOT_START_POSE,
     get_room_at,
 )
+from sim.guide_handle import GRIP_BASE, GuideHandle
 from sim.lightbar import LightBar
 from sim.nav_map import NavMap
 
@@ -44,6 +46,11 @@ def quat_to_yaw(quat: np.ndarray) -> float:
     siny_cosp = 2.0 * (w * z + x * y)
     cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
     return math.atan2(siny_cosp, cosy_cosp)
+
+
+# Owner centre in the robot frame while holding the handle: left hand on the grip, hand 0.12 m ahead
+# of and 0.22 m left of the owner's centre (owner faces the robot's heading).
+OWNER_OFFSET_BODY = (float(GRIP_BASE[0]) - 0.12, float(GRIP_BASE[1]) - 0.22)
 
 
 class Go2Locomotion:
@@ -67,9 +74,7 @@ class Go2Locomotion:
         self.owner_mocap_id: int = int(model.body_mocapid[owner_body_id]) if owner_body_id >= 0 else -1
         self.chair_mocap_id: int = int(model.body_mocapid[chair_body_id]) if chair_body_id >= 0 else -1
 
-        self.alert_halo_geom_id: int = mujoco.mj_name2id(
-            model, mujoco.mjtObj.mjOBJ_GEOM, "alert_halo"
-        )
+        self.handle = GuideHandle(model)
         self.lightbar = LightBar(model)
 
         # Internal state
@@ -78,6 +83,7 @@ class Go2Locomotion:
         self.pose_yaw: float = ROBOT_START_POSE[2]
         self.gait_phase: float = 0.0
         self.guiding_active: bool = False
+        self.owner_locked: bool = False
 
         self.reset_robot_pose(*ROBOT_START_POSE)
 
@@ -256,46 +262,38 @@ class Go2Locomotion:
         self.data.qpos[7:19] = joints
         self.data.qvel[:] = 0.0
 
-        # Owner guiding physics: if guiding=True and robot is within 1.45 m of Owner,
-        # Owner holds the handle offset 0.52m behind-left of the robot and walks at <= 0.4 m/s
+        # Owner guiding physics (rigid guide-dog handle). Like a real guide dog, the robot walks on the
+        # owner's LEFT, so the owner is on the robot's RIGHT, left hand on the grip. While guiding and
+        # within 1.55 m, the owner first walks (<= 0.4 m/s) to the handle; once the handle is fully out
+        # and they reach it they are LOCKED: the left hand stays on the grip and they face the robot's
+        # heading, so every stop or turn of the robot moves them (that is what the rigid handle conveys).
         self.guiding_active = False
         if guiding and self.owner_mocap_id >= 0 and dist_to_owner <= 1.55:
             self.guiding_active = True
-            target_ox = self.pose_x - 0.50 * cos_y - 0.14 * sin_y
-            target_oy = self.pose_y - 0.50 * sin_y + 0.14 * cos_y
+            bx, by = OWNER_OFFSET_BODY  # owner centre in the robot frame (behind-right)
+            target_ox = self.pose_x + bx * cos_y - by * sin_y
+            target_oy = self.pose_y + bx * sin_y + by * cos_y
             dx = target_ox - ox
             dy = target_oy - oy
             d = math.hypot(dx, dy)
-            max_step = 0.40 * dt
-            if d > 0.02:
-                step_d = min(d, max_step)
+            if self.owner_locked or (d <= 0.03 and self.handle.deployed):
+                self.owner_locked = True
+                self.data.mocap_pos[self.owner_mocap_id] = [target_ox, target_oy, 0.0]
+                self.data.mocap_quat[self.owner_mocap_id] = yaw_to_quat(self.pose_yaw)
+            elif d > 0.005:
+                step_d = min(d, 0.40 * dt)
                 new_ox = ox + (dx / d) * step_d
                 new_oy = oy + (dy / d) * step_d
-                owner_yaw = math.atan2(self.pose_y - new_oy, self.pose_x - new_ox)
+                walk_yaw = math.atan2(dy, dx) if d > 0.15 else self.pose_yaw
                 self.data.mocap_pos[self.owner_mocap_id] = [new_ox, new_oy, 0.0]
-                self.data.mocap_quat[self.owner_mocap_id] = yaw_to_quat(owner_yaw)
+                self.data.mocap_quat[self.owner_mocap_id] = yaw_to_quat(walk_yaw)
+        else:
+            self.owner_locked = False
 
-        # Update visual haptic pulse halo on the Go2 handle
-        if self.alert_halo_geom_id >= 0:
-            t = float(self.data.time)
-            if alert_mode == "1_pulse":
-                # Single cyan pulse every 1.0s
-                pulse = 1.0 if (t % 1.0) < 0.28 else 0.15
-                self.model.geom_rgba[self.alert_halo_geom_id] = [0.1, 0.9, 1.0, 0.88 * pulse]
-            elif alert_mode == "2_pulse":
-                # Double amber pulse every 1.2s
-                phase = t % 1.2
-                pulse = 1.0 if (0.0 <= phase < 0.18 or 0.30 <= phase < 0.48) else 0.15
-                self.model.geom_rgba[self.alert_halo_geom_id] = [1.0, 0.78, 0.1, 0.90 * pulse]
-            elif alert_mode == "continuous":
-                # High-frequency red emergency strobe
-                pulse = 0.55 + 0.45 * math.sin(t * 28.0)
-                self.model.geom_rgba[self.alert_halo_geom_id] = [1.0, 0.12, 0.12, float(pulse)]
-            elif alert_mode == "complete":
-                # Steady green: mission finished, owner delivered (sim-side visual only)
-                self.model.geom_rgba[self.alert_halo_geom_id] = [0.2, 0.95, 0.35, 0.85]
-            else:
-                self.model.geom_rgba[self.alert_halo_geom_id] = [0.2, 0.9, 0.4, 0.0]
+        # Pop-up guide handle: out while offering it / guiding, grip glows in the haptic code
+        self.handle.update(self.model, dt, float(self.data.time),
+                           extended=guiding or alert_mode in ("1_pulse", "2_pulse", "continuous"),
+                           alert_mode=alert_mode)
         self.lightbar.update(self.model, float(self.data.time), alert_mode)
 
         self.data.time += dt

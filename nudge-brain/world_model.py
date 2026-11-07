@@ -106,11 +106,13 @@ class WorldModel:
         self.last_state_wall = time.monotonic()
 
         # While the owner holds the handle we know where they are without seeing them:
-        # they walk at the handle point 0.5 m behind / 0.14 m left of the robot.
+        # like a real guide-dog handler they walk on the robot's RIGHT, 0.50 m behind / 0.34 m right
+        # (keep in sync with OWNER_OFFSET_BODY in sim/locomotion.py).
         if self.guiding_active:
             x, y, yaw = self.robot_pose
             c, s = math.cos(yaw), math.sin(yaw)
-            self._set_owner((x - 0.50 * c - 0.14 * s, y - 0.50 * s + 0.14 * c), "handle")
+            bx, by = -0.50, -0.34
+            self._set_owner((x + bx * c - by * s, y + bx * s + by * c), "handle")
 
     def update_owner_detection(self, det: Dict[str, Any]) -> None:
         self.last_detection = det
