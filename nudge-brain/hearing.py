@@ -19,7 +19,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 from scipy import signal
 
-from sim.house_layout import SOUND_SOURCES
+from sim.legacy_box_house import SOUND_SOURCES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

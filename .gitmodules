@@ -1,0 +1,4 @@
+[submodule "worlds/nerv-world"]
+	path = worlds/nerv-world
+	url = https://github.com/Yanshi-Robotics/nerv-assets.git
+	shallow = true

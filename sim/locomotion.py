@@ -21,7 +21,7 @@ from typing import Tuple
 import mujoco
 import numpy as np
 
-from sim.house_layout import (
+from sim.legacy_box_house import (
     CHAIR_COLLISION_RADIUS,
     ROBOT_START_POSE,
     WALL_BOXES,

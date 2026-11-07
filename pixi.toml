@@ -17,7 +17,16 @@ else
 fi'
 """
 
-# Run the MuJoCo simulation viewer (forces X11/GLFW compatibility on Linux Wayland/X11)
+# Fetch the nerv-world house scene + its Unitree Go2 (git submodule, shallow, ~390 MB)
+fetch-world = "git submodule update --init --depth 1 worlds/nerv-world"
+
+# Headless check that sim/house_layout.py coordinates agree with the compiled nerv-world house
+check-world = { cmd = "python sim/check_world.py", depends-on = ["fetch-world"] }
+
+# View the nerv-world house with the Go2 standing at the Nudge start pose
+house = { cmd = "python sim/view_house.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" }, depends-on = ["fetch-world"] }
+
+# Full sim pipeline (hotkeys + ZMQ) — still on the LEGACY 10x8 m box house until ported
 sim = { cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" } }
 
 # Run the Nudge Brain process (perception, navigation, agent, safety, live dashboard)

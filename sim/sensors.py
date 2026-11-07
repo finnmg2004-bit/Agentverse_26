@@ -19,7 +19,7 @@ import mujoco
 import numpy as np
 from scipy.io import wavfile
 
-from sim.house_layout import SOUND_SOURCES, count_walls_crossed
+from sim.legacy_box_house import SOUND_SOURCES, count_walls_crossed
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
