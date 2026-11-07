@@ -42,11 +42,14 @@ LLM_EVENTS = ("new_sound", "owner_not_found")  # the judgement calls; everything
 
 SYSTEM_PROMPT = """You are the reasoning of Nudge, a robot assistance dog for an owner who may be deaf, blind or deafblind.
 A household sound needs the owner's attention, but Nudge cannot see the owner right now.
-Decide which room Nudge should search first. Strongest clue: where the owner was last seen (the more recent,
-the better), else the room they usually sit in. Rooms already searched are not offered. Use distance (hops)
-only to break ties. The room must be exactly one of the candidate rooms.
-Then write the short message Nudge will show on its screen and speak when it reaches the owner: say what
-happened and that Nudge will guide them (they hold its handle).
+Decide which room Nudge should search first. People stay where they are: the owner is most likely in the room
+where they were last seen (the more recent, the better), else the room they usually sit in. A closer room is
+NOT more likely; use distance only to break ties. Rooms already searched are not offered. The room must be
+exactly one of the candidate rooms.
+Then write the short message Nudge will show on its screen and speak when it reaches the owner: what happened,
+and that Nudge will take them to where they need to go (the "taken to" place, NOT the room you search).
+Use short, plain words: for many owners (e.g. BSL users) English is a second language.
+Example message: "Doorbell. Hold my handle. I will take you to the front door."
 Reply with ONE JSON object only:
 {"room": "<one of the candidate rooms>", "reason": "<one sentence, max 25 words>", "say": "<message to the owner, max 15 words>"}"""
 
@@ -75,7 +78,14 @@ def planning_prompt(event: str, world, candidates: List[str]) -> str:
     else:
         owner = f"not seen yet; usually sits in {world.owner_room}"
     blocked = world.active_blocked_doors()
-    cands = ", ".join(f"{r} ({room_hops(world.robot_room, r, blocked)} hops)" for r in candidates)
+    # Put the clue on the candidate it applies to: a small model otherwise leans on the hop counts.
+    clue = ("owner last seen here" if world.owner_source != "prior" and age < 3600
+            else "the owner usually sits here")
+    def dist(r: str) -> str:
+        h = room_hops(world.robot_room, r, blocked)
+        return "here" if h == 0 else ("next door" if h == 1 else f"{h} rooms away")
+    ordered = sorted(candidates, key=lambda r: (r != world.owner_room, room_hops(world.robot_room, r, blocked)))
+    cands = "; ".join(f"{r} ({dist(r)}{', ' + clue.upper() if r == world.owner_room else ''})" for r in ordered)
     why = "the owner was not found in the room just searched" if event == "owner_not_found" else "a sound just started"
     return (f"situation: {why}\n"
             f"sound: {sound} (confidence {float(world.sound.get('confidence') or 0):.2f}), "
@@ -83,7 +93,7 @@ def planning_prompt(event: str, world, candidates: List[str]) -> str:
             f"robot is in: {world.robot_room}\n"
             f"owner: {owner}\n"
             f"already searched: {', '.join(sorted(world.searched_rooms)) or 'none'}\n"
-            f"candidate rooms (hops from robot): {cands}")
+            f"candidate rooms: {cands}")
 
 
 def deterministic_policy(event: str, world) -> Dict[str, Any]:
@@ -185,7 +195,7 @@ class NudgeAgent:
                             break
                     if self.model:
                         # Warm-up so the first real event isn't slowed by model loading.
-                        self._chat("situation: warm-up\ncandidate rooms (hops from robot): living_room (1)", timeout=60.0)
+                        self._chat("situation: warm-up\ncandidate rooms: living_room (next door)", timeout=60.0)
                         self.llm_online = True
                         print(f"[agent] Local LLM online: {self.model} via Ollama")
                     else:
