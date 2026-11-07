@@ -3,8 +3,8 @@
 Milestone 6a: Local Acoustic Perception (`nudge-brain/hearing.py`).
 Performs:
   1. 16 kHz audio classification (`doorbell`, `knock`, `smoke_alarm`, `silence`)
-     using local YAMNet (if `.tflite`/`.onnx` weights are present) + a real-time
-     64-band log-mel spectrogram & multi-band harmonic/transient classifier so
+     using local YAMNet TFLite (`assets/models/yamnet.tflite`, get it with `pixi run fetch-models`)
+     fused with a multi-band spectral classifier fallback. YAMNet is multi-label, so
      simultaneous sounds (e.g. `smoke_alarm` pre-empting `doorbell`) are both scored.
   2. Stereo ear localization via Interaural Level Difference (ILD) and GCC-PHAT
      Interaural Time Difference (ITD) to estimate relative & world azimuth of the sound.
@@ -12,7 +12,9 @@ Performs:
 
 from __future__ import annotations
 
+import csv
 import math
+import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -23,28 +25,78 @@ from sim.legacy_box_house import SOUND_SOURCES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MODEL_DIR = PROJECT_ROOT / "assets" / "models"
 SAMPLE_RATE = 16000
+YAMNET_SAMPLES = 15600  # 0.975 s input window of the YAMNet TFLite model
+
+# Nudge sound -> YAMNet (AudioSet) display names from yamnet_class_map.csv. Score = max over the list.
+YAMNET_CLASSES: Dict[str, Tuple[str, ...]] = {
+    "doorbell": ("Doorbell", "Ding-dong"),
+    "knock": ("Knock",),
+    "smoke_alarm": ("Smoke detector, smoke alarm", "Fire alarm"),
+}
+
+
+def _load_tflite_interpreter(model_path: Path):
+    """LiteRT (ai-edge-litert, Windows + Linux wheels) first, then legacy tflite_runtime / TensorFlow."""
+    try:
+        from ai_edge_litert.interpreter import Interpreter  # type: ignore
+    except ImportError:
+        try:
+            from tflite_runtime.interpreter import Interpreter  # type: ignore
+        except ImportError:
+            from tensorflow.lite import Interpreter  # type: ignore
+    interp = Interpreter(model_path=str(model_path))
+    interp.allocate_tensors()
+    return interp
 
 
 class StereoHearing:
-    """Local YAMNet / Log-Mel spectral sound classifier + Stereo ILD/ITD localizer."""
+    """Local YAMNet (TFLite) sound classifier + spectral fallback + Stereo ILD/ITD localizer.
+
+    YAMNet runs on a rolling ~1 s mono buffer (two 0.5 s audio windows). The hand-tuned log-mel
+    band classifier is kept as a fallback for sounds YAMNet does not recognise (e.g. synthesized
+    placeholder clips); each sound's score is the max of the two and `sources` says which one won.
+    Set NUDGE_HEARING_FALLBACK=0 to run YAMNet-only.
+    """
 
     def __init__(self, sample_rate: int = SAMPLE_RATE) -> None:
         self.sample_rate = sample_rate
-        self.backend_name = "YAMNet-LogMel-Local"
+        self.backend_name = "LogMel-spectral"
+        self.allow_spectral = os.environ.get("NUDGE_HEARING_FALLBACK", "1") != "0"
 
-        # Optional TFLite YAMNet interpreter if weights exist in assets/models/yamnet.tflite
         self.tflite_interpreter = None
-        yamnet_path = PROJECT_ROOT / "assets" / "models" / "yamnet.tflite"
-        if yamnet_path.exists():
+        self.yamnet_names: list = []
+        self.yamnet_index: Dict[str, list] = {}
+        self._buf = np.zeros(YAMNET_SAMPLES, dtype=np.float32)
+        yamnet_path = MODEL_DIR / "yamnet.tflite"
+        class_map = MODEL_DIR / "yamnet_class_map.csv"
+        if yamnet_path.exists() and class_map.exists():
             try:
-                import tflite_runtime.interpreter as tflite  # type: ignore
-
-                self.tflite_interpreter = tflite.Interpreter(model_path=str(yamnet_path))
-                self.tflite_interpreter.allocate_tensors()
-                self.backend_name = "YAMNet-TFLite"
-            except Exception:
+                self.tflite_interpreter = _load_tflite_interpreter(yamnet_path)
+                self._in = self.tflite_interpreter.get_input_details()[0]["index"]
+                self._out = self.tflite_interpreter.get_output_details()[0]["index"]
+                with open(class_map, newline="", encoding="utf-8") as f:
+                    self.yamnet_names = [row[2] for row in list(csv.reader(f))[1:]]
+                for sound, names in YAMNET_CLASSES.items():
+                    self.yamnet_index[sound] = [self.yamnet_names.index(n) for n in names]
+                self.backend_name = "YAMNet-TFLite" + ("+spectral" if self.allow_spectral else "")
+            except Exception as exc:
+                print(f"[hearing] YAMNet unavailable ({exc}); using spectral classifier")
                 self.tflite_interpreter = None
+        else:
+            print("[hearing] assets/models/yamnet.tflite missing (run `pixi run fetch-models`); "
+                  "using spectral classifier")
+        print(f"[hearing] Sound classifier backend: {self.backend_name}")
+
+    def _yamnet(self) -> Tuple[Dict[str, float], str, float]:
+        """Run YAMNet on the rolling buffer -> (mapped scores, top-1 class name, top-1 score)."""
+        self.tflite_interpreter.set_tensor(self._in, self._buf)
+        self.tflite_interpreter.invoke()
+        s = self.tflite_interpreter.get_tensor(self._out).reshape(-1)
+        mapped = {sound: float(max(s[i] for i in idx)) for sound, idx in self.yamnet_index.items()}
+        top = int(np.argmax(s))
+        return mapped, self.yamnet_names[top], float(s[top])
 
     def _band_energy(
         self, freqs: np.ndarray, psd: np.ndarray, f_low: float, f_high: float
@@ -120,6 +172,10 @@ class StereoHearing:
         rms = float(np.sqrt(np.mean(mono * mono)))
         peak = float(np.max(np.abs(mono))) + 1e-9
 
+        # Keep the last ~1 s of audio for YAMNet (always updated, so silence flushes old sounds).
+        chunk = mono[-YAMNET_SAMPLES:].astype(np.float32)
+        self._buf = np.concatenate([self._buf[len(chunk):], chunk])
+
         if rms < 0.006:
             return {
                 "label": "silence",
@@ -170,11 +226,28 @@ class StereoHearing:
         if crest_factor < 2.6:
             score_knock *= 0.30
 
-        scores = {
+        spectral = {
             "doorbell": round(score_doorbell, 3),
             "knock": round(score_knock, 3),
             "smoke_alarm": round(score_smoke, 3),
         }
+
+        # Fuse with YAMNet: per sound, take the stronger of YAMNet and (if allowed) the spectral rules.
+        yamnet_scores: Dict[str, float] = {}
+        yamnet_top: Tuple[str, float] = ("", 0.0)
+        sources: Dict[str, str] = {}
+        if self.tflite_interpreter is not None:
+            yamnet_scores, top_name, top_score = self._yamnet()
+            yamnet_top = (top_name, round(top_score, 3))
+            scores = {}
+            for sound, y in yamnet_scores.items():
+                sp = spectral[sound] if self.allow_spectral else 0.0
+                scores[sound] = round(max(y, sp), 3)
+                sources[sound] = "yamnet" if y >= sp else "spectral"
+            yamnet_scores = {k: round(v, 3) for k, v in yamnet_scores.items()}
+        else:
+            scores = dict(spectral)
+            sources = {k: "spectral" for k in scores}
 
         # Emergency priority: if smoke_alarm >= 0.60, select smoke_alarm immediately
         if scores["smoke_alarm"] >= 0.60:
@@ -196,6 +269,10 @@ class StereoHearing:
             "label": best_label,
             "confidence": round(float(best_conf), 3),
             "scores": scores,
+            "sources": sources,
+            "yamnet_scores": yamnet_scores,
+            "spectral_scores": spectral,
+            "yamnet_top": yamnet_top,
             "rel_azimuth_deg": rel_az,
             "world_azimuth_deg": world_az,
             "ild_db": ild_db,

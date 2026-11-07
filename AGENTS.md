@@ -105,6 +105,7 @@ git clone --recurse-submodules --shallow-submodules <this repo>   # or, in an ex
 pixi run fetch-world      # git submodule update --init --depth 1 worlds/nerv-world (~390 MB)
 pixi run check-world      # must print "[check] all checks passed"
 pixi run house            # MuJoCo viewer: nerv-world house + Go2 standing in the entry hall
+pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
 # Legacy full pipeline (box house, hotkeys, ZMQ) — still works until ported:
 pixi run fetch-go2 && pixi run sim     # terminal 1
 pixi run brain                          # terminal 2
@@ -229,6 +230,17 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   2. **2.0 s Watchdog**: If the LLM takes > 2.0s to return a tool call after an event, deterministic fallback rules take over immediately.
   3. **Proximity Speed Cap**: Clamp speed <= 0.4 m/s whenever within 1.0 m of the owner.
 
+### 6.1 LLM Plan: local at runtime, Modal only for offline training (agreed)
+- **Runtime is 100% local.** The demo's LLM runs in local Ollama (`NUDGE_OLLAMA_URL` must stay `http://127.0.0.1:11434`). Ollama *can* run on Modal behind a web endpoint, but a Modal call in the runtime loop is a cloud API call and costs us the 15% "operational autonomy" score. Remote Ollama is OK for dev experiments only, never in the recorded demo.
+- **Problem:** `gemma4:e2b` on a GTX 1650 answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog usually overrides it and the deterministic rules make the decisions. Its unaided choices are also sometimes wrong (e.g. re-alerting instead of guiding).
+- **Plan — use the Modal credits for an offline fine-tune of a small Gemma (1B):**
+  1. **Eval set first**: 30–50 scripted `(event, state) -> expected tool call` cases; measure accuracy and latency of the base models (`gemma4:e2b`, `gemma3:1b`) on the demo laptop.
+  2. **Training data**: generate ~1–2k synthetic `(event, world.snapshot())` examples labelled by `deterministic_policy` in `nudge-brain/agent.py` (no hand labelling); short `reason` (≤ 5 words).
+  3. **Train on Modal**: LoRA (Unsloth or TRL+PEFT) on a single L4/A10G, output to a Modal Volume, `modal run train.py`. Expect well under an hour and a few dollars (each of us has $50). Base weights need the Gemma license accepted on Hugging Face.
+  4. **Bring it home**: merge LoRA -> export GGUF (Q4_K_M) -> `ollama create nudge-gemma -f Modelfile` -> run with `NUDGE_LLM_MODEL=nudge-gemma`.
+  5. **Ship only if** it beats the base model on the eval set: ≥ 90 % correct tool calls and answers reliably under 1 s on the demo laptop. Otherwise keep `gemma4:e2b` and the watchdog.
+- Keep `safety.py` (smoke pre-emption, watchdog, speed cap) regardless of which model ships.
+
 ---
 
 ## 7. Keyboard Event Hotkeys in MuJoCo Viewer (`sim/run_sim.py`)
@@ -252,10 +264,10 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - [x] **M3**: Velocity interface (`vx, vy, wz`) in `sim/locomotion.py` (Plan B kinematic + trotting legs, wall collision stop, and owner-following when guiding).
 - [x] **M4**: Simulated sensors (`sim/sensors.py`): Head RGB-D camera, 2D LiDAR rangefinders (per-ray `mj_ray`), and synthetic stereo ear audio from WAV clips (currently synthesized placeholder tones, see 2.1) with distance/wall attenuation.
 - [x] **M5**: ZeroMQ bridge (`sim/run_sim.py` <-> `nudge-brain/bridge.py`).
-- [x] **M6**: Local perception (`hearing.py` log-mel classifier + stereo azimuth; `vision.py` YOLOv8n via OpenCV DNN when `assets/models/yolov8n.onnx` exists, else HSV + depth fallback). TODO: drop in YAMNet / YOLO weight files.
+- [x] **M6**: Local perception. Models via `pixi run fetch-models` (gitignored, SHA-256 pinned, into `assets/models/`). `hearing.py`: YAMNet TFLite (`ai-edge-litert`) on a rolling ~1 s buffer, fused per sound with the spectral rules (`sources` says which won; `NUDGE_HEARING_FALLBACK=0` = YAMNet only) + stereo azimuth. YAMNet hears the smoke alarm clip, but the synthesized doorbell/knock placeholders read as "Music", so those still come from the spectral rules until real recordings land (M6b). `vision.py`: YOLOv8n ONNX via onnxruntime (~60 ms/frame CPU), HSV + depth fallback when YOLO finds nobody (`NUDGE_VISION_FALLBACK=0` = YOLO only); the current box-figure owner is not detected by YOLO — needs the scanned human mesh.
 - [ ] **M6b**: Sound registry with response tiers (2.1): move all per-sound data into the registry, add kettle (+ hotkey), real audio clips, YAMNet class mapping.
 - [x] **M7**: Plain-code navigator (`navigator.py` doorway graph + LiDAR skirt + LiDAR blocked-doorway re-planning), `world_model.py`, and `alerts.py`.
 - [ ] **M7b**: Multimodal alert outputs (2.2): tier-coloured LED, on-robot screen texture, local TTS speaker, owner profile; tier → haptic/LED/screen/speech mapping in `alerts.py`; new `alert` event in the `cmd` contract.
-- [x] **M8**: Event-driven local agent (`agent.py`, Gemma via Ollama HTTP, no ADK yet) + deterministic `safety.py` watchdog & pre-emption.
+- [x] **M8**: Event-driven local agent (`agent.py`, `gemma4:e2b` via Ollama HTTP with `think: false`, no ADK yet) + deterministic `safety.py` watchdog & pre-emption. On a GTX 1650 Gemma answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog often takes over — needs a faster GPU, a smaller prompt/model, or a team decision on the watchdog.
 - [x] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + detection box, 2D house map + path, and active agent plan.
 - [ ] **M10**: End-to-end 60-second continuous one-take demo rehearsal & recording.
