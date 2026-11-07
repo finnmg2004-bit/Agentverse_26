@@ -45,7 +45,8 @@ Owners follow AGENTS.md section 9.1.
 - [x] Demo storyboard + 1-page summary drafts: `docs/DEMO_STORYBOARD.md`, `docs/TECHNICAL_SUMMARY.md` (team: review + edit)
 
 ## Demo (M10)
-- [ ] **Decide how the take fits 60 s:** the full storyboard (carpet → doorbell → block exit → smoke) works end to end but measures ~115 s; options in `docs/DEMO_STORYBOARD.md` (Eden)
+- [x] **How the take fits 60 s:** rehearsed 3-beat take (carpet rule → doorbell around the carpet + guiding → smoke alarm at the "guiding" cue, stop on the EMERGENCY decision) ≈ 60 s; script + frames in `docs/DEMO_STORYBOARD.md` ★ (Eden). Team: confirm.
+- [x] 5-minute pitch outline + Q&A prep: `docs/PITCH.md`; screenshots in `docs/img/`
 - [ ] Demo scenario passes 3× in a row on the recording laptop
 - [ ] Record the ≤ 60 s one-take video (carpet rule → doorbell around the carpet → smoke pre-emption)
 - [ ] 1-page technical summary + 5-minute pitch

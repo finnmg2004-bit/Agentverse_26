@@ -5,7 +5,27 @@
 and the critical failure handled on screen (smoke alarm pre-empts everything).
 **Recorded from:** the Nudge Control GUI (`pixi run gui`), one window, screen-captured at 1080p.
 
-## The take
+## ★ Recommended take: 3 beats, fits 60 s (rehearsed by Eden, measured)
+The video only has to show the evacuation **starting** under pre-emption (AGENTS.md 2), so the take ends on
+the EMERGENCY decision, not on the owner outside. Press buttons on **visual cues**, not fixed times: the
+owner sometimes needs a 2nd nudge (+5–10 s).
+
+| Real time (≈) | Operator does (cue) | Screen shows | Criterion |
+|---|---|---|---|
+| 0:00 | **RESET [R]**, camera **Whole house** | READY, robot in the entry hall, owner in the living room, red carpet | Context |
+| 0:03 | Owner says (mic) *"Nudge, I've just got a new carpet in the living room, please don't step on it."* (fallback: **examples…** + Enter) | Heard: …; **"Nudge says: OK. I will not walk on the new carpet in the living room."** (~1.5 s after); Rules: keep off the carpet; carpet shaded on the map | Autonomy (local Whisper + Gemma), relevance |
+| 0:10 (cue: confirmation shown) | **Doorbell [B]**, then camera **Chase cam** | doorbell bar 0.98 + bearing; MISSION ACTIVE; Gemma: "Living room has highest owner probability" (0.5 s) | Perception-driven action |
+| 0:10–0:38 | Nothing | Robot walks to the owner, map path bends **around the carpet**; YOLO box on the owner; nudge; handle 1 pulse; owner taps the handle; **"Nudge says: Doorbell. Hold my handle. I will take you to the front door."**; guiding starts | Perception, adapting (rule) |
+| ~0:40 (cue: phase = guiding) | **SMOKE ALARM [M]**, camera **Whole house** | **EMERGENCY** banner, continuous vibration, "Smoke alarm! Hold my handle. We are going outside now.", **Gemma: "Back exit is much faster and safer from fire"** (0.7 s), map path to the back exit still keeping off the carpet | Critical failure handled on screen |
+| ~0:55–0:60 | Stop recording | Robot and owner heading for the back exit | Relevance & impact |
+
+Measured in rehearsal (from the reset): rule confirmed 8 s; doorbell → guiding 25–31 s; smoke → Gemma's exit
+choice 0.8 s. Frames: `docs/img/demo_guiding_around_carpet.png`, `docs/img/demo_emergency_end.png`.
+**Unscripted change** for the judges: the owner instruction itself (a scene change mid-run), and optionally
+**[O] Next room** right after the doorbell (robot re-searches; adds ~10–15 s, so only if the take still fits).
+The blocked-exit + safety-rejection story (below) goes in the pitch, with `docs/img/safety_rejects_exit_near_fire.png`.
+
+## Original 4-beat take (too long: ~115 s, kept for reference)
 | Time | Operator does | Screen shows | Judging criterion |
 |---|---|---|---|
 | 0:00–0:05 | Nothing (READY banner, "Whole house" camera) | The house, robot in the entry hall, owner on the living-room sofa side, red carpet | Context |

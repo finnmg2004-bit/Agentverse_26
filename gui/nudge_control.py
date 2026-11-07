@@ -100,7 +100,7 @@ def _sound_rgb(name: str) -> tuple:
 SOUND_COL = {name: _sound_rgb(name) + (255,) for name in SOUND_SOURCES}
 # Button order: someone-wants-you (tier 3) first, emergencies last; registry order within a tier.
 SOUND_ORDER = sorted(SOUND_SOURCES, key=lambda n: (-int(SOUND_SOURCES[n].get("tier", 3)), list(SOUND_SOURCES).index(n)))
-BUTTONS_PER_ROW = 6
+BUTTONS_PER_ROW = 7  # 5 sounds + Silence + Reset fit one row; more sounds wrap onto the next
 SOURCE_COL = {"llm": PURPLE, "rules": (140, 180, 230, 255), "safety": RED, "watchdog": AMBER,
               "only option": (150, 150, 155, 255)}
 SOURCE_LABEL = {"llm": "GEMMA", "rules": "rules", "safety": "SAFETY", "watchdog": "watchdog",
