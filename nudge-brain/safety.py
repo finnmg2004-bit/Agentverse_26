@@ -28,6 +28,7 @@ import os  # noqa: E402
 # worst case (the robot holds its current action while waiting).
 WATCHDOG_S = float(os.environ.get("NUDGE_WATCHDOG_S", "4.0"))
 MAX_NUDGES = 3
+FIRE_MARGIN_M = 1.0  # an LLM-chosen exit route may not pass more than this much closer to the fire than the planner's
 OWNER_SPEED_CAP = 0.40
 OWNER_CAP_RADIUS = 1.0
 BUMPER_RANGE = 0.30
@@ -101,6 +102,16 @@ def validate_action(action: Dict[str, Any], world) -> Tuple[bool, str]:
             safe = [t for t, d in ((world.evac or {}).get("details") or {}).items() if not d.get("unavailable")]
             if target not in (safe or [world.evac_target()]):
                 return False, f"emergency: {target} is not a safe exit (safe: {safe})"
+            # The LLM may pick any usable exit, but never one whose route passes clearly closer to
+            # the fire than the planner's choice (seen in rehearsal: Gemma picked the terrace exit
+            # "much closer to the fire" over the planner's front door).
+            details = (world.evac or {}).get("details") or {}
+            best = (world.evac or {}).get("target")
+            d, b = details.get(target) or {}, details.get(best) or {}
+            if (target != best and d.get("fire_dist") is not None and b.get("fire_dist") is not None
+                    and d["fire_dist"] < b["fire_dist"] - FIRE_MARGIN_M):
+                return False, (f"emergency: the route to {target} passes {d['fire_dist']:.1f} m from the fire; "
+                               f"{best} keeps {b['fire_dist']:.1f} m")
         if args.get("via") == "across":
             # Breaking an owner's place rule is only ever allowed in an emergency, and only on an
             # exit route the planner found to be much shorter that way.
