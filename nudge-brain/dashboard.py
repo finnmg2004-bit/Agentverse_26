@@ -42,7 +42,7 @@ AMBER = (40, 180, 255)
 RED = (60, 60, 235)
 SOUND_COLORS = {"doorbell": (255, 210, 30), "knock": (30, 190, 255), "smoke_alarm": (60, 60, 240)}
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-FORWARD_KEYS = {ord(c): c for c in "BKMOCXRWE12345"} | {ord(c.lower()): c for c in "BKMOCXRWE"}
+FORWARD_KEYS = {ord(c): c for c in "BKMOCXRWENV123456"} | {ord(c.lower()): c for c in "BKMOCXRWENV"}
 SOURCE_COLORS = {"llm": (230, 120, 255), "rules": (200, 200, 200), "watchdog": AMBER, "only option": (150, 150, 150)}
 TOOL_SHORT = {"go_to_room": "GO", "look_around": "LOOK", "alert_owner": "ALERT", "offer_handle": "HANDLE",
               "guide_owner_to": "GUIDE", "investigate_sound": "INVEST", "get_state": "STATE"}

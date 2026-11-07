@@ -76,6 +76,7 @@ class OwnerBehavior:
         self.ack_at: Optional[float] = None
         self.tap_until = 0.0
         self.ignored_this_contact = False
+        self.ignored_at = t
         # guiding
         self.loco.owner_grip = True
         self.loco.owner_speed = 0.38
@@ -176,8 +177,11 @@ class OwnerBehavior:
                     print("[sim] owner FEELS the nudge", flush=True)
                 else:
                     self.ignored_this_contact = True
+                    self.ignored_at = t
                     print("[sim] owner does not notice the nudge (distracted)", flush=True)
-        elif d_robot > NUDGE_CONTACT + 0.05:
+        # A missed touch is forgotten once the dog steps back, or after a few seconds anyway,
+        # so the next nudge is a fresh chance to be noticed.
+        if self.ignored_this_contact and (d_robot > NUDGE_CONTACT + 0.03 or t - self.ignored_at > 2.5):
             self.ignored_this_contact = False
 
         if self.state == "alerted":

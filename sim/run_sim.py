@@ -12,6 +12,10 @@ Supports:
       [C / 5] Toggle Chair obstacle in the guest <-> living_room door (-7.6, 0.6)
       [X]     Silence all active sounds
       [R]     Reset the scene (robot, owner, chair, sounds) and tell the brain to reset
+      [N / 6] Cycle background noise (quiet -> fan -> tv -> vacuum -> party)   also: --noise NAME
+      [V]     Cycle viewer camera (top -> follow robot -> dog's head camera)   also: --view NAME
+  - Scenario end conditions judged from ground truth: owner at the front door ends a doorbell /
+    knock (sound stops); owner at the back door or outside ends a smoke alarm (alarm clears).
   - ZeroMQ PUB on tcp://127.0.0.1:5555 (`state` @ 20 Hz, `camera` @ 10 Hz, `audio` @ 2 Hz)
   - ZeroMQ SUB on tcp://127.0.0.1:5556 (`cmd` @ 20 Hz + optional `sim_event` for scripted tests)
   - Mission status overlay in the viewer (from the brain's `mission_status` in `cmd`); the
@@ -24,9 +28,11 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
+from collections import deque
 from pathlib import Path
-from typing import Dict
+from typing import Deque, Dict
 
 
 def _prefer_wsl_nvidia_gpu() -> None:
@@ -59,6 +65,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from sim.house_layout import (
     CHAIR_DOORWAY_POS,
     CHAIR_STOWED_POS,
+    LANDMARKS,
+    OUTSIDE,
     ROBOT_START_POSE,
     ROOMS,
     ROOM_ORDER,
@@ -67,10 +75,20 @@ from sim.house_layout import (
 )
 from sim.locomotion import Go2Locomotion
 from sim.nav_map import load_or_build
-from sim.sensors import SimSensors
+from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
 from sim.owner_behavior import OwnerBehavior
 from sim.house_layout import CHAIR_EXIT_POS
+
+VIEW_NAMES = ["top", "follow", "dog"]
+
+# Scenario end conditions (ground truth, judged by the sim, not the brain):
+#   doorbell / knock -> owner stays at the front door        => visitor answered, sound stops
+#   smoke_alarm      -> owner at the back door, or outside    => evacuated, every alarm clears
+# A sound still unresolved after SCENARIO_TIMEOUT_S of sim time is reported as FAILED (keeps going).
+GOAL_RADIUS_M = 1.15  # the guide stops with the owner ~1 m from the door (they walk behind the handle)
+GOAL_DWELL_S = 1.0    # must stay inside the radius this long, so walking past/through doesn't count
+SCENARIO_TIMEOUT_S = 120.0
 
 
 class NudgeSimulator:
@@ -144,19 +162,80 @@ class NudgeSimulator:
         self.last_cam_pub: float = 0.0
         self.last_audio_pub: float = 0.0
 
+        # Viewer-window key presses arrive on the viewer's thread; they are queued here and
+        # applied by the main loop under viewer.lock() so they never race the renderer.
+        self.pending_keys: Deque[str] = deque()
+        self.view_idx: int = 0
+        self.view_changed: bool = False
+
+        # Scenario tracking: sound -> sim time it started (cleared when resolved/silenced)
+        self.sound_started: Dict[str, float] = {}
+        self.sound_timed_out: Dict[str, bool] = {}
+        self.goal_since: Dict[str, float] = {}  # sound -> sim time the owner entered the goal radius
+        self.last_scenario_check: float = 0.0
+
+    def _start_sound(self, name: str) -> None:
+        if not self.active_sounds.get(name):
+            self.sound_started[name] = float(self.data.time)
+            self.sound_timed_out[name] = False
+        self.active_sounds[name] = True
+
+    def _stop_sound(self, name: str) -> None:
+        self.active_sounds[name] = False
+        self.sound_started.pop(name, None)
+        self.sound_timed_out.pop(name, None)
+        self.goal_since.pop(name, None)
+
+    def check_scenario_end(self) -> None:
+        """Resolve active sounds once the owner has actually reached (and stays at) the target."""
+        t = float(self.data.time)
+        if t - self.last_scenario_check < 0.1:
+            return
+        self.last_scenario_check = t
+        ox, oy = self.locomotion.get_owner_pos()
+        for name, started in list(self.sound_started.items()):
+            target = str(SOUND_SOURCES[name]["target_landmark"])
+            evac = name == "smoke_alarm"
+            # Evacuation: the owner follows ~1 m behind the robot's handle, so when the robot is
+            # out on the exit point the owner is in the back doorway. Count "at the back door or outside".
+            tx, ty = LANDMARKS["back_door"] if evac else LANDMARKS[target]
+            dist = float(np.hypot(ox - tx, oy - ty))
+            outside = evac and get_room_at(ox, oy) == OUTSIDE
+            if dist <= GOAL_RADIUS_M or outside:
+                self.goal_since.setdefault(name, t)
+            else:
+                self.goal_since.pop(name, None)
+            if name in self.goal_since and t - self.goal_since[name] >= GOAL_DWELL_S:
+                elapsed = t - started
+                if evac:
+                    for s in list(self.sound_started):
+                        self._stop_sound(s)  # owner is leaving the house: nothing left to alert to
+                    where = "OUTSIDE" if outside else "at the back door exit"
+                    print(f"[sim] SCENARIO COMPLETE: smoke_alarm -> owner EVACUATED ({where}) "
+                          f"after {elapsed:.1f}s (owner at {ox:.2f}, {oy:.2f}). Alarm cleared.")
+                else:
+                    self._stop_sound(name)
+                    print(f"[sim] SCENARIO COMPLETE: {name} -> owner reached the {target} after {elapsed:.1f}s "
+                          f"(owner at {ox:.2f}, {oy:.2f}). Visitor answered, {name} stopped.")
+                return
+            if t - started > SCENARIO_TIMEOUT_S and not self.sound_timed_out.get(name):
+                self.sound_timed_out[name] = True
+                print(f"[sim] SCENARIO FAILED: {name} unresolved after {SCENARIO_TIMEOUT_S:.0f}s "
+                      f"(owner at {ox:.2f}, {oy:.2f}, {dist:.1f} m from {target}).")
+
     def handle_hotkey(self, key_name: str) -> None:
         """Process a single-character hotkey or scripted event command."""
         k = key_name.upper()
         if k in ("B", "1"):
-            self.active_sounds["doorbell"] = True
-            self.active_sounds["knock"] = False
+            self._start_sound("doorbell")
+            self._stop_sound("knock")
             print(f"[sim] HOTKEY [B]: Doorbell ringing at the front door {SOUND_SOURCES['doorbell']['pos'][:2]}!")
         elif k in ("K", "2"):
-            self.active_sounds["knock"] = True
-            self.active_sounds["doorbell"] = False
+            self._start_sound("knock")
+            self._stop_sound("doorbell")
             print(f"[sim] HOTKEY [K]: Knocking on the front door {SOUND_SOURCES['knock']['pos'][:2]}!")
         elif k in ("M", "3"):
-            self.active_sounds["smoke_alarm"] = True
+            self._start_sound("smoke_alarm")
             print(f"[sim] HOTKEY [M]: EMERGENCY Smoke Alarm triggered in the kitchen {SOUND_SOURCES['smoke_alarm']['pos'][:2]}!")
         elif k in ("O", "4"):
             self.owner_room_idx = (self.owner_room_idx + 1) % len(ROOM_ORDER)
@@ -173,8 +252,8 @@ class NudgeSimulator:
             state_str = f"BLOCKING doorway {CHAIR_DOORWAY_POS[:2]}" if self.chair_blocking else f"STOWED at {pos[:2]}"
             print(f"[sim] HOTKEY [C]: Chair obstacle {state_str}")
         elif k == "X":
-            for s in self.active_sounds:
-                self.active_sounds[s] = False
+            for s in list(self.active_sounds):
+                self._stop_sound(s)
             print("[sim] HOTKEY [X]: Silenced all active sounds.")
         elif k == "R":
             self.reset_scene()
@@ -188,12 +267,19 @@ class NudgeSimulator:
             pos = CHAIR_EXIT_POS if self.chair_at_exit else CHAIR_STOWED_POS
             self.locomotion.set_chair_pos(*pos)
             print(f"[sim] HOTKEY [E]: Chair {'BLOCKING the back exit' if self.chair_at_exit else 'stowed'} at {pos[:2]}")
+        elif k in ("N", "6"):
+            p = self.sensors.noise.cycle()
+            print(f"[sim] HOTKEY [N]: Background noise -> {p['name']} ({p['label']})")
+        elif k == "V":
+            self.view_idx = (self.view_idx + 1) % len(VIEW_NAMES)
+            self.view_changed = True
+            print(f"[sim] HOTKEY [V]: Viewer camera -> {VIEW_NAMES[self.view_idx]}")
 
     def reset_scene(self) -> None:
         """Put robot, owner, chair and sounds back to the demo start state; start a new episode."""
         self.episode += 1
-        for s in self.active_sounds:
-            self.active_sounds[s] = False
+        for s in list(self.active_sounds):
+            self._stop_sound(s)
         self.owner_room_idx = 0
         ox, oy = ROOMS[ROOM_ORDER[0]]["owner_spot"]
         self.locomotion.set_owner_pos(ox, oy)
@@ -217,14 +303,42 @@ class NudgeSimulator:
             return ("MISSION COMPLETE", self.mission_text)
         if self.mission_status == "active":
             return ("MISSION ACTIVE", self.mission_text)
-        return (f"READY (episode {self.episode})", "B/K/M = sound   O = move owner   W = owner wander   C/E = chair   X = silence   R = reset")
+        return (f"READY (episode {self.episode})",
+                "B/K/M = sound   O = move owner   W = owner wander   C/E = chair   X = silence   R = reset"
+                "   N = noise   V = view")
 
     def glfw_key_callback(self, keycode: int) -> None:
-        """Callback invoked by `mujoco.viewer.launch_passive` on key press."""
+        """Callback invoked by `mujoco.viewer.launch_passive` on key press (viewer thread)."""
         if 32 <= keycode <= 126:
             ch = chr(keycode).upper()
-            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E"):
-                self.handle_hotkey(ch)
+            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E", "N", "6", "V"):
+                self.pending_keys.append(ch)  # applied in step_once() on the main thread
+
+    def apply_view(self, cam) -> None:
+        """Point the viewer camera: dollhouse overview, chase the robot, or the dog's head camera."""
+        name = VIEW_NAMES[self.view_idx]
+        if name == "top":
+            cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+            cam.lookat[:] = [-6.5, 1.0, 0.0]
+            cam.distance, cam.elevation, cam.azimuth = 21.0, -62.0, 90.0
+        elif name == "follow":
+            cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+            cam.trackbodyid = self.sensors.base_body_id
+            cam.distance, cam.elevation, cam.azimuth = 3.5, -30.0, 180.0
+        else:  # dog: exactly what the head RGB-D camera (and YOLO) sees
+            cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+            cam.fixedcamid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "head_cam")
+        self.view_changed = False
+
+    def close_renderer(self) -> None:
+        """Free the head-cam GL context (idempotent)."""
+        renderer = getattr(self.sensors, "renderer", None)
+        if renderer is not None:
+            self.sensors.renderer = None
+            try:
+                renderer.close()
+            except Exception:
+                pass
 
     def _update_sound_beacons(self) -> None:
         """Pulse active sound source beacon geoms in the 3D scene."""
@@ -362,6 +476,8 @@ class NudgeSimulator:
 
     def step_once(self, dt: float) -> None:
         """Advance one simulation step."""
+        while self.pending_keys:
+            self.handle_hotkey(self.pending_keys.popleft())
         self.poll_zmq_commands()
         self._update_sound_beacons()
         halo_mode = self.cmd_alert_mode
@@ -377,6 +493,7 @@ class NudgeSimulator:
             alert_mode=halo_mode,
             dt=dt,
         )
+        self.check_scenario_end()
         self.publish_telemetry(float(self.data.time))
 
     def close(self) -> None:
@@ -424,6 +541,10 @@ def main() -> None:
     parser.add_argument("--owner-seed", type=int, default=None, help="Seed for the owner's random behaviour")
     parser.add_argument("--no-cutaway", action="store_true",
                         help="Show the whole house (upper storeys + roof) instead of the ground-floor cutaway view")
+    parser.add_argument("--noise", choices=NOISE_NAMES, default="quiet",
+                        help="Background noise profile at start (cycle live with [N])")
+    parser.add_argument("--view", choices=VIEW_NAMES, default="top",
+                        help="Viewer camera at start: top, follow (chase robot), dog (head camera); cycle with [V]")
     args = parser.parse_args()
 
     print("[sim] Building nerv-world house + Unitree Go2 + Owner + Chair + Sound Beacons...")
@@ -441,6 +562,10 @@ def main() -> None:
     print(f"[sim] Go2 started in {get_room_at(rx, ry)} at ({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
     print(f"[sim] Owner started in {get_room_at(ox, oy)} at ({ox:.2f}, {oy:.2f})")
     print("[sim] Hotkeys: [B/1] Doorbell | [K/2] Knock | [M/3] Smoke Alarm | [O/4] Move Owner | [C/5] Chair | [X] Silence | [R] Reset")
+    print("[sim]          [N/6] Background noise | [V] Camera view (top / follow / dog)")
+    p = sim.sensors.noise.set(args.noise)
+    sim.view_idx = VIEW_NAMES.index(args.view)
+    print(f"[sim] Background noise: {p['name']} ({p['label']}) | view: {args.view}")
 
     try:
         if args.headless:
@@ -452,23 +577,28 @@ def main() -> None:
                     break
                 pacer.wait()
         else:
+            threads_before = set(threading.enumerate())
             with mujoco.viewer.launch_passive(
                 sim.model, sim.data, key_callback=sim.glfw_key_callback
             ) as viewer:
-                # Dollhouse view of the west wing (entry, guest, living, dining) with ceilings hidden
-                if not args.no_cutaway:
-                    viewer.opt.geomgroup[1] = 0
-                viewer.cam.lookat[:] = [-6.5, 1.0, 0.0]
-                viewer.cam.distance = 21.0
-                viewer.cam.elevation = -62.0
-                viewer.cam.azimuth = 90.0
+                with viewer.lock():
+                    # Dollhouse view of the west wing (entry, guest, living, dining) with ceilings hidden
+                    if not args.no_cutaway:
+                        viewer.opt.geomgroup[1] = 0
+                    sim.apply_view(viewer.cam)
 
                 start_wall = time.perf_counter()
                 last_sync = 0.0
                 shown_overlay = None
                 pacer = RealTimePacer(dt)
                 while viewer.is_running():
-                    sim.step_once(dt)
+                    # The passive viewer renders model/data on its own thread; mutating them
+                    # (physics, owner mocap, beacon geom_rgba, head-cam render) without the lock
+                    # races that thread -> native access violation on Windows during guiding.
+                    with viewer.lock():
+                        sim.step_once(dt)
+                        if sim.view_changed:
+                            sim.apply_view(viewer.cam)
                     now_wall = time.perf_counter()
                     if now_wall - last_sync >= (1.0 / 60.0):
                         overlay = sim.status_overlay()
@@ -481,7 +611,17 @@ def main() -> None:
                     if args.duration > 0.0 and (now_wall - start_wall) >= args.duration:
                         break
                     pacer.wait()
+                # The head-cam offscreen Renderer shares the GLFW library with the viewer; release
+                # it while GLFW is still alive, before the viewer tears GLFW down.
+                with viewer.lock():
+                    sim.close_renderer()
+            # Leaving the `with` only *signals* the (daemon) viewer thread to close. If we return
+            # now, interpreter shutdown runs glfw.terminate() (atexit) while that thread is still
+            # destroying its window -> access violation on exit on Windows. Wait for it first.
+            for t in set(threading.enumerate()) - threads_before:
+                t.join(timeout=5.0)
     finally:
+        sim.close_renderer()
         sim.close()
 
 

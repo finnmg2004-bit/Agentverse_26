@@ -195,7 +195,7 @@ class ApproachAndAlert(Skill):
             return SkillOutput(vx=0.18, wz=1.5 * face_err, allow_contact=True)
 
         if self.stage == "retreat":  # step back far enough that a repeat nudge is a new touch
-            if world.dist_to_owner() > STANDOFF - 0.05 or dt_stage > 2.5:
+            if world.dist_to_owner() > STANDOFF + 0.05 or dt_stage > 2.5:
                 self._to("buzz")
             return SkillOutput(vx=-0.15)
 
