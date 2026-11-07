@@ -82,7 +82,10 @@ class WorldModel:
         }
 
         # Mission / task
-        self.mission: Optional[Dict[str, Any]] = None  # {"sound", "target", "started"}
+        self.mission: Optional[Dict[str, Any]] = None  # {"sound", "target", "started", "started_sim"}
+        # Outcome of the last finished mission, kept until a new mission starts or the sim resets:
+        # {"status": "complete", "sound", "target", "duration_s" (sim time)}
+        self.last_result: Optional[Dict[str, Any]] = None
         self.phase: str = "idle"  # idle | searching | approaching | guiding | done
         self.searched_rooms: Set[str] = set()
         self.blocked_doors: Dict[str, float] = {}  # door name -> wall time marked
@@ -170,16 +173,31 @@ class WorldModel:
     # ------------------------------------------------------------------ mission
     def start_mission(self, sound: str) -> None:
         target = str(SOUND_SOURCES[sound]["target_landmark"])
-        self.mission = {"sound": sound, "target": target, "started": time.monotonic()}
+        self.mission = {"sound": sound, "target": target, "started": time.monotonic(),
+                        "started_sim": self.t_sim}
+        self.last_result = None
         self.phase = "searching"
         self.searched_rooms.clear()
         self.log(f"MISSION {sound.upper()} -> owner to {target}")
 
     def finish_mission(self) -> None:
         if self.mission:
-            self.log(f"Mission {self.mission['sound']} complete")
+            duration = self.t_sim - float(self.mission.get("started_sim", self.t_sim))
+            self.last_result = {"status": "complete", "sound": self.mission["sound"],
+                                "target": self.mission["target"], "duration_s": round(duration, 1)}
+            self.log(f"Mission {self.mission['sound']} complete ({duration:.1f} s sim time)")
         self.mission = None
         self.phase = "idle"
+
+    def mission_status(self) -> Tuple[str, str]:
+        """("idle" | "active" | "complete", human-readable detail) for the sim overlay & dashboard."""
+        if self.mission is not None:
+            return "active", f"{self.mission['sound'].upper()} -> owner to {self.mission['target']}"
+        r = self.last_result
+        if r is not None:
+            return "complete", (f"{r['sound'].upper()}: owner delivered to {r['target']} "
+                                f"in {r['duration_s']:.1f} s")
+        return "idle", ""
 
     def log(self, text: str) -> None:
         stamp = f"{self.t_sim:6.1f}s"

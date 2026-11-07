@@ -26,7 +26,7 @@ from alerts import HapticAlerts  # noqa: E402
 from bridge import BrainBridge  # noqa: E402
 from hearing import StereoHearing  # noqa: E402
 from navigator import Navigator  # noqa: E402
-from skills import SkillExecutor  # noqa: E402
+from skills import Skill, SkillExecutor  # noqa: E402
 from vision import OwnerDetector  # noqa: E402
 from world_model import WorldModel  # noqa: E402
 
@@ -56,8 +56,21 @@ class Brain:
 
         self.latched: dict = {}  # sound -> consecutive windows not heard
         self.last_owner_seen_event = 0.0
+        self.episode = None  # sim episode we are acting on; a change means the sim was reset ([R])
         self.world.log(f"Brain up | hearing={self.hearing.backend_name} vision={self.vision.backend} "
                        f"agent={self.agent.backend}")
+
+    def reset(self, episode) -> None:
+        """Sim was reset: drop the mission, plan, alerts, owner belief and pending agent decision."""
+        self.agent.cancel()
+        self.nav.clear()
+        self.alerts.clear()
+        self.executor.skill = Skill()
+        self.world = WorldModel()
+        self.latched = {}
+        self.last_owner_seen_event = 0.0
+        self.episode = episode
+        self.world.log(f"RESET by sim (episode {episode}) - ready")
 
     # ------------------------------------------------------------------ perception
     def on_audio(self) -> None:
@@ -117,6 +130,11 @@ class Brain:
     def tick(self) -> bool:
         upd = self.bridge.poll()
         if upd["state"]:
+            episode = self.bridge.latest_state.get("episode")
+            if self.episode is None:
+                self.episode = episode
+            elif episode != self.episode:
+                self.reset(episode)
             self.world.update_state(self.bridge.latest_state)
         if upd["audio"]:
             self.on_audio()
@@ -149,7 +167,9 @@ class Brain:
         if not self.world.connected or time.monotonic() - self.world.last_state_wall > 1.0:
             vx = vy = wz = 0.0
         self.world.nav_path = self.nav.path_points(self.world.robot_pose[:2]) if self.nav.waypoints else []
-        self.bridge.send_cmd(vx, vy, wz, alert_mode=self.alerts.mode, guiding=out.guiding)
+        status, status_text = self.world.mission_status()
+        self.bridge.send_cmd(vx, vy, wz, alert_mode=self.alerts.mode, guiding=out.guiding,
+                             mission_status=status, mission_text=status_text, episode=self.episode)
 
         if self.dashboard is not None:
             key = self.dashboard.render(self.world, self.agent, self.bridge.latest_camera,

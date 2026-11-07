@@ -6,6 +6,9 @@ channels = ["conda-forge"]
 platforms = ["linux-64", "win-64"]
 
 [tasks]
+# Download YOLOv8n ONNX + YAMNet TFLite into assets/models/ and pull the local Gemma model via Ollama
+fetch-models = "python scripts/fetch_models.py"
+
 # Fetch the nerv-world house scene + its Unitree Go2 (git submodule, shallow, ~390 MB)
 fetch-world = "git submodule update --init --depth 1 worlds/nerv-world"
 
@@ -43,3 +46,5 @@ libgl-devel = "*"
 [pypi-dependencies]
 mujoco = ">=3.1.6"
 opencv-python = ">=4.9.0"
+onnxruntime = ">=1.18"
+ai-edge-litert = ">=1.2"

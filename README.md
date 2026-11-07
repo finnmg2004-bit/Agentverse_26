@@ -21,6 +21,8 @@ pixi install
 ```
 If you already cloned without submodules, run `pixi run fetch-world`. It downloads the house into `worlds/nerv-world` (about 390 MB).
 
+Optional, for the real local models: `pixi run fetch-models` downloads YOLOv8n and YAMNet into `assets/models/` and pulls Gemma via Ollama (install [Ollama](https://ollama.com) first). Without them the brain falls back to its built-in colour detector, spectral sound rules and deterministic rules.
+
 ## 2. Check the world (headless, no window)
 ```bash
 pixi run check-world
@@ -51,6 +53,7 @@ Press the hotkeys with the **MuJoCo window** focused (they also work in the dash
 | `O` / `4` | Move the owner to the next room: living room → guest bedroom → dining room → family room |
 | `C` / `5` | Toggle the chair in the guest bedroom ↔ living room door |
 | `X` | Silence all sounds |
+| `R` | Reset the scene (robot, owner, chair, sounds) and start a new episode; the brain resets too |
 
 ### The demo story
 1. Press **B**. The robot hears the doorbell and heads for the living room, where it expects the owner.

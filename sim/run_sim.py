@@ -11,20 +11,42 @@ Supports:
       [O / 4] Cycle Owner room (living_room -> guest -> dining -> family_room)
       [C / 5] Toggle Chair obstacle in the guest <-> living_room door (-7.6, 0.6)
       [X]     Silence all active sounds
+      [R]     Reset the scene (robot, owner, chair, sounds) and tell the brain to reset
   - ZeroMQ PUB on tcp://127.0.0.1:5555 (`state` @ 20 Hz, `camera` @ 10 Hz, `audio` @ 2 Hz)
   - ZeroMQ SUB on tcp://127.0.0.1:5556 (`cmd` @ 20 Hz + optional `sim_event` for scripted tests)
+  - Mission status overlay in the viewer (from the brain's `mission_status` in `cmd`); the
+    robot's halo turns steady green when a mission is complete.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Dict
 
-import mujoco
+
+def _prefer_wsl_nvidia_gpu() -> None:
+    """Opt-in (NUDGE_GPU=1): on WSL2, render through Mesa's d3d12 driver on the NVIDIA GPU
+    instead of llvmpipe (CPU). Mesa needs both GALLIUM_DRIVER=d3d12 and, on hybrid laptops,
+    the NVIDIA adapter name. OFF by default: measured on an RTX 5050 laptop it was 2-3x SLOWER
+    than llvmpipe (every frame is translated to DirectX and read back across the WSL boundary).
+    Native Windows (`pixi run sim` on win-64) uses the NVIDIA OpenGL driver directly instead.
+    Must run before MuJoCo creates a GL context (Mesa reads these at driver load)."""
+    if not sys.platform.startswith("linux") or os.environ.get("NUDGE_GPU", "0") != "1":
+        return
+    if not (os.path.exists("/dev/dxg") and os.path.exists("/usr/lib/wsl/lib/libcuda.so.1")):
+        return
+    os.environ.setdefault("GALLIUM_DRIVER", "d3d12")
+    os.environ.setdefault("MESA_D3D12_DEFAULT_ADAPTER_NAME", "NVIDIA")
+
+
+_prefer_wsl_nvidia_gpu()
+
+import mujoco  # noqa: E402
 import mujoco.viewer
 import numpy as np
 import zmq
@@ -37,6 +59,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from sim.house_layout import (
     CHAIR_DOORWAY_POS,
     CHAIR_STOWED_POS,
+    ROBOT_START_POSE,
     ROOMS,
     ROOM_ORDER,
     SOUND_SOURCES,
@@ -84,6 +107,13 @@ class NudgeSimulator:
         self.cmd_alert_mode: str = "none"
         self.cmd_guiding: bool = False
         self.last_cmd_time: float = time.monotonic()
+
+        # Episode counter: bumped by [R]. Published in `state` so the brain resets too, and
+        # used to ignore stale `cmd` packets the brain sent for the previous episode.
+        self.episode: int = 0
+        # Mission status reported by the brain: "idle" | "active" | "complete"
+        self.mission_status: str = "idle"
+        self.mission_text: str = ""
 
         # ZeroMQ setup
         self.zmq_ctx = zmq.Context.instance()
@@ -134,12 +164,42 @@ class NudgeSimulator:
             for s in self.active_sounds:
                 self.active_sounds[s] = False
             print("[sim] HOTKEY [X]: Silenced all active sounds.")
+        elif k == "R":
+            self.reset_scene()
+
+    def reset_scene(self) -> None:
+        """Put robot, owner, chair and sounds back to the demo start state; start a new episode."""
+        self.episode += 1
+        for s in self.active_sounds:
+            self.active_sounds[s] = False
+        self.owner_room_idx = 0
+        ox, oy = ROOMS[ROOM_ORDER[0]]["owner_spot"]
+        self.locomotion.set_owner_pos(ox, oy)
+        self.chair_blocking = False
+        self.locomotion.set_chair_pos(*CHAIR_STOWED_POS)
+        self.locomotion.gait_phase = 0.0
+        self.locomotion.reset_robot_pose(*ROBOT_START_POSE)
+        self.cmd_vx = self.cmd_vy = self.cmd_wz = 0.0
+        self.cmd_alert_mode = "none"
+        self.cmd_guiding = False
+        self.mission_status = "idle"
+        self.mission_text = ""
+        print(f"[sim] HOTKEY [R]: Scene RESET (episode {self.episode}): robot in "
+              f"{get_room_at(*ROBOT_START_POSE[:2])}, owner in {ROOM_ORDER[0]}, chair stowed, sounds off")
+
+    def status_overlay(self) -> tuple:
+        """(title, detail) for the viewer's on-screen mission status."""
+        if self.mission_status == "complete":
+            return ("MISSION COMPLETE", self.mission_text)
+        if self.mission_status == "active":
+            return ("MISSION ACTIVE", self.mission_text)
+        return (f"READY (episode {self.episode})", "B/K/M = sound   O = move owner   C = chair   X = silence   R = reset")
 
     def glfw_key_callback(self, keycode: int) -> None:
         """Callback invoked by `mujoco.viewer.launch_passive` on key press."""
         if 32 <= keycode <= 126:
             ch = chr(keycode).upper()
-            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X"):
+            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R"):
                 self.handle_hotkey(ch)
 
     def _update_sound_beacons(self) -> None:
@@ -186,6 +246,14 @@ class NudgeSimulator:
                 continue
 
             if topic == "cmd":
+                # Drop packets the brain sent before it noticed a reset (older brains omit the field).
+                if int(payload.get("episode", self.episode)) != self.episode:
+                    continue
+                status = str(payload.get("mission_status", self.mission_status))
+                if status == "complete" and self.mission_status != "complete":
+                    print(f"[sim] MISSION COMPLETE: {payload.get('mission_text', '')}")
+                self.mission_status = status
+                self.mission_text = str(payload.get("mission_text", ""))
                 self.cmd_vx = float(payload.get("vx", 0.0))
                 self.cmd_vy = float(payload.get("vy", 0.0))
                 self.cmd_wz = float(payload.get("wz", 0.0))
@@ -221,6 +289,7 @@ class NudgeSimulator:
                 "guiding_active": self.locomotion.guiding_active,
                 "owner_pos_gt": [round(owner_pos[0], 3), round(owner_pos[1], 3)],
                 "chair_blocking": self.chair_blocking,
+                "episode": self.episode,
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -268,12 +337,15 @@ class NudgeSimulator:
         """Advance one simulation step."""
         self.poll_zmq_commands()
         self._update_sound_beacons()
+        halo_mode = self.cmd_alert_mode
+        if halo_mode == "none" and self.mission_status == "complete":
+            halo_mode = "complete"
         self.locomotion.step(
             self.cmd_vx,
             self.cmd_vy,
             self.cmd_wz,
             guiding=self.cmd_guiding,
-            alert_mode=self.cmd_alert_mode,
+            alert_mode=halo_mode,
             dt=dt,
         )
         self.publish_telemetry(float(self.data.time))
@@ -307,7 +379,7 @@ def main() -> None:
     ox, oy = sim.locomotion.get_owner_pos()
     print(f"[sim] Go2 started in {get_room_at(rx, ry)} at ({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
     print(f"[sim] Owner started in {get_room_at(ox, oy)} at ({ox:.2f}, {oy:.2f})")
-    print("[sim] Hotkeys: [B/1] Doorbell | [K/2] Knock | [M/3] Smoke Alarm | [O/4] Move Owner | [C/5] Chair | [X] Silence")
+    print("[sim] Hotkeys: [B/1] Doorbell | [K/2] Knock | [M/3] Smoke Alarm | [O/4] Move Owner | [C/5] Chair | [X] Silence | [R] Reset")
 
     try:
         if args.headless:
@@ -334,11 +406,17 @@ def main() -> None:
 
                 start_wall = time.perf_counter()
                 last_sync = 0.0
+                shown_overlay = None
                 while viewer.is_running():
                     step_start = time.perf_counter()
                     sim.step_once(dt)
                     now_wall = time.perf_counter()
                     if now_wall - last_sync >= (1.0 / 60.0):
+                        overlay = sim.status_overlay()
+                        if overlay != shown_overlay:
+                            viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_200,
+                                              mujoco.mjtGridPos.mjGRID_TOPLEFT, overlay[0], overlay[1]))
+                            shown_overlay = overlay
                         viewer.sync()
                         last_sync = now_wall
                     if args.duration > 0.0 and (now_wall - start_wall) >= args.duration:

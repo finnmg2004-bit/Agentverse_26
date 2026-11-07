@@ -33,7 +33,7 @@ MODEL_CANDIDATES = ["gemma4:e2b", "gemma3:4b", "gemma3:1b"]
 
 SYSTEM_PROMPT = f"""You are the decision layer of Nudge, a quadruped assistance dog for a deafblind owner.
 The owner cannot hear or see: you must find them, nudge them, give the haptic code, and guide them.
-Reply with ONE JSON object only: {{"tool": "<name>", "args": {{...}}, "reason": "<max 12 words>"}}
+Reply with ONE JSON object only: {{"tool": "<name>", "args": {{...}}, "reason": "<max 5 words>"}}
 
 Tools:
 - go_to_room(room)               room in {sorted(ROOMS)}
@@ -130,6 +130,9 @@ class NudgeAgent:
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
             "stream": False,
             "format": "json",
+            # Gemma 4 reasons ("thinks") by default, which eats num_predict and leaves an empty answer
+            # well past the 2 s watchdog. Decisions here are one tool call, so answer directly.
+            "think": False,
             "keep_alive": "30m",
             "options": {"temperature": 0.0, "num_predict": 96},
         }, timeout=timeout)

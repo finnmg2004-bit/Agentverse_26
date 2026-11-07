@@ -103,6 +103,7 @@ Agentverse_26/
 git clone --recurse-submodules --shallow-submodules <this repo>   # or, in an existing clone:
 pixi run fetch-world      # git submodule update --init --depth 1 worlds/nerv-world (~390 MB)
 pixi run check-world      # must print "[check] all checks passed"
+pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
 pixi run sim              # terminal 1: MuJoCo viewer (cutaway view), hotkeys, ZMQ server
 pixi run brain            # terminal 2: brain + dashboard
 ```
@@ -209,7 +210,8 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   - Topic `camera` (10 Hz multipart): `[topic, metadata_json, rgb_jpeg_bytes, depth_float16_bytes]`
   - Topic `audio` (2 Hz multipart, every 0.5 s): `[topic, metadata_json, stereo_int16_pcm_bytes]` (16 kHz stereo, 0.5 s window = 8000 samples x 2 channels)
 - **`nudge-brain` -> `sim` (PUB on `tcp://127.0.0.1:5556`)**:
-  - Topic `cmd` (20 Hz JSON): `{"vx": float, "vy": float, "wz": float, "alert_mode": "none"|"1_pulse"|"2_pulse"|"continuous", "guiding": bool}`
+  - Topic `cmd` (20 Hz JSON): `{"vx": float, "vy": float, "wz": float, "alert_mode": "none"|"1_pulse"|"2_pulse"|"continuous", "guiding": bool, "mission_status": "idle"|"active"|"complete", "mission_text": str, "episode": int}`. The sim ignores `cmd` packets whose `episode` doesn't match its own (stale commands from before an `R` reset).
+  - `state` also carries `"episode": int` (incremented by the `R` reset hotkey).
 - `robot_room` values are `house_layout.ROOMS` keys (`entry`, `living_room`, `guest`, …) or `"outside"`.
   - **Planned change (not yet implemented — coordinate before changing the contract)**: replace `alert_mode` with an alert event `"alert": {"sound": str, "tier": 1|2|3, "room": str, "message": str} | null` so the sim drives the haptic handle, LED, screen and speaker from one event (see 2.2). The brain only decides; the sim's output devices act.
 
@@ -230,6 +232,17 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   2. **2.0 s Watchdog**: If the LLM takes > 2.0s to return a tool call after an event, deterministic fallback rules take over immediately.
   3. **Proximity Speed Cap**: Clamp speed <= 0.4 m/s whenever within 1.0 m of the owner.
 
+### 6.1 LLM Plan: local at runtime, Modal only for offline training (agreed)
+- **Runtime is 100% local.** The demo's LLM runs in local Ollama (`NUDGE_OLLAMA_URL` must stay `http://127.0.0.1:11434`). Ollama *can* run on Modal behind a web endpoint, but a Modal call in the runtime loop is a cloud API call and costs us the 15% "operational autonomy" score. Remote Ollama is OK for dev experiments only, never in the recorded demo.
+- **Problem:** `gemma4:e2b` on a GTX 1650 answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog usually overrides it and the deterministic rules make the decisions. Its unaided choices are also sometimes wrong (e.g. re-alerting instead of guiding).
+- **Plan — use the Modal credits for an offline fine-tune of a small Gemma (1B):**
+  1. **Eval set first**: 30–50 scripted `(event, state) -> expected tool call` cases; measure accuracy and latency of the base models (`gemma4:e2b`, `gemma3:1b`) on the demo laptop.
+  2. **Training data**: generate ~1–2k synthetic `(event, world.snapshot())` examples labelled by `deterministic_policy` in `nudge-brain/agent.py` (no hand labelling); short `reason` (≤ 5 words).
+  3. **Train on Modal**: LoRA (Unsloth or TRL+PEFT) on a single L4/A10G, output to a Modal Volume, `modal run train.py`. Expect well under an hour and a few dollars (each of us has $50). Base weights need the Gemma license accepted on Hugging Face.
+  4. **Bring it home**: merge LoRA -> export GGUF (Q4_K_M) -> `ollama create nudge-gemma -f Modelfile` -> run with `NUDGE_LLM_MODEL=nudge-gemma`.
+  5. **Ship only if** it beats the base model on the eval set: ≥ 90 % correct tool calls and answers reliably under 1 s on the demo laptop. Otherwise keep `gemma4:e2b` and the watchdog.
+- Keep `safety.py` (smoke pre-emption, watchdog, speed cap) regardless of which model ships.
+
 ---
 
 ## 7. Keyboard Event Hotkeys in MuJoCo Viewer (`sim/run_sim.py`)
@@ -239,20 +252,23 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - **`O` or `4`**: Cycle **Owner** room (`OWNER_ROOM_CYCLE`: `living_room` -> `guest` -> `dining` -> `family_room`)
 - **`C` or `5`**: Toggle **Chair** obstacle in `door_guest_living` (-7.6, 0.6)
 - **`X`**: Silence all active sounds
+- **`R`**: **Reset** the scene (robot to the entry-hall start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
+
+**Mission complete indicator**: when the owner has been delivered, the brain reports `mission_status: "complete"`; the MuJoCo viewer shows a `MISSION COMPLETE` overlay (with sound, target and sim-time duration), the robot's halo turns steady green, and the dashboard shows a green banner. It stays until the next mission starts or `R` is pressed.
 
 ---
 
 ## 8. 10-Milestone Roadmap & Current Status
 - [x] **M1**: Go2 loaded in MuJoCo viewer on Linux with Pixi (`pixi.toml` + `sim/run_sim.py`).
-- [x] **M2**: nerv-world house (submodule + `sim/world.py` loader, furniture stand-ins, cutaway view), Owner body, movable Chair, sound beacons, and hotkeys (`B, K, M, O, C, X`). The original 10×8 m box house is retired (see git history).
+- [x] **M2**: nerv-world house (submodule + `sim/world.py` loader, furniture stand-ins, cutaway view), Owner body, movable Chair, sound beacons, and hotkeys (`B, K, M, O, C, X, R`). The original 10×8 m box house is retired (see git history).
 - [x] **M3**: Velocity interface (`vx, vy, wz`) in `sim/locomotion.py` (Plan B kinematic + trotting legs, wall collision stop, and owner-following when guiding).
 - [x] **M4**: Simulated sensors (`sim/sensors.py`): Head RGB-D camera, 2D LiDAR rangefinders (per-ray `mj_ray`), and synthetic stereo ear audio from WAV clips (currently synthesized placeholder tones, see 2.1) with distance/wall attenuation.
 - [x] **M5**: ZeroMQ bridge (`sim/run_sim.py` <-> `nudge-brain/bridge.py`).
-- [x] **M6**: Local perception (`hearing.py` log-mel classifier + stereo azimuth; `vision.py` YOLOv8n via OpenCV DNN when `assets/models/yolov8n.onnx` exists, else HSV + depth fallback). TODO: drop in YAMNet / YOLO weight files.
+- [x] **M6**: Local perception. Models via `pixi run fetch-models` (gitignored, SHA-256 pinned, into `assets/models/`). `hearing.py`: YAMNet TFLite (`ai-edge-litert`) on a rolling ~1 s buffer, fused per sound with the spectral rules (`sources` says which won; `NUDGE_HEARING_FALLBACK=0` = YAMNet only) + stereo azimuth. YAMNet hears the smoke alarm clip, but the synthesized doorbell/knock placeholders read as "Music", so those still come from the spectral rules until real recordings land (M6b). `vision.py`: YOLOv8n ONNX via onnxruntime (~60 ms/frame CPU), HSV + depth fallback when YOLO finds nobody (`NUDGE_VISION_FALLBACK=0` = YOLO only); the current box-figure owner is not detected by YOLO — needs the scanned human mesh.
 - [ ] **M6b**: Sound registry with response tiers (2.1): move all per-sound data into the registry, add kettle (+ hotkey), real audio clips, YAMNet class mapping.
 - [x] **M7**: Plain-code navigator (`navigator.py`: static floor-plan map + Dijkstra with clearance cost, doorway tags, LiDAR skirt + LiDAR blocked-doorway re-planning), `world_model.py`, and `alerts.py`.
 - Verified headless in the nerv house (real head-camera renders): demo story doorbell → owner moved → search → alert → guide → smoke pre-emption (0.6 s) → evacuation outside the back door; chair-blocked door → LiDAR re-plan via the entry hall.
 - [ ] **M7b**: Multimodal alert outputs (2.2): tier-coloured LED, on-robot screen texture, local TTS speaker, owner profile; tier → haptic/LED/screen/speech mapping in `alerts.py`; new `alert` event in the `cmd` contract.
-- [x] **M8**: Event-driven local agent (`agent.py`, Gemma via Ollama HTTP, no ADK yet) + deterministic `safety.py` watchdog & pre-emption.
+- [x] **M8**: Event-driven local agent (`agent.py`, `gemma4:e2b` via Ollama HTTP with `think: false`, no ADK yet) + deterministic `safety.py` watchdog & pre-emption. On a GTX 1650 Gemma answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog often takes over — needs a faster GPU, a smaller prompt/model, or a team decision on the watchdog.
 - [x] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + detection box, 2D house map + path, and active agent plan.
 - [ ] **M10**: End-to-end 60-second continuous one-take demo rehearsal & recording.

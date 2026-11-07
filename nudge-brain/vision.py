@@ -4,9 +4,11 @@ Milestone 6b: Local Owner Detection (`nudge-brain/vision.py`).
 Detects the owner in the 320x240 head RGB-D frame and projects them to world (x, y).
 
 Backends, tried in order (all 100% local, no network at runtime):
-  1. YOLOv8n ONNX via OpenCV DNN  -> `assets/models/yolov8n.onnx`  (no PyTorch needed)
+  1. YOLOv8n ONNX via onnxruntime -> `assets/models/yolov8n.onnx`  (~60 ms/frame on CPU)
+     (falls back to OpenCV DNN on the same file, ~3x slower; get it with `pixi run fetch-models`)
   2. YOLOv8n via `ultralytics`     -> `assets/models/yolov8n.pt`    (if the package is installed)
-  3. HSV + depth silhouette        -> owner's teal jacket + skin head, always available
+  3. HSV + depth silhouette        -> owner's teal jacket + skin head, used when YOLO finds nobody
+     (disable with NUDGE_VISION_FALLBACK=0 to run YOLO-only)
 
 Projection: head_cam sits 0.30 m ahead of the base looking along +x (fovy 60 deg). MuJoCo
 depth is distance along the optical axis, so for pixel column u:
@@ -16,6 +18,7 @@ depth is distance along the optical axis, so for pixel column u:
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -37,18 +40,31 @@ YOLO_CONF = 0.35
 class OwnerDetector:
     def __init__(self) -> None:
         self.backend = "HSV-depth"
+        self.ort = None
         self.net = None
         self.yolo = None
+        # Set NUDGE_VISION_FALLBACK=0 to disable the HSV colour fallback (YOLO-only perception).
+        self.allow_hsv = os.environ.get("NUDGE_VISION_FALLBACK", "1") != "0"
 
         onnx_path = MODEL_DIR / "yolov8n.onnx"
         pt_path = MODEL_DIR / "yolov8n.pt"
         if onnx_path.exists():
             try:
+                import onnxruntime as ort  # type: ignore
+
+                self.ort = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+                self.ort_input = self.ort.get_inputs()[0].name
+                self.backend = "YOLOv8n-ORT"
+            except Exception as exc:
+                print(f"[vision] onnxruntime unavailable ({exc}); trying OpenCV DNN")
+                self.ort = None
+        if self.ort is None and onnx_path.exists():
+            try:
                 self.net = cv2.dnn.readNetFromONNX(str(onnx_path))
                 self.backend = "YOLOv8n-ONNX"
             except Exception as exc:
                 print(f"[vision] Could not load {onnx_path.name}: {exc}")
-        if self.net is None and pt_path.exists():
+        if self.ort is None and self.net is None and pt_path.exists():
             try:
                 from ultralytics import YOLO  # type: ignore
 
@@ -66,8 +82,11 @@ class OwnerDetector:
         canvas = np.full((side, side, 3), 114, dtype=np.uint8)
         canvas[:h, :w] = rgb
         blob = cv2.dnn.blobFromImage(canvas, 1.0 / 255.0, (640, 640), swapRB=False, crop=False)
-        self.net.setInput(blob)
-        out = self.net.forward()[0]  # (84, 8400)
+        if self.ort is not None:
+            out = self.ort.run(None, {self.ort_input: blob})[0][0]  # (84, 8400)
+        else:
+            self.net.setInput(blob)
+            out = self.net.forward()[0]  # (84, 8400)
         out = out.T
         person = out[:, 4]
         keep = person > YOLO_CONF
@@ -120,7 +139,7 @@ class OwnerDetector:
         candidates: List[Tuple[Tuple[int, int, int, int], float, Optional[np.ndarray], str]] = []
         try:
             det = None
-            if self.net is not None:
+            if self.ort is not None or self.net is not None:
                 det = self._yolo_onnx(rgb)
             elif self.yolo is not None:
                 det = self._yolo_torch(rgb)
@@ -128,9 +147,9 @@ class OwnerDetector:
                 candidates.append((det[0], det[1], None, self.backend))
         except Exception as exc:
             print(f"[vision] YOLO error, using HSV fallback: {exc}")
-            self.net = self.yolo = None
+            self.ort = self.net = self.yolo = None
             self.backend = "HSV-depth"
-        if not candidates:
+        if not candidates and (self.allow_hsv or self.backend == "HSV-depth"):
             candidates = [(box, conf, blob, "HSV-depth") for box, conf, blob in self._hsv(rgb, depth)]
 
         for box, conf, pixel_mask, backend in candidates:
