@@ -252,21 +252,24 @@ class GuideOwner(Skill):
     name = "guide_owner_to"
     timeout_s = 120.0
 
-    def __init__(self, target: str, world, nav: Navigator) -> None:
+    def __init__(self, target: str, world, nav: Navigator, via: str = "around") -> None:
         super().__init__()
         self.target = target
         self.goal = LANDMARKS[target] if target in LANDMARKS else ROOMS[target]["center"]
         self.lost_since: Optional[float] = None
         self.push_started: Optional[float] = None
         self.regrabbing = False
-        nav.set_goal(self.goal, world.robot_pose[:2], world.active_blocked_doors(), final_tol=0.3)
+        # via == "across": the agent chose to cross the owner's no-go area (emergency only, safety-checked)
+        self.cross = via == "across"
+        nav.set_goal(self.goal, world.robot_pose[:2], world.active_blocked_doors(), final_tol=0.3,
+                     cross_areas=self.cross)
 
     def label(self) -> str:
         if self.regrabbing:
             return f"guide_owner_to({self.target}) [owner let go]"
         if self.push_started is not None:
             return f"guide_owner_to({self.target}) [bringing owner in]"
-        return f"guide_owner_to({self.target})"
+        return f"guide_owner_to({self.target}{', across no-go area' if self.cross else ''})"
 
     def _owner_delivered(self, world) -> bool:
         if world.owner_pos is None:
@@ -305,7 +308,8 @@ class GuideOwner(Skill):
             if self.regrabbing:
                 self.regrabbing = False
                 self.push_started = None
-                nav.set_goal(self.goal, world.robot_pose[:2], world.active_blocked_doors(), final_tol=0.3)
+                nav.set_goal(self.goal, world.robot_pose[:2], world.active_blocked_doors(), final_tol=0.3,
+                             cross_areas=self.cross)
             if self.push_started is not None:
                 return self._final_push(world)
             vx, vy, wz, status = nav.step(world.robot_pose, world.lidar_ranges, GUIDE_SPEED)
@@ -360,7 +364,7 @@ class SkillExecutor:
             self.skill = OfferHandle()
         elif tool == "guide_owner_to":
             world.phase = "guiding"  # before planning, so evacuation hazard doors apply
-            self.skill = GuideOwner(args["target"], world, self.nav)
+            self.skill = GuideOwner(args["target"], world, self.nav, via=args.get("via", "around"))
         else:  # get_state / none
             self.skill = Skill()
         world.log(f"SKILL {self.skill.label()}")

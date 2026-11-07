@@ -91,6 +91,8 @@ Agentverse_26/
 └── nudge-brain/              # PROCESS 2: Perception, Navigation, Local Agent & Dashboard
     ├── bridge.py             # ZeroMQ client (subscribes to sensors :5555, publishes cmds :5556)
     ├── hearing.py            # Local YAMNet classifier + stereo ILD/ITD azimuth estimator
+    ├── voice.py              # Owner voice (`pixi run voice`, own process): laptop mic -> Silero VAD -> local Whisper -> wake word "Nudge" -> `user_command` on :5558
+    ├── intents.py            # Optional helper: LLM prompt + keyword parser, owner sentence -> come_here / go_to(place) / stop / find_object
     ├── vision.py             # Local YOLOv8n person detector + depth-to-world (x, y) projection
     ├── world_model.py        # Tracks robot pose, owner belief state, active sounds, task status
     ├── navigator.py          # Path planning on the static map (GridPlanner) + doorway tags + LiDAR skirt / blocked-door re-plan
@@ -110,7 +112,7 @@ Agentverse_26/
 git clone --recurse-submodules --shallow-submodules <this repo>   # or, in an existing clone:
 pixi run fetch-world      # git submodule update --init --depth 1 worlds/nerv-world (~390 MB)
 pixi run check-world      # must print "[check] all checks passed"
-pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
+pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite + Whisper base.en -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
 pixi run prepare-owner    # scanned owner: put Renderpeople `rp_mei_posed_001_OBJ/` in assets/models/ first (licence: not in git)
 pixi run sim              # terminal 1: MuJoCo viewer (cutaway view), hotkeys, ZMQ server
 pixi run brain            # terminal 2: brain + dashboard
@@ -330,7 +332,7 @@ About 6–7 working hours left. **Must-haves first; *stretch* only if your must-
 | **Teo** | Models | `scripts/fetch_models.py`, `nudge-brain/vision.py`, model setup, `training/` | Speech-to-text model in `fetch-models` + benchmark with Ricktho. **Local text-to-speech** (Piper) `speak(text)` for "Nudge says". | Small Gemma eval set + prompt tuning (no fine-tune: too risky in the time) |
 | **Finn** | Brain + reasoning | `nudge-brain/agent.py`, `safety.py`, `skills.py`, `navigator.py`, `world_model.py`, `owner_belief.py`, `evacuation.py`, `sound_localizer.py`, `main.py` | Handle `user_command`: Gemma turns text into a structured command/rule (schema-constrained, see 9.3); **avoid areas** in the planner; danger sounds override place rules; reasoning mentions active rules. | "Is the sound real?" (TV doorbell); simultaneous sounds by tier |
 | **Sean** | Sim, robot outputs, tests | `sim/run_sim.py`, `sim/owner_behavior.py` (check with Finn), `scripts/run_all.py`, `scripts/test_scenarios.py` | **Carpet object** in the living room (visible, area in `house_layout.py`, a route around it exists). **Robot outputs**: on-robot screen shows "Nudge says", LED colour by tier, speech via Teo's TTS. **Scenario tests**: carpet rule → doorbell never steps on it; voice/GUI command. | TV as a sound source (`tv_on` in `state`); owner states (asleep, bathroom) |
-| **Eden** | GUI, integration, story | `gui/`, AGENTS.md upkeep, deliverables | **Done:** GUI "Tell Nudge" box + example sentences (sends `user_command`, hotkeys off while typing), "Heard: '…'" echo, **active rules** line, no-go areas shaded on the map; brain plumbing for `user_command` → `heard` / `rules` (9.4). Merge captain at checkpoint + freeze. **Storyboard, 1-page summary, pitch.** | Recording-only layout; TV on/off button |
+| **Eden** | GUI, integration, story | `gui/`, AGENTS.md upkeep, deliverables | **Done:** GUI "Tell Nudge" box + example sentences (sends `user_command`, hotkeys off while typing), mic indicator (`voice_status`), "Heard: '…'" echo (brain `heard`), **active rules** line, no-go areas shaded on the map, "Nudge says" confirmations on the 3D view. Merge captain at checkpoint + freeze. **Storyboard, 1-page summary, pitch.** | Recording-only layout; TV on/off button |
 
 ### 9.2 Timeline (working hours from the start)
 | When | What |
@@ -354,8 +356,8 @@ Gemma turns the sentence into a structured rule (Ollama JSON schema with enums o
 ### 9.4 Hand-offs (ZMQ: only ever **add** fields)
 | Hand-off | From → To | Contract |
 |---|---|---|
-| `user_command` (**done**: the brain's SUB connects to the GUI's PUB `tcp://127.0.0.1:5557` and to the voice PUB `tcp://127.0.0.1:5558` (env `NUDGE_VOICE_PUB`); Ricktho's voice module **binds** :5558 and publishes topic `user_command`) | Ricktho (voice), Eden (GUI) → Finn | `{"text": str, "source": "voice"\|"gui", "confidence": float}`. The brain logs `HEARD (<source>): "<text>"`, echoes it as `heard` in the `brain` status, then calls **`agent.on_user_command(cmd, world)`** if it exists (Finn implements it). |
-| Active rules + confirmation | Finn → Eden, Sean | the agent keeps **`world.rules`**, a list of `{"type": "avoid_area"\|"sound_pref"\|"command", "text": <what was said>, "source", "area"?, "rect"?: [x0, y0, x1, y1], "sound"?, "until"?}`; the `brain` status already publishes it as `rules` (GUI shows them, shades `avoid_area` on the map using `rect`, else `house_layout.AVOID_AREAS[area]`, else the room). Confirmation text goes in the mission's `say` / "Nudge says". |
+| `user_command` (new topic; brain subscribes to the GUI's :5557 and to the voice publisher, which **binds PUB `tcp://127.0.0.1:5558`**) | Ricktho (voice), Eden (GUI) → Finn | `{"text": str, "source": "voice"\|"gui", "confidence": float}`; voice also adds `raw` (full transcript incl. "Nudge") and `t` (unix time). `text` has the wake word stripped. Voice also publishes `voice_status` (2 Hz) on :5558: `{"state": "listening"\|"hearing"\|"transcribing"\|"off", "level", "last_heard", "mic", "stt"}` (the control GUI shows it as the mic indicator). Received by `rules.CommandListener` in the brain; the brain echoes the last sentence as `heard` (`{"text", "source", "confidence", "t"}`) in the `brain` status for the GUI's "Heard:" line. |
+| Active rules + confirmation | Finn → Eden, Sean | `brain` status `rules` = `RuleBook.status()`: `[{"id", "type": "avoid_area"\|"sound_preference", "area", "sound", "policy", "from_hour", "to_hour", "summary", "text", "source"}]` (GUI shows the summaries and shades `avoid_area` via `house_layout.AVOID_AREAS[area]`); the owner confirmation is `nudge_says` (`{"text", "kind", "t"}`, shown as "Nudge says" on the GUI's 3D view). |
 | Carpet / avoid areas | Sean (sim + `house_layout.py`) → Finn, Eden | named rectangles, e.g. `AVOID_AREAS = {"living_room_carpet": (x0, y0, x1, y1)}` |
 | Sound registry | Ricktho → Finn, Sean, Eden | per sound: file, room, tier, alert pattern, YAMNet classes, target |
 | Speech | Teo → Sean | `speak(text)` (local TTS), model fetched by `pixi run fetch-models` |
@@ -365,6 +367,36 @@ Gemma turns the sentence into a structured rule (Ollama JSON schema with enums o
 2. **Doorbell** → robot goes to the owner **around the carpet**, nudges, screen shows the "Nudge says" message, guides to the front door (~25 s).
 3. **Smoke alarm** pre-empts → continuous vibration → fire-aware exit; crosses the carpet only if that is safest, and says why (~20 s).
 Backup: if voice isn't solid by the freeze, type the same sentence in the GUI. Voice gets its own short clip in the pitch.
+
+### 9.5b Voice input — status (Ricktho)
+- **Done**: `pixi run voice` = separate process. Listens all the time on the real laptop mic (PipeWire `pw-record` → PulseAudio → ALSA → sounddevice; `--mic` / `NUDGE_MIC`), Silero VAD (bundled with faster-whisper) cuts sentences (end after 0.8 s silence; steady fan/hum ignored), **Whisper base.en** (faster-whisper int8 on CPU, ~0.5 s per sentence, `NUDGE_STT_MODEL=tiny.en` is faster) → wake word: `"Nudge, take me to the kitchen"` publishes `take me to the kitchen`; `"Nudge."` alone arms the next sentence for 6 s; sentences starting `"Nudge says"` are ignored (our own TTS). `confidence` = exp(mean Whisper token log-prob).
+- **Without a mic**: `pixi run voice --file assets/audio/voice/come_here.wav` (test clips: Piper TTS, LJSpeech voice, public domain) or `pixi run voice --text "Nudge, stop"` publish through the same path; `pixi run voice --selftest` checks Whisper + wake word on the clips.
+- **For Finn**: `nudge-brain/intents.py` is an optional, tested helper (not wired in): `INTENT_PROMPT` + `validate()` for Gemma (~0.7 s), `parse_keywords()` as the watchdog fallback; maps phrases to `ROOMS` / `LANDMARKS` keys ("bedroom" → `guest`, "sofa" → `living_room`, "I'm hungry" → `kitchen` via the LLM). The earlier end-to-end version (voice → mission → find owner → guide) is on branch `voice-tasks` for reference.
+- **For Teo**: Whisper `base.en` / `tiny.en` are already pinned (HF revision + SHA-256) in `scripts/fetch_models.py` (`--stt tiny.en`). Also fixed in `vision.py`: onnxruntime's default thread pool busy-spun ~5 CPU cores at 10 Hz (starving sim / Whisper / Gemma); now 4 threads, no spinning (same latency). YAMNet limited to 2 threads.
+- **Laptop mic gotcha**: if the mic is clipping (Linux: `Internal Mic Boost` at max), voice prints `WARNING: mic is clipping`; fix with `amixer -c <card> sset 'Internal Mic Boost' 0`. Muted mic → `WARNING: mic muted or silent?` (`wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`).
+
+### 9.5c Merging your work with the voice work (for teammates AND their AI assistants — read before `git pull`)
+Ricktho's voice input is on `main` (commits "Add faster-whisper and sounddevice for local voice input", "Owner voice input ...", "Stop onnxruntime/YAMNet ..."). It is **additive**: it does NOT change `agent.py`, `main.py`, `world_model.py`, `safety.py`, `skills.py`, `navigator.py`, `dashboard.py`, `bridge.py`, `run_sim.py`, `gui/` or any ZMQ topic that already exists. To integrate:
+
+1. Commit your own work first, then `git pull origin main` (merge, not rebase, unless you know your branch is private). Then `pixi install`.
+2. **Files the voice work touched, and how to resolve a conflict in each:**
+   | File | What voice changed | If it conflicts |
+   |---|---|---|
+   | `pixi.toml` | + `python-sounddevice` (conda) and `faster-whisper` (pypi) deps, + task `voice` | Keep **both** sides' lines (deps and tasks are independent entries). |
+   | `pixi.lock` | regenerated for the two deps | **Never hand-merge.** `git checkout --theirs pixi.lock` (or `--ours`), then `pixi install` (re-solves from the merged `pixi.toml`), `git add pixi.lock`. If a dep is missing afterwards: `pixi add <dep>` again. |
+   | `scripts/fetch_models.py` | + `WHISPER` table (pinned HF revision + SHA-256), `whisper_files()`, `--stt` flag, `dest.parent.mkdir` in `fetch()` | Keep both: Teo's new entries go in `FILES` (or their own table) next to `WHISPER`; `main()` must still download `FILES + whisper_files(args.stt)`. |
+   | `nudge-brain/vision.py` | onnxruntime `SessionOptions`: 4 intra-op threads, `allow_spinning=0` (one 6-line block where `InferenceSession` is created) | Keep the `SessionOptions` block whatever else changes; the default thread pool burns ~5 CPU cores at 10 Hz and starves the sim, Whisper and Gemma. |
+   | `nudge-brain/hearing.py` | `Interpreter(..., num_threads=2)` (one line) | Keep `num_threads=2`. |
+   | `AGENTS.md` | repo tree (+ `voice.py`, `intents.py`), setup line, 9.4 `user_command` row (port + extra fields), 9.5b, 9.5c | Keep both sides' text; never drop another lane's section. |
+   | `README.md` | fetch-models sentence, "Voice input" section, 2 troubleshooting rows | Keep both. |
+   New files (no conflicts possible): `nudge-brain/voice.py`, `nudge-brain/intents.py`, `assets/audio/voice/*.wav`.
+3. **Contract to build against (do not change it, only add fields):** the voice process **binds PUB `tcp://127.0.0.1:5558`**; subscribers `connect`. Topic `user_command` → JSON `{"text": "take me to the kitchen", "source": "voice", "confidence": 0.93, "raw": "Nudge, take me to the kitchen.", "t": 1794084491.6}` (`text` has the wake word stripped; it may end with punctuation — normalise before matching). Topic `voice_status` (2 Hz) → `{"state": "listening"|"hearing"|"transcribing"|"off", "level": float, "last_heard": str, "mic": str, "stt": str}`. The GUI's own `user_command` (source `"gui"`) uses the same JSON shape.
+4. **Per lane:**
+   - **Finn (brain):** in `bridge.py` add a SUB socket `connect("tcp://127.0.0.1:5558")` + `SUBSCRIBE "user_command"` (and the GUI's `user_command` source), drain it non-blocking in `poll()`, hand `{"text", "source", "confidence"}` to the agent. Optional: `import intents` — `intents.INTENT_PROMPT` + `intents.validate(llm_json)` for Gemma, `intents.parse_keywords(text)` as the watchdog fallback (returns `{"intent": come_here|go_to|stop|find_object|unknown, "target": ROOMS/LANDMARKS key|None, "object", "say"}`). Ignore commands with `confidence < 0.5` or ask to repeat. Danger sounds still override everything. A full working reference (voice → mission → find owner with the camera → nudge → guide; `stop` cancels; smoke refuses `stop`) is on branch `voice-tasks` (`git fetch origin voice-tasks && git show origin/voice-tasks:nudge-brain/main.py`), written against the OLD agent — port the idea, don't merge that branch.
+   - **Eden (GUI):** subscribe to `:5558` for `voice_status` (show "Listening…" / mic level / `last_heard`) and `user_command` (show "Heard: '…'"). The GUI's text box publishes the same `user_command` shape with `"source": "gui"` on its own :5557.
+   - **Sean (tests/outputs):** a scenario can speak without a mic: run `python nudge-brain/voice.py --file assets/audio/voice/take_me_kitchen.wav --no-wake` (or `--text "Nudge, stop"`) as a subprocess once the brain is up; it publishes through Whisper exactly like the mic. Clips: `come_here`, `take_me_dining`, `take_me_kitchen`, `stop`, `find_phone` (Piper TTS, LJSpeech voice, public domain; add more the same way). The robot's own speech must start with "Nudge says" (voice ignores it) or be muted while the mic listens.
+   - **Teo (models/TTS):** Whisper is already in `fetch-models`; add Piper next to it. If `speak()` plays through the laptop speaker, start messages with "Nudge says" or pause voice while speaking, so the mic doesn't take Nudge's own words as a command.
+5. **Before pushing:** `pixi run voice --selftest` (must print `selftest passed`; needs `pixi run fetch-models`) and `pixi run test-scenarios`. Then `git push origin HEAD:main`; if rejected, `git pull origin main` again and repeat steps 2 and 5.
 
 ### 9.6 Rules for working independently
 1. Before every push: `git pull`, then `pixi run test-scenarios` (or at least the scenario you touched).

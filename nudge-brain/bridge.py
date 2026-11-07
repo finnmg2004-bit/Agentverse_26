@@ -8,8 +8,7 @@ and publishes velocity/alert/guiding commands (`cmd`) on `tcp://127.0.0.1:5556`.
 from __future__ import annotations
 
 import json
-import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -23,7 +22,6 @@ class BrainBridge:
         self,
         sub_endpoint: str = "tcp://127.0.0.1:5555",
         pub_endpoint: str = "tcp://127.0.0.1:5556",
-        command_endpoints: Optional[List[str]] = None,
     ) -> None:
         self.ctx = zmq.Context.instance()
 
@@ -35,16 +33,6 @@ class BrainBridge:
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "state")
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "camera")
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "audio")
-        # What the owner tells the robot (AGENTS.md 9.3/9.4): topic `user_command` from the control
-        # GUI (PUB :5557) and the voice module (PUB :5558, env NUDGE_VOICE_PUB). Connecting before
-        # they exist is fine; ZMQ reconnects.
-        if command_endpoints is None:
-            command_endpoints = ["tcp://127.0.0.1:5557",
-                                 os.environ.get("NUDGE_VOICE_PUB", "tcp://127.0.0.1:5558")]
-        for ep in command_endpoints:
-            self.sub_sock.connect(ep)
-        self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "user_command")
-        self.user_commands: List[Dict[str, Any]] = []
 
         # Publish commands to simulator (:5556)
         self.pub_sock = self.ctx.socket(zmq.PUB)
@@ -118,20 +106,7 @@ class BrainBridge:
                 except Exception:
                     pass
 
-            elif topic == "user_command" and len(parts) >= 2:
-                try:
-                    cmd = json.loads(parts[1].decode("utf-8"))
-                    if isinstance(cmd, dict) and str(cmd.get("text", "")).strip():
-                        self.user_commands.append(cmd)
-                except Exception:
-                    pass
-
         return updated
-
-    def take_user_commands(self) -> List[Dict[str, Any]]:
-        """Owner commands received since the last call: [{"text", "source", "confidence", ...}]."""
-        cmds, self.user_commands = self.user_commands, []
-        return cmds
 
     def send_cmd(
         self,

@@ -59,15 +59,23 @@ def smoke_detected(sound_result: Dict[str, Any]) -> bool:
     return float(sound_result.get("scores", {}).get("smoke_alarm", 0.0)) >= SMOKE_THRESHOLD
 
 
+def _evac_args(world) -> Dict[str, Any]:
+    """guide_owner_to args for the planned exit; `via: across` when the plan breaks an owner's place rule."""
+    args: Dict[str, Any] = {"target": world.evac_target()}
+    if world.evac and world.evac.get("via") == "across":
+        args["via"] = "across"
+    return args
+
+
 def emergency_action(world, event: str = "new_sound") -> Dict[str, Any]:
     """Deterministic evacuation policy used on pre-emption and for every emergency event."""
     if world.guiding_active or event in ("owner_alerted", "handle_taken", "path_blocked"):
-        return {"tool": "guide_owner_to", "args": {"target": world.evac_target()}}
+        return {"tool": "guide_owner_to", "args": _evac_args(world)}
     if event == "owner_no_response":
         # In a fire, two unanswered nudges are enough: lead them out anyway.
         if world.nudge_attempts < 2 and world.owner_recently_seen(4.0):
             return {"tool": "alert_owner", "args": {"sound": "smoke_alarm", "place": world.evac_target()}}
-        return {"tool": "guide_owner_to", "args": {"target": world.evac_target()}}
+        return {"tool": "guide_owner_to", "args": _evac_args(world)}
     if world.owner_recently_seen(2.0):
         return {"tool": "alert_owner", "args": {"sound": "smoke_alarm", "place": world.evac_target()}}
     if event == "arrived_in_room":
@@ -93,10 +101,17 @@ def validate_action(action: Dict[str, Any], world) -> Tuple[bool, str]:
             safe = [t for t, d in ((world.evac or {}).get("details") or {}).items() if not d.get("unavailable")]
             if target not in (safe or [world.evac_target()]):
                 return False, f"emergency: {target} is not a safe exit (safe: {safe})"
+        if args.get("via") == "across":
+            # Breaking an owner's place rule is only ever allowed in an emergency, and only on an
+            # exit route the planner found to be much shorter that way.
+            if not world.is_emergency():
+                return False, "owner's place rules may only be broken in an emergency"
+            if "cross_length" not in ((world.evac or {}).get("details") or {}).get(target, {}):
+                return False, f"no shorter route across the no-go area to {target}"
         if not (world.guiding_active or world.dist_to_owner() < 1.6):
             return False, "owner not at the handle"
     if tool == "alert_owner":
-        if args.get("sound") not in SOUND_SOURCES:
+        if args.get("sound") not in SOUND_SOURCES and args.get("sound") != "request":
             return False, f"bad sound {args.get('sound')!r}"
         if not world.owner_recently_seen(8.0):
             return False, "owner location unknown"

@@ -33,6 +33,8 @@ from sim.house_layout import (
 FIRE_NEAR_M = 4.0          # paths closer than this to the fire are penalised
 FIRE_PENALTY = 8.0         # metres of extra cost per metre inside FIRE_NEAR_M
 ESCALATE_AFTER_S = 40.0
+CROSS_MIN_SAVING_M = 3.0   # only consider breaking an owner's place rule if it saves this much walking
+RULE_BREAK_COST_M = 2.0    # the default plan treats breaking a place rule as this many extra metres
 MIN_FIRE_MEAS = 4          # trust the ears' fire location only after this many windows...
 MAX_FIRE_STD = 4.5         # ...and once it has narrowed down to this spread (m)
 
@@ -72,8 +74,12 @@ class EvacuationPlanner:
         sx, sy, _ = SOUND_SOURCES["smoke_alarm"]["pos"]
         return {"xy": (sx, sy), "room": get_room_at(sx, sy), "std": None, "source": "installed alarm"}
 
-    def choose(self, start: Tuple[float, float], fire: Dict[str, Any], blocked: Set[str]) -> Dict[str, Any]:
-        """Pick the safest exit for someone standing at `start`. Returns the decision + scores."""
+    def choose(self, start: Tuple[float, float], fire: Dict[str, Any], blocked: Set[str],
+               avoid: Optional[List[Tuple[float, float, float, float]]] = None) -> Dict[str, Any]:
+        """Pick the safest exit for someone standing at `start`. Returns the decision + scores.
+        `avoid`: the owner's no-go areas. Routes keep off them; if crossing one would save at least
+        CROSS_MIN_SAVING_M, that variant is recorded too (`cross_length`) so the agent can decide to
+        break the place rule in the emergency (and say why)."""
         fire_xy, fire_room = fire["xy"], fire["room"]
         owner_in_fire_room = get_room_at(*start) == fire_room
         hazards = set() if owner_in_fire_room else hazard_doors(fire_room)
@@ -88,14 +94,34 @@ class EvacuationPlanner:
             if e["room"] == fire_room and not owner_in_fire_room:
                 details[target] = {"unavailable": f"it is in the {fire_room}, where the fire is"}
                 continue
-            wps = self.planner.plan(start, LANDMARKS[target], blocked | hazards)
-            if wps is None:
+            goal = LANDMARKS[target]
+            wps = self.planner.plan(start, goal, blocked | hazards, avoid or (), None) if avoid else None
+            across = self.planner.plan(start, goal, blocked | hazards) if (avoid or wps is None) else None
+            if wps is None and across is None:
                 details[target] = {"unavailable": "no route that avoids the fire"}
                 continue
-            near = _min_dist_to(fire_xy, start, wps)
-            length = _path_len(start, wps)
-            scores[target] = length + FIRE_PENALTY * max(0.0, FIRE_NEAR_M - near)
-            details[target] = {"length": length, "fire_dist": near, "cost": scores[target]}
+            d: Dict[str, Any] = {"around_ok": wps is not None or not avoid}
+            if wps is not None:
+                near = _min_dist_to(fire_xy, start, wps)
+                d.update(length=_path_len(start, wps), fire_dist=near)
+            if across is not None and avoid:
+                a_len, a_near = _path_len(start, across), _min_dist_to(fire_xy, start, across)
+                if wps is None or d["length"] - a_len >= CROSS_MIN_SAVING_M:
+                    d.update(cross_length=a_len, cross_fire_dist=a_near)
+            elif across is not None:  # no owner rules: the plain route
+                d.update(length=_path_len(start, across), fire_dist=_min_dist_to(fire_xy, start, across))
+            options = []
+            if "length" in d:
+                options.append((d["length"] + FIRE_PENALTY * max(0.0, FIRE_NEAR_M - d["fire_dist"]), "around"))
+            if "cross_length" in d:
+                options.append((d["cross_length"] + RULE_BREAK_COST_M
+                                + FIRE_PENALTY * max(0.0, FIRE_NEAR_M - d["cross_fire_dist"]), "across"))
+            cost, via = min(options)
+            d.update(cost=cost, via=via)
+            if "length" not in d:  # only the crossing route exists
+                d.update(length=d["cross_length"], fire_dist=d["cross_fire_dist"])
+            scores[target] = cost
+            details[target] = d
         valid = {k: v for k, v in scores.items() if v is not None}
         if valid:
             target = min(valid, key=valid.get)
@@ -103,4 +129,6 @@ class EvacuationPlanner:
         else:
             target = SMOKE_EVACUATION_TARGET
             reason = "no safe route found: default exit"
-        return {"target": target, "scores": scores, "details": details, "hazard_doors": hazards, "reason": reason}
+        via = details.get(target, {}).get("via", "around")
+        return {"target": target, "via": via, "scores": scores, "details": details, "hazard_doors": hazards,
+                "reason": reason}

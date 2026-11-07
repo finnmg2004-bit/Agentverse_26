@@ -21,7 +21,7 @@ pixi install
 ```
 If you already cloned without submodules, run `pixi run fetch-world`. It downloads the house into `worlds/nerv-world` (about 390 MB).
 
-Optional, for the real local models: `pixi run fetch-models` downloads YOLOv8n and YAMNet into `assets/models/` and pulls Gemma via Ollama (install [Ollama](https://ollama.com) first). Without them the brain falls back to its built-in colour detector, spectral sound rules and deterministic rules.
+Optional, for the real local models: `pixi run fetch-models` downloads YOLOv8n, YAMNet and Whisper base.en (speech-to-text) into `assets/models/` and pulls Gemma via Ollama (install [Ollama](https://ollama.com) first). Without them the brain falls back to its built-in colour detector, spectral sound rules and deterministic rules.
 
 Optional, for the realistic owner: `pixi run prepare-owner` (see [Owner model](#owner-model-third-party-asset-not-in-git) below).
 
@@ -110,6 +110,9 @@ planner = GridPlanner(load_or_build())
 planner.plan(H.ROBOT_START_XY, H.LANDMARKS["back_exit_outside"])   # [(x, y, door_or_None), ...]
 ```
 
+## Voice input
+`pixi run voice` (its own terminal) listens to the laptop microphone, turns speech into text locally with Whisper, and publishes sentences that start with the wake word, e.g. *"Nudge, take me to the kitchen"*, as `user_command` messages for the brain (ZMQ `tcp://127.0.0.1:5558`, see AGENTS.md 9.4 / 9.5b). "Nudge." on its own waits for the next sentence. No mic? `pixi run voice --text "Nudge, stop"` or `pixi run voice --file assets/audio/voice/come_here.wav`; `pixi run voice --selftest` checks the speech-to-text.
+
 ## Troubleshooting
 | Problem | Fix |
 |---|---|
@@ -118,6 +121,8 @@ planner.plan(H.ROBOT_START_XY, H.LANDMARKS["back_exit_outside"])   # [(x, y, doo
 | Headless machine | `MUJOCO_GL=egl pixi run check-world` (the viewer itself needs a display) |
 | Robot walks into furniture / map looks stale | `pixi run build-map` (rebuilds `assets/maps/nerv_house_nav.npz`) |
 | Warning about the `project` field in pixi.toml | Harmless (pixi renamed it `workspace`) |
+| `[voice] WARNING: mic muted or silent?` | Unmute the mic (Linux: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`) |
+| `[voice] WARNING: mic is clipping` | Lower the mic boost (Linux: `amixer -c 1 sset 'Internal Mic Boost' 0`, check the card with `arecord -l`) |
 
 ## Repository map
 ```

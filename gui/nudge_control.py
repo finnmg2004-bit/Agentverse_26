@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -62,6 +63,7 @@ EXAMPLE_COMMANDS = [
 SIM_PUB = "tcp://127.0.0.1:5555"
 BRAIN_PUB = "tcp://127.0.0.1:5556"
 GUI_PUB = "tcp://127.0.0.1:5557"
+VOICE_PUB = os.environ.get("NUDGE_VOICE_PUB", "tcp://127.0.0.1:5558")  # nudge-brain/voice.py (voice_status)
 
 VIEW_W, VIEW_H = 960, 540
 CAM_W, CAM_H = 320, 240
@@ -121,8 +123,11 @@ class NudgeControl:
         self.sub.setsockopt(zmq.LINGER, 0)
         self.sub.connect(SIM_PUB)
         self.sub.connect(BRAIN_PUB)
-        for topic in ("state", "camera", "view", "brain"):
+        self.sub.connect(VOICE_PUB)
+        for topic in ("state", "camera", "view", "brain", "voice_status"):
             self.sub.setsockopt_string(zmq.SUBSCRIBE, topic)
+        self.voice: Dict[str, Any] = {}
+        self.t_voice = 0.0
         self.pub = self.ctx.socket(zmq.PUB)
         self.pub.setsockopt(zmq.LINGER, 0)
         try:
@@ -185,6 +190,9 @@ class NudgeControl:
                 elif topic == "brain":
                     self.brain = json.loads(parts[1])
                     self.t_brain = time.monotonic()
+                elif topic == "voice_status":
+                    self.voice = json.loads(parts[1])
+                    self.t_voice = time.monotonic()
                 elif topic == "view" and len(parts) >= 3:
                     self.view_meta = json.loads(parts[1])
                     got_view = parts[2]
@@ -365,6 +373,7 @@ class NudgeControl:
                 dpg.add_combo(EXAMPLE_COMMANDS, default_value="examples...", width=-1, tag="cmd_examples",
                               callback=lambda s, a: dpg.set_value("cmd_input", a))
             with dpg.group(horizontal=True):
+                dpg.add_text("mic: off", tag="voice_txt", color=DIM)
                 dpg.add_text("Heard:", color=DIM)
                 dpg.add_text("nothing yet", tag="heard_cmd_txt", color=(150, 230, 255, 255))
             with dpg.group(horizontal=True):
@@ -463,6 +472,14 @@ class NudgeControl:
                               parent="view_overlay")
         elif sim_ok:
             dpg.draw_text((14, 12), f"READY  (episode {st.get('episode', 0)})", color=DIM, size=20, parent="view_overlay")
+            # Confirmations to the owner outside a mission ("OK. I will not walk on the new carpet.")
+            ns = br.get("nudge_says") if brain_ok else None
+            if ns and ns.get("text") and float(st.get("t", 0)) - float(ns.get("t", 0)) < 12.0:
+                w = min(VIEW_W - 8, 40 + 9 * (len(ns["text"]) + 14))
+                dpg.draw_rectangle((8, 40), (w, 68), fill=(0, 0, 0, 170), color=(0, 0, 0, 0), rounding=6,
+                                   parent="view_overlay")
+                dpg.draw_text((20, 44), f'Nudge says: "{ns["text"]}"', color=(150, 230, 255, 255), size=17,
+                              parent="view_overlay")
 
         # Scene line
         if sim_ok:
@@ -485,6 +502,8 @@ class NudgeControl:
 
     @staticmethod
     def _rule_text(r: dict) -> str:
+        if r.get("summary"):  # rules.py RuleBook.status(): already a plain summary
+            return f"{r['summary']}" + (f" [{r['source']}]" if r.get("source") else "")
         kind = r.get("type", "rule")
         what = r.get("area") or r.get("sound") or r.get("target") or ""
         until = f" until {r['until']}" if r.get("until") else ""
@@ -494,6 +513,15 @@ class NudgeControl:
         return f"{label}: {what}{until}{src}{quote}"
 
     def _update_commands(self, br: dict, brain_ok: bool) -> None:
+        # Voice module (pixi run voice) mic indicator
+        if time.monotonic() - self.t_voice < 2.0 and self.voice:
+            state = str(self.voice.get("state", "?"))
+            col = {"hearing": GREEN, "transcribing": AMBER, "listening": CYAN}.get(state, DIM)
+            dpg.set_value("voice_txt", f"mic: {state}")
+            dpg.configure_item("voice_txt", color=col)
+        else:
+            dpg.set_value("voice_txt", "mic: off")
+            dpg.configure_item("voice_txt", color=DIM)
         heard = br.get("heard") if brain_ok else None
         if heard and heard.get("text"):
             conf = heard.get("confidence")

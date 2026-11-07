@@ -132,6 +132,22 @@ class Dashboard:
                 put(img, f"{100 * pr:.0f}%", (cx - 12, cy + 10), (255, 255, 255) if pr > 0.25 else DIM, 0.4)
             if name in world.searched_rooms:
                 put(img, "searched", (cx - 26, cy + 24), GREEN, 0.36)
+        # Owner's no-go areas (rules.py): shaded; red outline if an emergency decision crosses them
+        crossing = "across" in self._skill_label
+        for area in world.rules.avoid_areas():
+            from rules import area_rect
+            rect = area_rect(area)
+            if rect is None:
+                continue
+            x0, y0, x1, y1 = rect
+            p1, p2 = w2p(min(x0, x1), max(y0, y1)), w2p(max(x0, x1), min(y0, y1))
+            roi = img[p1[1]:p2[1], p1[0]:p2[0]]
+            if roi.size:
+                roi[:] = (0.55 * roi + 0.45 * np.array((120, 60, 160))).astype(np.uint8)
+                for k in range(-roi.shape[0], roi.shape[1], 8):  # hatching
+                    cv2.line(roi, (k, roi.shape[0]), (k + roi.shape[0], 0), (170, 110, 210), 1)
+            cv2.rectangle(img, p1, p2, RED if (crossing and world.is_emergency()) else (200, 140, 230), 2)
+            put(img, "NO-GO", (p1[0] + 3, p1[1] + 13), (240, 220, 255), 0.4, 1)
         for a, b in WALL_SEGMENTS_2D:
             cv2.line(img, w2p(*a), w2p(*b), (200, 200, 200), 3)
         for door, (dx, dy) in DOORWAYS.items():
@@ -269,14 +285,26 @@ class Dashboard:
         for i, line in enumerate(list(world.events)[:8]):
             put(img, line[:58], (lx, y0 + 44 + i * 21), DIM if i else TEXT, 0.4)
 
+    _skill_label = ""
+
     def render(self, world, agent, cam, skill_label: str, alerts, nav_path) -> Optional[str]:
         """Draw one frame. Returns a sim hotkey to forward, 'quit', or None."""
+        self._skill_label = skill_label
         t = time.monotonic()
         img = np.full((H, W, 3), BG, np.uint8)
         self._camera(img, cam, world.last_detection)
         self._map(img, world, nav_path, t)
         self._status(img, world, agent, skill_label, alerts, t)
         self._timeline(img, agent)
+        says = (getattr(world, "nudge_says", None) or {}).get("text")
+        if world.mission is not None and world.mission.get("say"):
+            says = world.mission["say"]
+        if says:
+            cv2.rectangle(img, (MAP_X0, MAP_Y0 + MAP_H - 26), (MAP_X0 + MAP_W, MAP_Y0 + MAP_H), (60, 40, 70), -1)
+            put(img, f'NUDGE SAYS: "{says}"'[:92], (MAP_X0 + 8, MAP_Y0 + MAP_H - 8), (255, 230, 255), 0.45, 1)
+        rules = world.rules.summaries()
+        if rules:
+            put(img, "RULES: " + "; ".join(rules)[:80], (MAP_X0 + 8, MAP_Y0 + 18), (220, 170, 255), 0.42, 1)
         if world.escalated and world.mission is not None:
             if int(t * 2) % 2 == 0:
                 cv2.rectangle(img, (10, 10), (650, 60), (30, 30, 200), -1)

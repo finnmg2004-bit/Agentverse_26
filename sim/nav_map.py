@@ -207,9 +207,13 @@ class GridPlanner:
             return px - half_t, py - w / 2, px + half_t, py + w / 2
         return px - w / 2, py - half_t, px + w / 2, py + half_t
 
-    def _grid(self, blocked: frozenset):
-        if blocked in self._cache:
-            return self._cache[blocked]
+    def _grid(self, blocked: frozenset, avoid: Tuple = (), avoid_cost: Optional[float] = None):
+        """`avoid`: rectangles (x0, y0, x1, y1) the owner asked us to keep off (e.g. a new carpet).
+        avoid_cost None -> hard no-go (like a wall); a number -> walkable but each metre inside
+        costs (1 + avoid_cost) metres (used when an emergency may override the owner's rule)."""
+        key = (blocked, tuple(avoid), avoid_cost)
+        if key in self._cache:
+            return self._cache[key]
         from scipy.sparse import csr_matrix
         occ = self.occ.copy()
         for door in blocked:
@@ -218,9 +222,20 @@ class GridPlanner:
                 r0, c0 = self.cell(x0, y0)
                 r1, c1 = self.cell(x1, y1)
                 occ[r0:r1 + 1, c0:c1 + 1] = True
+        avoid_mask = np.zeros_like(occ)
+        for x0, y0, x1, y1 in avoid:
+            r0, c0 = self.cell(min(x0, x1), min(y0, y1))
+            r1, c1 = self.cell(max(x0, x1), max(y0, y1))
+            avoid_mask[r0:r1 + 1, c0:c1 + 1] = True
+        if avoid_cost is None:
+            occ |= avoid_mask
         clear = ndimage.distance_transform_edt(~occ) * self.res
         free = clear >= self.robot_radius
         cost = 1.0 + self.clear_weight * np.clip((self.pref_clear - clear) / self.pref_clear, 0.0, None)
+        if avoid_cost is not None:
+            # Penalise the area plus the robot's radius around it (its body would be on it).
+            near_area = ndimage.distance_transform_edt(~avoid_mask) * self.res < self.robot_radius
+            cost = cost + float(avoid_cost) * near_area
 
         h, w = occ.shape
         idx = np.arange(h * w).reshape(h, w)
@@ -243,7 +258,7 @@ class GridPlanner:
         entry = (graph, free, clear, near)
         if len(self._cache) > 8:
             self._cache.clear()
-        self._cache[blocked] = entry
+        self._cache[key] = entry
         return entry
 
     def _snap(self, rc: Tuple[int, int], free, near) -> Tuple[int, int]:
@@ -301,10 +316,13 @@ class GridPlanner:
         return out
 
     # ---------------------------------------------------------------- public
-    def plan(self, start: Point, goal: Point, blocked: Iterable[str] = ()) -> Optional[List[Tuple[float, float, Optional[str]]]]:
-        """Waypoints [(x, y, door_name|None), ...] ending at (the nearest free cell to) goal, or None."""
+    def plan(self, start: Point, goal: Point, blocked: Iterable[str] = (),
+             avoid: Iterable[Tuple[float, float, float, float]] = (),
+             avoid_cost: Optional[float] = None) -> Optional[List[Tuple[float, float, Optional[str]]]]:
+        """Waypoints [(x, y, door_name|None), ...] ending at (the nearest free cell to) goal, or None.
+        Optional `avoid` / `avoid_cost`: see _grid (owner's no-go areas; additive, defaults unchanged)."""
         from scipy.sparse.csgraph import dijkstra
-        graph, free, clear, near = self._grid(frozenset(blocked))
+        graph, free, clear, near = self._grid(frozenset(blocked), tuple(avoid), avoid_cost)
         s = self._snap(self.cell(*start), free, near)
         g = self._snap(self.cell(*goal), free, near)
         h, w = free.shape
