@@ -115,6 +115,9 @@ class BrainBridge:
         wz: float,
         alert_mode: str = "none",
         guiding: bool = False,
+        mission_status: str = "idle",
+        mission_text: str = "",
+        episode: Optional[int] = None,
     ) -> None:
         """Publish 20 Hz command packet to `sim`."""
         payload = {
@@ -123,7 +126,11 @@ class BrainBridge:
             "wz": round(float(wz), 4),
             "alert_mode": str(alert_mode),
             "guiding": bool(guiding),
+            "mission_status": str(mission_status),
+            "mission_text": str(mission_text),
         }
+        if episode is not None:
+            payload["episode"] = int(episode)
         self.pub_sock.send_multipart([b"cmd", json.dumps(payload).encode("utf-8")])
 
     def send_sim_event(self, key: str) -> None:
