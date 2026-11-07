@@ -64,8 +64,23 @@ class Brain:
         self.last_owner_seen_event = 0.0
         self.episode = None  # sim episode we are acting on; a change means the sim was reset ([R])
         self.last_status_pub = 0.0
+        self.last_heard = None  # last thing the owner told the robot (voice or GUI), for the GUI echo
         self.world.log(f"Brain up | hearing={self.hearing.backend_name} vision={self.vision.backend} "
                        f"agent={self.agent.backend}")
+
+    def on_user_command(self, cmd: dict) -> None:
+        """The owner told the robot something (voice or GUI text), AGENTS.md 9.3.
+        Logged and echoed to the GUI here; turning it into a command or a structured rule
+        (e.g. avoid_area for "don't step on the new carpet") is the agent's job:
+        `agent.on_user_command(cmd, world)` once it exists (Finn's lane)."""
+        text = str(cmd.get("text", "")).strip()
+        src = str(cmd.get("source", "?"))
+        self.last_heard = {"text": text, "source": src, "confidence": cmd.get("confidence"),
+                           "t": round(self.world.t_sim, 1)}
+        self.world.log(f'HEARD ({src}): "{text}"')
+        handler = getattr(self.agent, "on_user_command", None)
+        if handler is not None:
+            handler(cmd, self.world)
 
     def reset(self, episode) -> None:
         """Sim was reset: drop the mission, plan, alerts, owner belief and pending agent decision."""
@@ -182,6 +197,8 @@ class Brain:
             self.world.owner_room = self.world.belief.most_likely()
         self.check_escalation()
         upd = self.bridge.poll()
+        for cmd in self.bridge.take_user_commands():
+            self.on_user_command(cmd)
         if upd["state"]:
             episode = self.bridge.latest_state.get("episode")
             if self.episode is None:
@@ -282,6 +299,10 @@ class Brain:
                       "menu": self.agent.last_menu},
             "events": list(w.events),
             "backends": {"hearing": self.hearing.backend_name, "vision": self.vision.backend},
+            # Owner instructions (AGENTS.md 9.3/9.4): last thing heard + the active structured rules
+            # [{"type": "avoid_area"|"sound_pref"|"command", "text", "area"?, "rect"?, "until"?, "source"}]
+            "heard": self.last_heard,
+            "rules": list(getattr(w, "rules", None) or []),
         }
 
     def run(self, duration: float = 0.0) -> None:

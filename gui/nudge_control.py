@@ -40,11 +40,24 @@ for _p in (str(ROOT), str(ROOT / "nudge-brain")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import sim.house_layout as house_layout  # noqa: E402
 from sim.house_layout import (  # noqa: E402
     CHAIR_DOORWAY_POS, DOORWAYS, HOUSE_BOUNDS, LANDMARKS, OWNER_SPOTS, ROOM_ORDER, ROOMS,
     SOUND_SOURCES, WALL_SEGMENTS_2D,
 )
 from navigator import LIDAR_ANGLES  # noqa: E402
+
+# Named no-go areas (Sean adds e.g. "living_room_carpet": (x0, y0, x1, y1) to house_layout).
+AVOID_AREAS: Dict[str, Any] = getattr(house_layout, "AVOID_AREAS", {})
+
+# Ready-made sentences for "Tell Nudge" (reliable demo input; voice sends the same message).
+EXAMPLE_COMMANDS = [
+    "I've just got a new carpet in the living room, please don't step on it",
+    "I'm expecting a parcel today",
+    "Don't wake me for the oven timer after 11pm",
+    "Nudge, take me to the kitchen",
+    "Stop",
+]
 
 SIM_PUB = "tcp://127.0.0.1:5555"
 BRAIN_PUB = "tcp://127.0.0.1:5556"
@@ -127,6 +140,7 @@ class NudgeControl:
         self.drag_last = (0.0, 0.0)
         self.reason_sig: Any = None
         self.events_sig: Any = None
+        self.last_sent: Optional[tuple] = None  # (text, monotonic time) of the last "Tell Nudge"
 
         self.view_buf = np.zeros(VIEW_W * VIEW_H * 3, dtype=np.float32)
         self.cam_buf = np.zeros(CAM_W * CAM_H * 3, dtype=np.float32)
@@ -138,6 +152,17 @@ class NudgeControl:
 
     def key(self, k: str) -> None:
         self.send({"action": "key", "key": k})
+
+    def send_command(self, text: str) -> None:
+        """'Tell Nudge': publish what the owner says as `user_command` (same message as voice)."""
+        text = (text or "").strip()
+        if not text:
+            return
+        self.pub.send_multipart([b"user_command", json.dumps(
+            {"text": text, "source": "gui", "confidence": 1.0}).encode("utf-8")])
+        self.last_sent = (text, time.monotonic())
+        if dpg.does_item_exist("cmd_input"):
+            dpg.set_value("cmd_input", "")
 
     def send_camera(self, force: bool = False) -> None:
         now = time.monotonic()
@@ -231,6 +256,8 @@ class NudgeControl:
             self.send_camera(force=True)
 
     def on_key(self, sender, app_data) -> None:
+        if dpg.is_item_focused("cmd_input"):  # typing a sentence must not ring the doorbell
+            return
         keys = {dpg.mvKey_B: "B", dpg.mvKey_K: "K", dpg.mvKey_M: "M", dpg.mvKey_O: "O",
                 dpg.mvKey_C: "C", dpg.mvKey_X: "X", dpg.mvKey_R: "R"}
         if app_data in keys:
@@ -324,6 +351,25 @@ class NudgeControl:
                 dpg.add_button(label="Next room  [O]", callback=lambda: self.key("O"))
                 dpg.add_button(label="Chair block / unblock  [C]", callback=lambda: self.key("C"))
                 dpg.add_text("", tag="scene_txt", color=DIM)
+
+            # Tell Nudge: commands, sound preferences and place rules (AGENTS.md 9.3)
+            with dpg.group(horizontal=True):
+                t = dpg.add_text("TELL NUDGE")
+                if "mid" in self.fonts:
+                    dpg.bind_item_font(t, self.fonts["mid"])
+                dpg.add_input_text(tag="cmd_input", width=520, on_enter=True,
+                                   hint="e.g. I've just got a new carpet in the living room, please don't step on it",
+                                   callback=lambda s, a: self.send_command(a))
+                b = dpg.add_button(label="Send", width=60, callback=lambda: self.send_command(dpg.get_value("cmd_input")))
+                dpg.bind_item_theme(b, self._button_theme((90, 70, 160)))
+                dpg.add_combo(EXAMPLE_COMMANDS, default_value="examples...", width=-1, tag="cmd_examples",
+                              callback=lambda s, a: dpg.set_value("cmd_input", a))
+            with dpg.group(horizontal=True):
+                dpg.add_text("Heard:", color=DIM)
+                dpg.add_text("nothing yet", tag="heard_cmd_txt", color=(150, 230, 255, 255))
+            with dpg.group(horizontal=True):
+                dpg.add_text("Rules:", color=DIM)
+                dpg.add_text("none", tag="rules_txt", wrap=LEFT_W - 80)
 
             # Agent reasoning
             with dpg.group(horizontal=True):
@@ -426,6 +472,7 @@ class NudgeControl:
         else:
             dpg.set_value("scene_txt", "   sim not connected")
 
+        self._update_commands(br if brain_ok else {}, brain_ok)
         self._update_camera_overlay(br if brain_ok else {})
         self._update_status(br if brain_ok else {}, brain_ok, tnow)
         self._update_map(st if sim_ok else {}, br if brain_ok else {}, tnow)
@@ -435,6 +482,40 @@ class NudgeControl:
         if sig != self.events_sig:
             self.events_sig = sig
             dpg.set_value("events_txt", "\n".join(events) if events else "")
+
+    @staticmethod
+    def _rule_text(r: dict) -> str:
+        kind = r.get("type", "rule")
+        what = r.get("area") or r.get("sound") or r.get("target") or ""
+        until = f" until {r['until']}" if r.get("until") else ""
+        src = f" [{r['source']}]" if r.get("source") else ""
+        label = {"avoid_area": "avoid", "sound_pref": "sound", "command": "do"}.get(kind, kind)
+        quote = f' - "{r["text"]}"' if r.get("text") else ""
+        return f"{label}: {what}{until}{src}{quote}"
+
+    def _update_commands(self, br: dict, brain_ok: bool) -> None:
+        heard = br.get("heard") if brain_ok else None
+        if heard and heard.get("text"):
+            conf = heard.get("confidence")
+            conf_txt = f" ({float(conf):.2f})" if isinstance(conf, (int, float)) and heard.get("source") == "voice" else ""
+            dpg.set_value("heard_cmd_txt", f"\"{heard['text']}\"{conf_txt}   via {heard.get('source', '?')} "
+                                           f"at {heard.get('t', 0):.1f}s")
+        elif self.last_sent and time.monotonic() - self.last_sent[1] < 5.0:
+            dpg.set_value("heard_cmd_txt", f"sent \"{self.last_sent[0]}\" (waiting for the brain)")
+        else:
+            dpg.set_value("heard_cmd_txt", "nothing yet" if brain_ok else "brain not connected")
+        rules = (br.get("rules") or []) if brain_ok else []
+        dpg.set_value("rules_txt", "   |   ".join(self._rule_text(r) for r in rules) if rules else "none")
+
+    @staticmethod
+    def _rule_rect(r: dict):
+        """Rectangle (x0, y0, x1, y1) of an avoid-area rule: its own `rect`, else the named area."""
+        rect = r.get("rect")
+        if rect is None and r.get("area") in AVOID_AREAS:
+            rect = AVOID_AREAS[r["area"]]
+        if rect is None and r.get("area") in ROOMS:
+            rect = ROOMS[r["area"]]["rect"]
+        return tuple(rect) if rect is not None and len(rect) == 4 else None
 
     def _update_camera_overlay(self, br: dict) -> None:
         dpg.delete_item("cam_overlay", children_only=True)
@@ -487,6 +568,19 @@ class NudgeControl:
         for key in ROOMS:
             dpg.configure_item(f"room_{key}", fill=(45, 75, 50, 255) if key in searched else
                                ((52, 52, 62, 255) if ROOMS[key].get("search") else (42, 42, 50, 255)))
+        # No-go areas from the owner's place rules ("don't step on the new carpet"): red, hatched edge
+        for rule in br.get("rules") or []:
+            if rule.get("type") != "avoid_area":
+                continue
+            rect = self._rule_rect(rule)
+            if rect is None:
+                continue
+            x0, y0, x1, y1 = rect
+            dpg.draw_rectangle(w2p(x0, y1), w2p(x1, y0), fill=(220, 60, 60, 70), color=(235, 80, 80, 230),
+                               thickness=2, parent=L)
+            px, py = w2p(x0, y1)
+            dpg.draw_text((px + 3, py + 2), f"no-go: {rule.get('area', 'area')}", color=(255, 140, 140, 255),
+                          size=11, parent=L)
         for door in br.get("blocked_doors", []):
             if door in DOORWAYS:
                 p = w2p(*DOORWAYS[door])
@@ -608,6 +702,8 @@ class NudgeControl:
                     what = auto.pop(0)[1]
                     if what.lower().startswith("cam="):
                         self.preset(what[4:])
+                    elif what.lower().startswith("say="):
+                        self.send_command(what[4:])
                     else:
                         self.key(what.upper())
                 if screenshot and elapsed >= screenshot[1]:
@@ -625,10 +721,12 @@ def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Nudge Control: 3D view, events and agent reasoning")
     ap.add_argument("--auto", default="",
-                    help="Scripted presses, e.g. 'B@3,O@20,cam=Chase cam@25' (key or cam=<preset> @ seconds)")
+                    help="Scripted actions: key, cam=<preset> or say=<sentence>, each @ seconds; separate with ';' "
+                         "(or ',' when no sentence has a comma), e.g. 'say=I'm expecting a parcel@2;B@5;cam=Chase cam@6'")
     ap.add_argument("--screenshot", default="", help="Save a PNG and quit, e.g. 'shot.png@30'")
     args = ap.parse_args()
-    auto = [(float(t), k) for k, t in (p.rsplit("@", 1) for p in args.auto.split(",") if p)]
+    sep = ";" if ";" in args.auto else ","
+    auto = [(float(t), k) for k, t in (p.rsplit("@", 1) for p in args.auto.split(sep) if p.strip())]
     shot = None
     if args.screenshot:
         path, secs = args.screenshot.rsplit("@", 1)
