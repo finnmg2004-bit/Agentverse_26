@@ -69,6 +69,8 @@ from sim.locomotion import Go2Locomotion
 from sim.nav_map import load_or_build
 from sim.sensors import SimSensors
 from sim.world import build_nudge_model
+from sim.owner_behavior import OwnerBehavior
+from sim.house_layout import CHAIR_EXIT_POS
 
 
 class NudgeSimulator:
@@ -80,12 +82,20 @@ class NudgeSimulator:
         sub_endpoint: str = "tcp://127.0.0.1:5556",
         enable_camera: bool = True,
         cutaway: bool = True,
+        owner_wander: bool = True,
+        owner_seed=None,
     ) -> None:
         self.model, self.data = build_nudge_model(verbose=True, cutaway=cutaway)
         self.nav_map = load_or_build(self.model, self.data)
 
         self.locomotion = Go2Locomotion(self.model, self.data, self.nav_map)
         self.sensors = SimSensors(self.model, self.data, enable_camera=enable_camera)
+
+        # The owner behaves like a person: wanders, reacts to nudges, taps the handle, may let go.
+        from sim.nav_map import GridPlanner
+        self.owner = OwnerBehavior(self.locomotion, lambda: GridPlanner(self.nav_map),
+                                   seed=owner_seed, wander=owner_wander)
+        self.chair_at_exit = False
 
         # Scene state controlled by hotkeys
         self.owner_room_idx: int = 0  # Starts in living_room
@@ -153,9 +163,11 @@ class NudgeSimulator:
             new_room = ROOM_ORDER[self.owner_room_idx]
             ox, oy = ROOMS[new_room]["owner_spot"]
             self.locomotion.set_owner_pos(ox, oy)
+            self.owner.on_teleport(float(self.data.time))
             print(f"[sim] HOTKEY [O]: Moved Owner to {new_room} at ({ox}, {oy})")
         elif k in ("C", "5"):
             self.chair_blocking = not self.chair_blocking
+            self.chair_at_exit = False
             pos = CHAIR_DOORWAY_POS if self.chair_blocking else CHAIR_STOWED_POS
             self.locomotion.set_chair_pos(*pos)
             state_str = f"BLOCKING doorway {CHAIR_DOORWAY_POS[:2]}" if self.chair_blocking else f"STOWED at {pos[:2]}"
@@ -166,6 +178,16 @@ class NudgeSimulator:
             print("[sim] HOTKEY [X]: Silenced all active sounds.")
         elif k == "R":
             self.reset_scene()
+        elif k == "W":
+            on = self.owner.toggle_wander()
+            print(f"[sim] HOTKEY [W]: Owner wandering {'ON' if on else 'OFF'}")
+        elif k == "E":
+            # The chair falls into the back (garden) door -> evacuation must use another exit.
+            self.chair_at_exit = not self.chair_at_exit
+            self.chair_blocking = False
+            pos = CHAIR_EXIT_POS if self.chair_at_exit else CHAIR_STOWED_POS
+            self.locomotion.set_chair_pos(*pos)
+            print(f"[sim] HOTKEY [E]: Chair {'BLOCKING the back exit' if self.chair_at_exit else 'stowed'} at {pos[:2]}")
 
     def reset_scene(self) -> None:
         """Put robot, owner, chair and sounds back to the demo start state; start a new episode."""
@@ -175,7 +197,9 @@ class NudgeSimulator:
         self.owner_room_idx = 0
         ox, oy = ROOMS[ROOM_ORDER[0]]["owner_spot"]
         self.locomotion.set_owner_pos(ox, oy)
+        self.owner.reset(float(self.data.time))
         self.chair_blocking = False
+        self.chair_at_exit = False
         self.locomotion.set_chair_pos(*CHAIR_STOWED_POS)
         self.locomotion.gait_phase = 0.0
         self.locomotion.reset_robot_pose(*ROBOT_START_POSE)
@@ -193,13 +217,13 @@ class NudgeSimulator:
             return ("MISSION COMPLETE", self.mission_text)
         if self.mission_status == "active":
             return ("MISSION ACTIVE", self.mission_text)
-        return (f"READY (episode {self.episode})", "B/K/M = sound   O = move owner   C = chair   X = silence   R = reset")
+        return (f"READY (episode {self.episode})", "B/K/M = sound   O = move owner   W = owner wander   C/E = chair   X = silence   R = reset")
 
     def glfw_key_callback(self, keycode: int) -> None:
         """Callback invoked by `mujoco.viewer.launch_passive` on key press."""
         if 32 <= keycode <= 126:
             ch = chr(keycode).upper()
-            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R"):
+            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E"):
                 self.handle_hotkey(ch)
 
     def _update_sound_beacons(self) -> None:
@@ -290,6 +314,9 @@ class NudgeSimulator:
                 "owner_pos_gt": [round(owner_pos[0], 3), round(owner_pos[1], 3)],
                 "chair_blocking": self.chair_blocking,
                 "episode": self.episode,
+                # Touch sensor on the guide handle: the owner taps it to acknowledge an alert.
+                "handle_tap": self.owner.handle_tap,
+                "owner_state_gt": self.owner.status(),  # debug only, like owner_pos_gt
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -340,6 +367,8 @@ class NudgeSimulator:
         halo_mode = self.cmd_alert_mode
         if halo_mode == "none" and self.mission_status == "complete":
             halo_mode = "complete"
+        self.owner.step(float(self.data.time), dt, self.locomotion.get_pose(),
+                        self.cmd_alert_mode, self.cmd_guiding)
         self.locomotion.step(
             self.cmd_vx,
             self.cmd_vy,
@@ -390,6 +419,9 @@ def main() -> None:
     parser.add_argument("--sub", default="tcp://127.0.0.1:5556", help="ZMQ command SUB address")
     parser.add_argument("--render-camera", action="store_true",
                         help="Headless only: render the real head camera offscreen (EGL) instead of the synthetic fallback")
+    parser.add_argument("--owner-static", action="store_true",
+                        help="Owner never wanders on their own (still reacts to nudges / handle); toggle live with W")
+    parser.add_argument("--owner-seed", type=int, default=None, help="Seed for the owner's random behaviour")
     parser.add_argument("--no-cutaway", action="store_true",
                         help="Show the whole house (upper storeys + roof) instead of the ground-floor cutaway view")
     args = parser.parse_args()
@@ -400,6 +432,8 @@ def main() -> None:
         sub_endpoint=args.sub,
         enable_camera=(not args.headless) or args.render_camera,
         cutaway=not args.no_cutaway,
+        owner_wander=not args.owner_static,
+        owner_seed=args.owner_seed,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()

@@ -78,6 +78,9 @@ class Go2Locomotion:
         self.pose_yaw: float = ROBOT_START_POSE[2]
         self.gait_phase: float = 0.0
         self.guiding_active: bool = False
+        # Set by sim/owner_behavior.py: the owner may let go of the handle, and their pace varies.
+        self.owner_grip: bool = True
+        self.owner_speed: float = 0.40
 
         self.reset_robot_pose(*ROBOT_START_POSE)
 
@@ -259,14 +262,14 @@ class Go2Locomotion:
         # Owner guiding physics: if guiding=True and robot is within 1.45 m of Owner,
         # Owner holds the handle offset 0.52m behind-left of the robot and walks at <= 0.4 m/s
         self.guiding_active = False
-        if guiding and self.owner_mocap_id >= 0 and dist_to_owner <= 1.55:
+        if guiding and self.owner_grip and self.owner_mocap_id >= 0 and dist_to_owner <= 1.55:
             self.guiding_active = True
             target_ox = self.pose_x - 0.50 * cos_y - 0.14 * sin_y
             target_oy = self.pose_y - 0.50 * sin_y + 0.14 * cos_y
             dx = target_ox - ox
             dy = target_oy - oy
             d = math.hypot(dx, dy)
-            max_step = 0.40 * dt
+            max_step = min(0.40, self.owner_speed) * dt
             if d > 0.02:
                 step_d = min(d, max_step)
                 new_ox = ox + (dx / d) * step_d

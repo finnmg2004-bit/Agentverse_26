@@ -176,6 +176,7 @@ LANDMARKS: Dict[str, Vec2] = {
     "back_door":          (-14.2, 3.6),                    # inside living room, at the west garden door
     "back_exit_outside":  EXITS["exit_back"]["outside"],   # smoke-alarm evacuation target
     "terrace_door":       (14.2, 2.6),
+    "terrace_outside":    EXITS["exit_terrace"]["outside"],  # alternative evacuation target (kitchen exit)
     "robot_dock":         (8.0, -2.7),                     # upstream ROBOT_HOME_XY
 }
 SMOKE_EVACUATION_TARGET = "back_exit_outside"
@@ -227,6 +228,16 @@ SOUND_SOURCES: Dict[str, Dict[str, object]] = {
 # --------------------------------------------------------------------------- #
 CHAIR_DOORWAY_POS: Vec3 = (DOORWAY_INFO["door_guest_living"]["pos"][0], DOORWAY_INFO["door_guest_living"]["pos"][1], 0.0)
 CHAIR_STOWED_POS: Vec3 = (-13.8, -3.6, 0.0)  # guest-room corner, out of the way
+# Hotkey [E]: the chair falls into the back (garden) door gap -> back exit blocked, the
+# evacuation planner must pick another exit.
+CHAIR_EXIT_POS: Vec3 = (EXITS["exit_back"]["pos"][0], EXITS["exit_back"]["pos"][1], 0.0)
+
+# Each exterior exit -> the LANDMARKS name just outside it (evacuation targets).
+EXIT_TARGETS: Dict[str, str] = {
+    "exit_front": "front_door_outside",
+    "exit_back": "back_exit_outside",
+    "exit_terrace": "terrace_outside",
+}
 CHAIR_COLLISION_RADIUS: float = 0.22
 
 

@@ -1,18 +1,31 @@
 #!/usr/bin/env python3
 """
 Milestone 8a: Event-driven Local Agent (`nudge-brain/agent.py`).
-Wakes ONLY on discrete events (new_sound, arrived_in_room, owner_seen, owner_not_found,
-owner_alerted, handle_taken, guide_complete, timeout) and picks exactly one tool call.
 
-Decision sources, in order:
-  1. Safety layer — during a smoke-alarm emergency every decision is deterministic.
-  2. Local Gemma via the Ollama HTTP API on 127.0.0.1:11434 (no cloud calls), run in a
-     background thread so the 20 Hz control loop never blocks.
-  3. Deterministic tool policy — used when Ollama is offline, the LLM answers with an
-     invalid / unsafe call, or the 2.0 s watchdog fires.
+The LLM (local Gemma via Ollama) is the decision-maker. It wakes ONLY on discrete events
+(new_sound, arrived_in_room, owner_seen, owner_not_found, owner_alerted, owner_no_response,
+handle_taken, path_blocked, timeout) and chooses ONE action.
+
+How a decision is made
+  1. `build_menu(event, world)` turns live perception into a menu of LEGAL options, each with
+     the facts that matter, e.g.
+        B  go_to_room(guest)          search Guest bedroom: owner probability 42 %, 1 room away
+        D  guide_owner_to(front_door_outside)   exit: 14 m walk, closest to fire 9.1 m
+     The safety layer decides what is legal (no exit through the fire room, no blocked exit,
+     no alert before the owner is located, ...). The LLM decides which legal option is best.
+  2. The LLM answers with a JSON schema (Ollama structured output) that only allows the menu's
+     letters, a short reason, and - in a fire - whether to call emergency services. It cannot
+     produce an invalid tool call, and the answer is ~15 tokens, so it is fast.
+  3. `safety.validate_action` re-checks the choice against the world at decision time.
+  4. Fallbacks: if Ollama is offline, the watchdog expires (NUDGE_WATCHDOG_S, default 2.0 s), or
+     the answer is unusable, the deterministic policy decides. Every decision also records what
+     the rules WOULD have chosen, so the dashboard shows when the LLM disagreed.
+The smoke-alarm pre-emption itself (interrupt + continuous alert) stays in plain code
+(main.py / safety.py) and is instant; the LLM then makes the emergency decisions within it.
 
 Model: env NUDGE_LLM_MODEL, else the first installed of gemma4:e2b, gemma3:4b, gemma3:1b.
 Set NUDGE_LLM=off to force the deterministic policy.
+Set NUDGE_LLM_GPU_LAYERS=<n> to force n model layers onto the GPU (26 on a 2 GB MX450).
 """
 
 from __future__ import annotations
@@ -22,36 +35,40 @@ import os
 import threading
 import time
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sim.house_layout import LANDMARKS, ROOMS, SOUND_SOURCES
 
 import safety
+from world_model import room_hops
 
 OLLAMA_URL = os.environ.get("NUDGE_OLLAMA_URL", "http://127.0.0.1:11434")
 MODEL_CANDIDATES = ["gemma4:e2b", "gemma3:4b", "gemma3:1b"]
+MAX_NUDGES = 3
+LETTERS = "ABCDEFGHIJ"
 
-SYSTEM_PROMPT = f"""You are the decision layer of Nudge, a quadruped assistance dog for a deafblind owner.
-The owner cannot hear or see: you must find them, nudge them, give the haptic code, and guide them.
-Reply with ONE JSON object only: {{"tool": "<name>", "args": {{...}}, "reason": "<max 5 words>"}}
+SYSTEM_PROMPT = """You are the decision-maker inside Nudge, a robot assistance dog for a deafblind owner.
+The owner cannot hear household sounds and cannot see. You hear for them: you find them, nudge them
+(a touch they feel), vibrate a code on your handle, and lead them by the handle.
 
-Tools:
-- go_to_room(room)               room in {sorted(ROOMS)}
-- look_around()                  spin 360 deg in the current room to find the owner with the camera
-- alert_owner(sound, place)      walk to the owner, nudge them, vibrate the code. sound in {sorted(SOUND_SOURCES)}; only if owner seen recently
-- offer_handle()                 present the guide handle to the owner
-- guide_owner_to(target)         lead the owner holding the handle. target in {sorted(LANDMARKS)} or a room
-- investigate_sound()            go to the room the current sound comes from
+You are woken when something happens. Read the situation and choose the ONE best option by its letter.
+Priorities, in order:
+1. Safety. In a fire, get the owner out of the house fast, by an exit whose route stays away from the fire.
+2. Reach the owner quickly. Search the room with the HIGHEST owner probability first. Only prefer a
+   closer room when the probabilities are similar (within about 10 percentage points).
+3. Make sure the owner understood (they tap the handle) before leading them - unless there is a fire
+   and you have already tried twice: then lead them anyway.
+4. Bring the owner to where the sound needs them (e.g. the front door for the doorbell).
+In a fire, call emergency services if the owner has not been found after about 20 seconds, or if the
+owner is in danger and not responding.
 
-Rules:
-- doorbell/knock: find owner -> alert_owner -> guide_owner_to("front_door").
-- After arrived_in_room: look_around unless the owner is visible.
-- After owner_not_found: go_to_room of the most likely unsearched room (never a room in searched_rooms).
-- After owner_alerted or handle_taken: guide_owner_to the mission's deliver_owner_to target.
-- After guide_complete with no mission: get_state.
-"""
+Answer only with JSON: {"choice": "<letter>", "reason": "<at most 8 words>"} and, when asked,
+"call_emergency_services": true or false."""
 
 
+# --------------------------------------------------------------------------- #
+# Deterministic policy (fallback + "what the rules would do" for comparison)
+# --------------------------------------------------------------------------- #
 def deterministic_policy(event: str, world) -> Dict[str, Any]:
     """Rule-based fallback that always produces a safe, valid tool call."""
     if world.is_emergency():
@@ -61,6 +78,10 @@ def deterministic_policy(event: str, world) -> Dict[str, Any]:
         return {"tool": "get_state", "args": {}}
     sound, target = mission["sound"], mission["target"]
 
+    if event == "owner_no_response":
+        if world.nudge_attempts < MAX_NUDGES:
+            return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
+        return {"tool": "guide_owner_to", "args": {"target": target}}
     if event in ("new_sound", "owner_seen") and world.owner_recently_seen(3.0):
         return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
     if event in ("new_sound", "owner_not_found"):
@@ -69,7 +90,7 @@ def deterministic_policy(event: str, world) -> Dict[str, Any]:
         if world.owner_recently_seen(2.0):
             return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
         return {"tool": "look_around", "args": {}}
-    if event in ("owner_alerted", "handle_taken"):
+    if event in ("owner_alerted", "handle_taken", "path_blocked"):
         return {"tool": "guide_owner_to", "args": {"target": target}}
     if event == "guide_complete":
         return {"tool": "get_state", "args": {}}
@@ -79,6 +100,177 @@ def deterministic_policy(event: str, world) -> Dict[str, Any]:
     return {"tool": "look_around", "args": {}}
 
 
+# --------------------------------------------------------------------------- #
+# Menu of legal options, built from live perception
+# --------------------------------------------------------------------------- #
+EVENT_TEXT = {
+    "new_sound": "A sound was just heard.",
+    "arrived_in_room": "You just arrived in a room.",
+    "owner_seen": "Your camera just spotted the owner.",
+    "owner_not_found": "You looked but the owner is not here.",
+    "owner_alerted": "The alert was delivered (nudge + vibration).",
+    "owner_no_response": "You nudged the owner and vibrated the code, but they did not tap the handle.",
+    "handle_taken": "The owner took your handle.",
+    "path_blocked": "Your LiDAR found the planned route blocked.",
+    "timeout": "Your last action took too long.",
+}
+
+
+def _label(room: Optional[str]) -> str:
+    return ROOMS[room]["label"] if room in ROOMS else str(room)
+
+
+_PLANNER = None
+
+
+def _walk_m(world, goal) -> float:
+    """Walking distance on the floor-plan map (falls back to 1.3 x straight line)."""
+    global _PLANNER
+    x, y = world.robot_pose[:2]
+    try:
+        if _PLANNER is None:
+            from sim.nav_map import GridPlanner, load_or_build
+            _PLANNER = GridPlanner(load_or_build(verbose=False))
+        wps = _PLANNER.plan((x, y), goal, set(world.blocked_doors))
+        if wps:
+            pts = [(x, y)] + [(w[0], w[1]) for w in wps]
+            return sum(((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in zip(pts, pts[1:]))
+    except Exception:
+        pass
+    return 1.3 * ((goal[0] - x) ** 2 + (goal[1] - y) ** 2) ** 0.5
+
+
+def _situation(event: str, world) -> List[str]:
+    m = world.mission
+    lines = [f"Event: {EVENT_TEXT.get(event, event)}", f"You are in the {_label(world.robot_room)}."]
+    if m is not None:
+        sound = m["sound"]
+        est = world.sound_estimates.get(sound)
+        where = f", localised by your ears near the {_label(est['room'])}" if est and est.get("room") else ""
+        if world.is_emergency():
+            fire = world.fire or {}
+            elapsed = time.monotonic() - m["started"]
+            lines.append(f"EMERGENCY: smoke alarm{where}. Fire believed in the {_label(fire.get('room'))} "
+                         f"({fire.get('source', 'unknown')}). Alarm started {elapsed:.0f} s ago. "
+                         f"Goal: get the owner out of the house.")
+            if world.escalated:
+                lines.append("Emergency services have already been called.")
+            elif not world.owner_recently_seen(10.0) and not world.guiding_active and elapsed > 20:
+                lines.append(f"The owner is STILL MISSING {elapsed:.0f} s into the fire "
+                             f"(more than 20 s: emergency services should be called now).")
+            elif world.nudge_attempts >= 2 and not world.guiding_active:
+                lines.append("The owner is not responding in a fire (emergency services should be called).")
+        else:
+            lines.append(f"Sound: {sound}{where}. Goal: bring the owner to {m['target']}.")
+    if world.guiding_active:
+        lines.append("The owner is holding your handle.")
+    elif world.owner_recently_seen(3.0) and world.owner_pos is not None:
+        lines.append(f"Owner: visible now in the {_label(world.owner_room)}, {world.dist_to_owner():.1f} m from you.")
+    elif world.owner_pos is not None:
+        age = time.monotonic() - world.owner_last_seen_wall
+        lines.append(f"Owner: not visible; last seen {age:.0f} s ago in the {_label(world.owner_room)}.")
+    else:
+        lines.append("Owner: not seen yet.")
+    if world.owner_ack == "acknowledged":
+        lines.append("The owner acknowledged the alert (tapped the handle).")
+    elif world.nudge_attempts:
+        lines.append(f"The owner has not acknowledged yet after {world.nudge_attempts} nudge(s).")
+    if world.blocked_doors:
+        lines.append("Blocked doorways seen by LiDAR: " + ", ".join(sorted(world.blocked_doors)) + ".")
+    if world.is_emergency() and world.evac:
+        for target, d in world.evac.get("details", {}).items():
+            if d.get("unavailable"):
+                lines.append(f"Exit {target} is NOT usable: {d['unavailable']}.")
+    return lines
+
+
+def build_menu(event: str, world) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """(situation lines, options). Every option is a legal tool call plus the facts behind it."""
+    opts: List[Dict[str, Any]] = []
+
+    def add(tool: str, args: Dict[str, Any], facts: str) -> None:
+        if any(o["tool"] == tool and o["args"] == args for o in opts):
+            return
+        opts.append({"tool": tool, "args": args, "facts": facts})
+
+    m = world.mission
+    if m is None:
+        return _situation(event, world), [{"tool": "get_state", "args": {}, "facts": "no task: stay put"}]
+    sound, emergency = m["sound"], world.is_emergency()
+
+    # Leading the owner (after an alert, or while they hold the handle)
+    lead_now = world.guiding_active or event in ("owner_alerted", "handle_taken", "path_blocked")
+    if lead_now or event == "owner_no_response":
+        if emergency and world.evac:
+            for target, d in world.evac.get("details", {}).items():
+                if d.get("unavailable"):
+                    continue
+                add("guide_owner_to", {"target": target},
+                    f"lead the owner out via {target}: {d['length']:.0f} m walk, "
+                    f"route passes {d['fire_dist']:.1f} m from the fire")
+        elif not emergency:
+            add("guide_owner_to", {"target": m["target"]},
+                f"lead the owner by the handle to {m['target']} (where the {sound} needs them)")
+
+    # Nudging (again)
+    if not world.guiding_active and world.owner_recently_seen(4.0) and world.owner_pos is not None:
+        if event == "owner_no_response":
+            add("alert_owner", {"sound": sound, "place": m["target"]},
+                f"nudge the owner again (attempt {world.nudge_attempts + 1}); they have not tapped yet")
+        elif not lead_now:
+            add("alert_owner", {"sound": sound, "place": m["target"]},
+                f"walk {world.dist_to_owner():.1f} m to the owner, nudge them and vibrate the {sound} code")
+
+    # Searching
+    if (not world.guiding_active and not lead_now and event != "owner_no_response"
+            and not world.owner_recently_seen(3.0)):
+        blocked = set(world.blocked_doors)
+        here = world.robot_room
+        if here in ROOMS and here not in world.searched_rooms:
+            add("look_around", {}, f"scan the {_label(here)} you are in (owner probability "
+                                   f"{world.belief.p.get(here, 0):.0%}, not scanned yet)")
+        ranked = [(r, p) for r, p in sorted(world.belief.p.items(), key=lambda kv: -kv[1]) if r != here]
+        for r, p in ranked[:4]:
+            if room_hops(here, r, blocked) >= 99:
+                continue
+            metres = _walk_m(world, ROOMS[r]["center"])
+            add("go_to_room", {"room": r},
+                f"search the {_label(r)}: owner probability {p:.0%}, about {metres:.0f} m walk "
+                f"(~{metres / 0.9:.0f} s)")
+
+    # Make sure the rules' own choice is always on the menu (it is legal by construction).
+    rule = deterministic_policy(event, world)
+    if rule["tool"] != "get_state":
+        add(rule["tool"], rule.get("args", {}), "default plan")
+    return _situation(event, world), opts[: len(LETTERS)]
+
+
+def _menu_text(situation: List[str], options: List[Dict[str, Any]], ask_escalation: bool) -> str:
+    lines = ["Situation:"] + [f"- {s}" for s in situation] + ["", "Options:"]
+    for letter, o in zip(LETTERS, options):
+        args = ", ".join(f"{v}" for v in o["args"].values())
+        lines.append(f"{letter}) {o['tool']}({args}) - {o['facts']}")
+    if ask_escalation:
+        lines.append("")
+        lines.append("Also answer call_emergency_services: true or false.")
+    return "\n".join(lines)
+
+
+def _schema(n_options: int, ask_escalation: bool) -> Dict[str, Any]:
+    props: Dict[str, Any] = {
+        "choice": {"type": "string", "enum": list(LETTERS[:n_options])},
+        "reason": {"type": "string", "maxLength": 80},
+    }
+    required = ["choice", "reason"]
+    if ask_escalation:
+        props["call_emergency_services"] = {"type": "boolean"}
+        required.append("call_emergency_services")
+    return {"type": "object", "properties": props, "required": required}
+
+
+# --------------------------------------------------------------------------- #
+# Agent
+# --------------------------------------------------------------------------- #
 class NudgeAgent:
     def __init__(self) -> None:
         self.model: Optional[str] = None
@@ -87,9 +279,13 @@ class NudgeAgent:
         self.watchdog = safety.LLMWatchdog()
         self._lock = threading.Lock()
         self._request_id = 0
-        self._pending: Optional[Dict[str, Any]] = None  # {"id", "event", "result"}
+        self._pending: Optional[Dict[str, Any]] = None  # {"id", "event", "options", "rule", "result"}
         self.last_decision: Dict[str, Any] = {"tool": "-", "args": {}, "source": "-", "reason": "", "latency": 0.0}
+        self.last_menu: List[str] = []
         self.history: List[str] = []
+        self.stats = {"llm": 0, "agreed": 0, "fallback": 0}
+        # Recent decisions for the dashboard timeline: {"t", "tool", "args", "source", "latency"}
+        self.decisions: List[Dict[str, Any]] = []
         if self.enabled:
             threading.Thread(target=self._probe_loop, daemon=True).start()
 
@@ -115,7 +311,9 @@ class NudgeAgent:
                             break
                     if self.model:
                         # Warm-up so the first real event isn't slowed by model loading.
-                        self._chat("event: warmup\nstate: {}", timeout=60.0)
+                        # First load can take ~60 s on a small GPU (measured 58 s on an MX450).
+                        self._chat("Situation:\n- warm-up\n\nOptions:\nA) get_state() - nothing to do",
+                                   _schema(1, False), timeout=180.0)
                         self.llm_online = True
                         print(f"[agent] Local LLM online: {self.model} via Ollama")
                     else:
@@ -124,24 +322,34 @@ class NudgeAgent:
                     pass
             time.sleep(20.0)
 
-    def _chat(self, user: str, timeout: float) -> Dict[str, Any]:
+    @staticmethod
+    def _options() -> Dict[str, Any]:
+        opts: Dict[str, Any] = {"temperature": 0.0, "num_predict": 48}
+        # Per-machine GPU offload. Ollama's auto-fit is conservative on small cards (an MX450 2 GB
+        # gets 0/36 layers -> ~10 s/decision on CPU); forcing 26 layers there gives ~4 s.
+        # Too high = CUDA out-of-memory (30+ on 2 GB). Unset = let Ollama decide.
+        layers = os.environ.get("NUDGE_LLM_GPU_LAYERS")
+        if layers:
+            opts["num_gpu"] = int(layers)
+        return opts
+
+    def _chat(self, user: str, schema: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         resp = self._http("/api/chat", {
             "model": self.model,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
             "stream": False,
-            "format": "json",
+            "format": schema,  # structured output: only the menu's letters are possible
             # Gemma 4 reasons ("thinks") by default, which eats num_predict and leaves an empty answer
-            # well past the 2 s watchdog. Decisions here are one tool call, so answer directly.
+            # well past the watchdog. Decisions here are one choice, so answer directly.
             "think": False,
             "keep_alive": "30m",
-            "options": {"temperature": 0.0, "num_predict": 96},
+            "options": self._options(),
         }, timeout=timeout)
         return json.loads(resp["message"]["content"])
 
-    def _llm_worker(self, req_id: int, event: str, state: Dict[str, Any]) -> None:
+    def _llm_worker(self, req_id: int, prompt: str, schema: Dict[str, Any]) -> None:
         try:
-            prompt = f"event: {event}\nstate: {json.dumps(state)}\nrecent decisions: {self.history[-3:]}"
-            result: Any = self._chat(prompt, timeout=safety.WATCHDOG_S + 1.0)
+            result: Any = self._chat(prompt, schema, timeout=safety.WATCHDOG_S + 10.0)
         except Exception as exc:
             result = {"error": str(exc)}
         with self._lock:
@@ -158,12 +366,19 @@ class NudgeAgent:
     def submit(self, event: str, world) -> None:
         """Wake the agent on a discrete event. A newer event supersedes a pending one."""
         world.log(f"EVENT {event}")
+        situation, options = build_menu(event, world)
+        rule = deterministic_policy(event, world)
+        ask_esc = world.is_emergency() and not world.escalated
+        prompt = _menu_text(situation, options, ask_esc)
+        self.last_menu = prompt.splitlines()
         with self._lock:
             self._request_id += 1
-            self._pending = {"id": self._request_id, "event": event, "result": None}
+            self._pending = {"id": self._request_id, "event": event, "options": options, "rule": rule,
+                             "result": None, "ask_esc": ask_esc}
+            req_id = self._request_id
         self.watchdog.start()
-        if self.enabled and self.llm_online and not world.is_emergency():
-            threading.Thread(target=self._llm_worker, args=(self._request_id, event, world.snapshot()),
+        if self.enabled and self.llm_online and len(options) > 1:
+            threading.Thread(target=self._llm_worker, args=(req_id, prompt, _schema(len(options), ask_esc)),
                              daemon=True).start()
 
     def cancel(self) -> None:
@@ -172,43 +387,62 @@ class NudgeAgent:
         self.watchdog.stop()
 
     def poll(self, world) -> Optional[Dict[str, Any]]:
-        """Return a decided action once available (LLM, safety, or watchdog fallback)."""
+        """Return a decided action once available (LLM, or rules on watchdog / offline / bad answer)."""
         with self._lock:
             pending = self._pending
         if pending is None:
             return None
-        event = pending["event"]
+        event, options, rule = pending["event"], pending["options"], pending["rule"]
 
-        if world.is_emergency():
-            return self._finish(safety.emergency_action(world, event), "safety", "smoke-alarm protocol", world)
+        if len(options) == 1:
+            o = options[0]
+            return self._finish({"tool": o["tool"], "args": o["args"]}, "only option", o["facts"], rule, world)
         if not (self.enabled and self.llm_online):
-            return self._finish(deterministic_policy(event, world), "rules", "LLM offline", world)
+            self.stats["fallback"] += 1
+            return self._finish(rule, "rules", "LLM offline", rule, world)
 
         result = pending["result"]
         if result is not None:
-            if isinstance(result, dict) and "tool" in result:
-                action = {"tool": result.get("tool"), "args": result.get("args") or {}}
+            if isinstance(result, dict) and result.get("choice") in LETTERS[: len(options)]:
+                o = options[LETTERS.index(result["choice"])]
+                action = {"tool": o["tool"], "args": dict(o["args"])}
+                if pending["ask_esc"] and result.get("call_emergency_services") is True:
+                    action["escalate"] = True
                 ok, why = safety.validate_action(action, world)
                 if ok:
-                    return self._finish(action, "llm", str(result.get("reason", ""))[:60], world)
-                world.log(f"LLM call rejected by safety: {why}")
+                    self.stats["llm"] += 1
+                    return self._finish(action, "llm", str(result.get("reason", ""))[:70], rule, world)
+                world.log(f"LLM choice {result['choice']} rejected by safety: {why}")
             else:
-                world.log(f"LLM error: {str(result)[:60]}")
-                if "error" in result:
+                world.log(f"LLM error: {str(result)[:70]}")
+                if isinstance(result, dict) and "error" in result:
                     self.llm_online = False  # probe loop will reconnect
-            return self._finish(deterministic_policy(event, world), "rules", "LLM rejected", world)
+            self.stats["fallback"] += 1
+            return self._finish(rule, "rules", "LLM answer unusable", rule, world)
 
         if self.watchdog.expired():
-            world.log("WATCHDOG: LLM > 2.0 s, fallback rules take over")
-            return self._finish(deterministic_policy(event, world), "watchdog", "LLM too slow", world)
+            world.log(f"WATCHDOG: LLM > {safety.WATCHDOG_S:.1f} s, fallback rules take over")
+            self.stats["fallback"] += 1
+            return self._finish(rule, "watchdog", "LLM too slow", rule, world)
         return None
 
-    def _finish(self, action: Dict[str, Any], source: str, reason: str, world) -> Dict[str, Any]:
+    def _finish(self, action: Dict[str, Any], source: str, reason: str, rule: Dict[str, Any],
+                world) -> Dict[str, Any]:
         latency = self.watchdog.elapsed()
         self.cancel()
+        agreed = action["tool"] == rule.get("tool") and action.get("args", {}) == rule.get("args", {})
+        if source == "llm" and agreed:
+            self.stats["agreed"] += 1
+        rule_txt = f"{rule.get('tool')}({', '.join(str(v) for v in rule.get('args', {}).values())})"
         self.last_decision = {"tool": action["tool"], "args": action.get("args", {}), "source": source,
-                              "reason": reason, "latency": round(latency, 2)}
+                              "reason": reason, "latency": round(latency, 2),
+                              "agreed": agreed, "rule": rule_txt, "escalate": bool(action.get("escalate"))}
         args = ", ".join(f"{v}" for v in action.get("args", {}).values())
         self.history.append(f"{action['tool']}({args})")
-        world.log(f"DECIDE [{source} {latency:.2f}s] {action['tool']}({args})")
+        self.decisions = (self.decisions + [{"t": world.t_sim, "tool": action["tool"], "args": action.get("args", {}),
+                                              "source": source, "latency": round(latency, 2),
+                                              "agreed": agreed}])[-12:]
+        extra = "" if agreed or source != "llm" else f"  (rules would: {rule_txt})"
+        why = f" - {reason}" if source == "llm" and reason else ""
+        world.log(f"DECIDE [{source} {latency:.2f}s] {action['tool']}({args}){why}{extra}")
         return action

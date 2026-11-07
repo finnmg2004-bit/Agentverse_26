@@ -42,7 +42,17 @@ AMBER = (40, 180, 255)
 RED = (60, 60, 235)
 SOUND_COLORS = {"doorbell": (255, 210, 30), "knock": (30, 190, 255), "smoke_alarm": (60, 60, 240)}
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-FORWARD_KEYS = {ord(c): c for c in "BKMOCXR12345"} | {ord(c.lower()): c for c in "BKMOCXR"}
+FORWARD_KEYS = {ord(c): c for c in "BKMOCXRWE12345"} | {ord(c.lower()): c for c in "BKMOCXRWE"}
+SOURCE_COLORS = {"llm": (230, 120, 255), "rules": (200, 200, 200), "watchdog": AMBER, "only option": (150, 150, 150)}
+TOOL_SHORT = {"go_to_room": "GO", "look_around": "LOOK", "alert_owner": "ALERT", "offer_handle": "HANDLE",
+              "guide_owner_to": "GUIDE", "investigate_sound": "INVEST", "get_state": "STATE"}
+
+
+def heat(p: float) -> Tuple[int, int, int]:
+    """Room fill for owner probability p: dark slate -> amber (BGR)."""
+    p = max(0.0, min(1.0, p ** 0.6))
+    lo, hi = np.array([52, 48, 44]), np.array([40, 150, 230])
+    return tuple(int(v) for v in lo + (hi - lo) * p)
 
 
 def w2p(x: float, y: float) -> Tuple[int, int]:
@@ -73,17 +83,55 @@ class Dashboard:
         put(frame, f"HEAD CAM  |  {det.get('backend', '')}", (8, 20), TEXT, 0.5, 1)
         img[y0:y0 + 480, x0:x0 + 640] = frame
 
+    def _timeline(self, img, agent) -> None:
+        """Strip along the bottom of the camera panel: recent decisions, coloured by who decided."""
+        x0, y0, w, h = 10, 10 + 480 - 40, 640, 40
+        roi = img[y0:y0 + h, x0:x0 + w]
+        roi[:] = (roi * 0.35).astype(np.uint8)
+        put(img, "DECISIONS", (x0 + 6, y0 + 15), DIM, 0.38)
+        x = x0 + 6
+        decisions = agent.decisions[-6:]
+        # newest last; drop the oldest until they fit
+        while decisions:
+            widths = [cv2.getTextSize(f"{d['t']:.0f}s {TOOL_SHORT.get(d['tool'], d['tool'][:6])} "
+                                      f"{str(next(iter(d.get('args', {}).values()), ''))[:9]}", FONT, 0.36, 1)[0][0] + 16
+                      for d in decisions]
+            if sum(widths) <= w - 12:
+                break
+            decisions = decisions[1:]
+        for d in decisions:
+            col = SOURCE_COLORS.get(d["source"], TEXT)
+            label = TOOL_SHORT.get(d["tool"], d["tool"][:6])
+            arg = next(iter(d.get("args", {}).values()), "")
+            star = "*" if d.get("source") == "llm" and d.get("agreed") is False else ""
+            text = f"{d['t']:.0f}s {label} {str(arg)[:9]}{star}".strip()
+            (tw, _), _ = cv2.getTextSize(text, FONT, 0.36, 1)
+            if x + tw + 14 > x0 + w:
+                break
+            cv2.rectangle(img, (x, y0 + 20), (x + tw + 10, y0 + 37), col, 1)
+            put(img, text, (x + 5, y0 + 33), col, 0.36)
+            x += tw + 16
+        lx = x0 + w - 8
+        for src, col in reversed(list(SOURCE_COLORS.items()) + [("* = LLM overrode rules", DIM)]):
+            (tw, _), _ = cv2.getTextSize(src, FONT, 0.35, 1)
+            lx -= tw + 12
+            put(img, src, (lx, y0 + 15), col, 0.35)
+
     def _map(self, img, world, nav_path: List[Tuple[float, float]], t: float) -> None:
         cv2.rectangle(img, (MAP_X0, MAP_Y0), (MAP_X0 + MAP_W, MAP_Y0 + MAP_H), PANEL, -1)
+        # Rooms as a heat map of P(owner in room) (owner_belief.py)
+        probs = world.belief.p
         for name, room in ROOMS.items():
             (xa, xb), (ya, yb) = room["bounds_x"], room["bounds_y"]
             p1, p2 = w2p(xa, yb), w2p(xb, ya)
-            fill = (52, 48, 44) if name not in world.searched_rooms else (45, 60, 45)
-            cv2.rectangle(img, p1, p2, fill, -1)
+            cv2.rectangle(img, p1, p2, heat(probs.get(name, 0.0)), -1)
             cx, cy = w2p(*room.get("geo_center", room["center"]))
-            put(img, name.replace("_", " "), (cx - 30, cy - 6), DIM, 0.4)
+            put(img, name.replace("_", " "), (cx - 30, cy - 6), TEXT if probs.get(name, 0) > 0.25 else DIM, 0.4)
+            pr = probs.get(name, 0.0)
+            if pr >= 0.01:
+                put(img, f"{100 * pr:.0f}%", (cx - 12, cy + 10), (255, 255, 255) if pr > 0.25 else DIM, 0.4)
             if name in world.searched_rooms:
-                put(img, "searched", (cx - 26, cy + 10), GREEN, 0.38)
+                put(img, "searched", (cx - 26, cy + 24), GREEN, 0.36)
         for a, b in WALL_SEGMENTS_2D:
             cv2.line(img, w2p(*a), w2p(*b), (200, 200, 200), 3)
         for door, (dx, dy) in DOORWAYS.items():
@@ -107,6 +155,33 @@ class Dashboard:
                 r = int(8 + 6 * (0.5 + 0.5 * math.sin(t * 10)))
                 cv2.circle(img, p, r, SOUND_COLORS[name], 2)
             cv2.circle(img, p, 4, SOUND_COLORS[name], -1)
+
+        # Sound localisation: bearing lines from where the robot listened, and the estimate +- 1 std
+        for sname, est in world.sound_estimates.items():
+            col = SOUND_COLORS.get(sname, AMBER)
+            for m in est.get("meas", []):
+                mx, my, myaw = m["pose"]
+                a = myaw + math.radians(m["rel_az_deg"])
+                cv2.line(img, w2p(mx, my), w2p(mx + 3.0 * math.cos(a), my + 3.0 * math.sin(a)), col, 1, cv2.LINE_AA)
+            ex, ey = est["xy"]
+            rad = max(4, int(min(est["std"], 6.0) * SCALE))
+            cv2.circle(img, w2p(ex, ey), rad, col, 1 if not est["converged"] else 2, cv2.LINE_AA)
+            cv2.drawMarker(img, w2p(ex, ey), col, cv2.MARKER_CROSS, 12, 2)
+            put(img, f"{sname} ~{est['std']:.1f} m", (w2p(ex, ey)[0] + 8, w2p(ex, ey)[1] - 8), col, 0.38)
+
+        # Fire, hazard doorways and the chosen exit during an evacuation (evacuation.py)
+        if world.is_emergency() and world.fire:
+            fx, fy = world.fire["xy"]
+            r = int(9 + 4 * (0.5 + 0.5 * math.sin(t * 8)))
+            cv2.circle(img, w2p(fx, fy), r, RED, -1)
+            put(img, f"FIRE ({world.fire['source']})", (w2p(fx, fy)[0] - 40, w2p(fx, fy)[1] + 24), RED, 0.42, 2)
+            if world.evac:
+                for door in world.evac.get("hazard_doors", ()):
+                    if door in DOORWAYS:
+                        cv2.drawMarker(img, w2p(*DOORWAYS[door]), RED, cv2.MARKER_TILTED_CROSS, 12, 2)
+                tx, ty = LANDMARKS[world.evac["target"]]
+                cv2.circle(img, w2p(tx, ty), 12, GREEN, 3)
+                put(img, "EXIT", (w2p(tx, ty)[0] - 14, w2p(tx, ty)[1] - 16), GREEN, 0.5, 2)
 
         # Planned path
         if len(nav_path) > 1:
@@ -168,13 +243,25 @@ class Dashboard:
         put(img, f"agent: {agent.backend}", (x, y0 + 100), DIM, 0.45)
         put(img, f"last: {d['tool']}({args})  [{d['source']} {d['latency']:.2f}s]", (x, y0 + 122), TEXT, 0.48)
         if d.get("reason"):
-            put(img, f"why: {d['reason']}", (x, y0 + 144), DIM, 0.45)
+            why = f"why: {d['reason']}"
+            if d.get("source") == "llm" and d.get("agreed") is False:
+                why += f"   [rules would: {d.get('rule', '')}]"
+            put(img, why[:70], (x, y0 + 144), (230, 120, 255) if d.get("source") == "llm" else DIM, 0.45)
+        st = agent.stats
+        put(img, f"LLM decisions: {st['llm']} ({st['llm'] - st['agreed']} differed from rules)   "
+                 f"fallbacks: {st['fallback']}", (x, y0 + 164), DIM, 0.4)
 
         # Haptic lamp
         lamp_on = alerts.is_on(t)
         col = {"1_pulse": CYAN, "2_pulse": AMBER, "continuous": RED}.get(alerts.mode, (70, 70, 70))
         cv2.circle(img, (x + 20, y0 + 188), 14, col if lamp_on else (60, 60, 60), -1)
         put(img, f"HANDLE: {alerts.mode}", (x + 44, y0 + 194), col, 0.55, 2)
+        # Owner acknowledgement (touch sensor on the handle)
+        ack = world.owner_ack
+        if ack:
+            acol = GREEN if ack == "acknowledged" else RED if ack == "no response" else AMBER
+            mark = "OWNER TAPPED: OK" if ack == "acknowledged" else f"OWNER: {ack}"
+            put(img, mark, (x + 230, y0 + 194), acol, 0.48, 2 if ack == "acknowledged" else 1)
 
         # Event log
         lx = 860
@@ -189,6 +276,11 @@ class Dashboard:
         self._camera(img, cam, world.last_detection)
         self._map(img, world, nav_path, t)
         self._status(img, world, agent, skill_label, alerts, t)
+        self._timeline(img, agent)
+        if world.escalated and world.mission is not None:
+            if int(t * 2) % 2 == 0:
+                cv2.rectangle(img, (10, 10), (650, 60), (30, 30, 200), -1)
+                put(img, "EMERGENCY SERVICES CALLED (owner not found)", (22, 42), (255, 255, 255), 0.65, 2)
         status, detail = world.mission_status()
         if status == "complete":
             cv2.rectangle(img, (10, 10), (650, 78), (40, 120, 40), -1)

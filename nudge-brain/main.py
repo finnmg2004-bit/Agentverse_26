@@ -29,6 +29,8 @@ from navigator import Navigator  # noqa: E402
 from skills import Skill, SkillExecutor  # noqa: E402
 from vision import OwnerDetector  # noqa: E402
 from world_model import WorldModel  # noqa: E402
+from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
+from sound_localizer import SoundLocalizer  # noqa: E402
 
 LOOP_HZ = 20.0
 ALERT_SOUNDS = ("doorbell", "knock")
@@ -48,6 +50,9 @@ class Brain:
         self.alerts = HapticAlerts()
         self.executor = SkillExecutor(self.nav, self.alerts)
         self.agent = NudgeAgent()
+        self.localizer = SoundLocalizer()
+        self.evac = EvacuationPlanner(self.nav.planner)
+        self.last_tick = time.monotonic()
         self.dashboard = None
         if show_dashboard:
             from dashboard import Dashboard
@@ -67,6 +72,7 @@ class Brain:
         self.alerts.clear()
         self.executor.skill = Skill()
         self.world = WorldModel()
+        self.localizer.reset()
         self.latched = {}
         self.last_owner_seen_event = 0.0
         self.episode = episode
@@ -76,8 +82,18 @@ class Brain:
     def on_audio(self) -> None:
         meta, stereo = self.bridge.latest_audio
         res = self.hearing.process_audio(stereo, self.world.robot_pose)
-        self.world.update_sound(res)
         scores = res.get("scores", {})
+
+        # Localise the sound from the ears (direction + loudness, accumulated as the robot moves).
+        changed = self.localizer.update(res, self.world.robot_pose)
+        if changed:
+            est = self.localizer.estimate(changed)
+            self.world.sound_estimates[changed] = est
+            if changed == "smoke_alarm" and self.world.is_emergency() and self.world.phase != "guiding":
+                self.plan_evacuation("fire location refined by hearing")
+        est = self.world.sound_estimates.get(res.get("label"))
+        res["estimated_room"] = est["room"] if est and est["converged"] else None
+        self.world.update_sound(res)
 
         # Release latches only once a sound is truly silenced (not just quieter because we moved away),
         # so a still-ringing alarm can't restart a mission that was just completed.
@@ -86,6 +102,8 @@ class Brain:
             self.latched[s] = 0 if heard else self.latched[s] + 1
             if self.latched[s] >= SILENCE_WINDOWS_TO_UNLATCH:
                 del self.latched[s]
+                self.localizer.reset(s)
+                self.world.sound_estimates.pop(s, None)
 
         # 1. Safety pre-emption: smoke alarm overrides everything.
         if safety.smoke_detected(res):
@@ -95,6 +113,7 @@ class Brain:
                 self.agent.cancel()
                 self.world.start_mission("smoke_alarm")
                 self.alerts.set("continuous")
+                self.plan_evacuation("smoke alarm heard")
                 self.agent.submit("new_sound", self.world)
             return
 
@@ -126,8 +145,39 @@ class Brain:
             self.world.log(f"Owner seen in {self.world.owner_room} at {det['world_xy']} ({det['backend']})")
             self.agent.submit("owner_seen", self.world)
 
+    # ------------------------------------------------------------------ emergency
+    def plan_evacuation(self, why: str) -> bool:
+        """Choose the safest exit for the owner given the fire's location. Returns True if it changed."""
+        w = self.world
+        fire = self.evac.fire_estimate(self.localizer)
+        start = w.owner_pos if (w.owner_pos is not None and w.owner_recently_seen(30.0)) else w.robot_pose[:2]
+        decision = self.evac.choose(start, fire, set(w.blocked_doors))
+        old = w.evac_target() if w.evac else None
+        w.fire, w.evac = fire, decision
+        if w.mission is not None and w.is_emergency():
+            w.mission["target"] = decision["target"]
+        if decision["target"] != old:
+            w.log(f"EVAC ({why}): fire in {fire['room']} ({fire['source']}) -> exit {decision['target']}, "
+                  f"avoiding {len(decision['hazard_doors'])} doorways")
+            return True
+        return False
+
+    def check_escalation(self) -> None:
+        w = self.world
+        if (w.is_emergency() and not w.escalated and w.phase == "searching"
+                and time.monotonic() - w.mission["started"] > ESCALATE_AFTER_S):
+            w.escalated = True
+            w.log(f"ESCALATION: owner not found {ESCALATE_AFTER_S:.0f} s into a fire -> "
+                  "emergency services called (simulated)")
+
     # ------------------------------------------------------------------ loop
     def tick(self) -> bool:
+        now = time.monotonic()
+        self.world.belief.predict(now - self.last_tick)  # the owner may have walked off
+        self.last_tick = now
+        if not self.world.owner_recently_seen(2.0):
+            self.world.owner_room = self.world.belief.most_likely()
+        self.check_escalation()
         upd = self.bridge.poll()
         if upd["state"]:
             episode = self.bridge.latest_state.get("episode")
@@ -147,6 +197,12 @@ class Brain:
         if door:
             self.world.blocked_doors[door] = time.monotonic()
             self.world.log(f"LiDAR: {door} BLOCKED -> re-planned route")
+            # Mid-evacuation: a blocked door or exit changes the options -> the agent re-chooses the
+            # exit (the navigator already re-routed, so the robot keeps moving meanwhile).
+            if self.world.is_emergency():
+                self.plan_evacuation(f"{door} blocked")
+                if self.world.phase == "guiding":
+                    self.agent.submit("path_blocked", self.world)
 
         out = self.executor.step(self.world)
         if out.event:
@@ -160,6 +216,13 @@ class Brain:
 
         action = self.agent.poll(self.world)
         if action is not None:
+            if action.get("escalate") and not self.world.escalated:
+                self.world.escalated = True
+                self.world.log("AGENT CALLED EMERGENCY SERVICES (simulated)")
+            if self.world.is_emergency() and action.get("tool") == "guide_owner_to" and self.world.evac:
+                # The agent may pick a different safe exit than the planner's shortest one.
+                self.world.evac["target"] = action["args"]["target"]
+                self.world.mission["target"] = action["args"]["target"]
             self.executor.execute(action, self.world)
 
         vx, vy, wz = safety.filter_cmd(out.vx, out.vy, out.wz, self.world, self.world.lidar_ranges,
@@ -168,6 +231,8 @@ class Brain:
             vx = vy = wz = 0.0
         self.world.nav_path = self.nav.path_points(self.world.robot_pose[:2]) if self.nav.waypoints else []
         status, status_text = self.world.mission_status()
+        if self.world.escalated and status == "active":
+            status_text += "  |  EMERGENCY SERVICES CALLED"
         self.bridge.send_cmd(vx, vy, wz, alert_mode=self.alerts.mode, guiding=out.guiding,
                              mission_status=status, mission_text=status_text, episode=self.episode)
 
