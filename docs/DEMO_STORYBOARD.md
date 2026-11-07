@@ -20,7 +20,10 @@ owner sometimes needs a 2nd nudge (+5–10 s).
 | ~0:55–0:60 | Stop recording | Robot and owner heading for the back exit | Relevance & impact |
 
 Measured in rehearsal (from the reset): rule confirmed 8 s; doorbell → guiding 25–31 s; smoke → Gemma's exit
-choice 0.8 s. Frames: `docs/img/demo_guiding_around_carpet.png`, `docs/img/demo_emergency_end.png`.
+choice 0.8 s; **owner outside ~24 s after the smoke alarm** (so with a fast doorbell beat the evacuation can
+even finish on camera, ~65 s total). Voice verified on Windows: the recorded carpet clip through `voice.py`
+→ Whisper (confidence 0.96) → Gemma rule in 0.96 s. **Run `pixi run fetch-models` on the recording laptop**
+(Whisper + Piper were added after the first fetch; without them voice fails). Frames: `docs/img/demo_guiding_around_carpet.png`, `docs/img/demo_emergency_end.png`.
 **Unscripted change** for the judges: the owner instruction itself (a scene change mid-run), and optionally
 **[O] Next room** right after the doorbell (robot re-searches; adds ~10–15 s, so only if the take still fits).
 The blocked-exit + safety-rejection story (below) goes in the pitch, with `docs/img/safety_rejects_exit_near_fire.png`.

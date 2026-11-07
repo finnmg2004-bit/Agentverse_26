@@ -15,6 +15,9 @@ its screen, its voice) and leads them by the handle to the door, the kitchen, or
   is in, and a two-layer agent.
 - **Reflex layer (plain code, milliseconds):** danger sounds pre-empt everything, obstacle stops, speed cap
   near the owner, stale-command stop, and validation of every decision. The LLM can never override it.
+  In rehearsal, with the back exit blocked, Gemma proposed the terrace exit next to the kitchen fire; the
+  safety layer rejected it ("passes 1.6 m from the fire; the front door keeps 12.5 m") and the owner was
+  evacuated through the front door.
 - **Thinking layer (local Gemma 4 E2B via Ollama):** on each event it chooses one option from a menu of
   legal actions built from live perception (e.g. "search the guest bedroom: owner probability 42 %, 9 m"),
   with a one-line reason shown on screen; the answer is constrained by a JSON schema, so it cannot produce an
@@ -37,7 +40,8 @@ SHA-256-pinned and fetched by one command.
 |---|---|
 | Gemma menu decisions, accuracy on the eval set | 97.8 % (base `gemma4:e2b`) |
 | Gemma decision latency, RTX 5050 laptop | ~0.4–0.9 s; 0 watchdog fallbacks over 16 calls in the test suite |
-| Spoken rule → structured rule (carpet) | 1.57 s (Gemma parse) |
+| Spoken rule → structured rule (carpet) | Whisper transcript confidence 0.96; Gemma parse ~1.0–1.6 s |
+| Smoke alarm → Gemma's exit decision | ~0.8 s; owner outside ~24 s later (from the living room) |
 | End-to-end scenario tests | 9 / 9 pass (doorbell, knock, smoke, owner moved, chair, reset, carpet ×2, full demo) |
 | Simulation speed with the live 3D view | 1.00× real time (Windows) |
 | Doorbell → owner at the front door | ~58 s sim time |
