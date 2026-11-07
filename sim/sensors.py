@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import mujoco
 import numpy as np
+from scipy import signal as sps
 from scipy.io import wavfile
 
 from sim.house_layout import SOUND_SOURCES, count_walls_crossed
@@ -40,6 +41,94 @@ LIDAR_HEIGHT_Z: float = 0.32
 CAM_WIDTH: int = 320
 CAM_HEIGHT: int = 240
 CAM_FOVY_DEG: float = 60.0
+
+
+# Background-noise test profiles (hotkey [N] / `--noise`). Levels are RMS at the ears; for
+# reference the doorbell arrives at ~0.03 (far, through walls) to ~0.2 (same room).
+#   white  - flat hiss floor          hum    - mains/motor harmonics (fundamental Hz)
+#   brown  - low-frequency rumble     babble - speech-band noise, syllable-rate modulated (TV/talk)
+#   music  - slowly changing chords
+NOISE_PROFILES: List[Dict[str, object]] = [
+    {"name": "quiet",  "label": "Quiet room",          "white": 0.002},
+    {"name": "fan",    "label": "Fan / air-con",       "white": 0.004, "brown": 0.025, "hum": (0.006, 50.0)},
+    {"name": "tv",     "label": "TV / conversation",   "white": 0.004, "babble": 0.045},
+    {"name": "vacuum", "label": "Vacuum cleaner",      "white": 0.07,  "brown": 0.03, "hum": (0.03, 120.0)},
+    {"name": "party",  "label": "Party (talk+music)",  "white": 0.01,  "babble": 0.08, "music": 0.06},
+]
+NOISE_NAMES = [str(p["name"]) for p in NOISE_PROFILES]
+
+
+class AmbientNoise:
+    """Continuous (filter state carried across windows) diffuse background noise for both ears."""
+
+    def __init__(self, rng: np.random.Generator) -> None:
+        self.rng = rng
+        self.idx = 0
+        self.t = 0  # samples generated so far (keeps hum / modulation phase continuous)
+        self._babble_sos = sps.butter(4, [300.0, 3400.0], btype="bandpass", fs=SAMPLE_RATE, output="sos")
+        self._brown_sos = sps.butter(2, 200.0, btype="lowpass", fs=SAMPLE_RATE, output="sos")
+        self._zi: Dict[str, np.ndarray] = {}
+
+    @property
+    def profile(self) -> Dict[str, object]:
+        return NOISE_PROFILES[self.idx]
+
+    def set(self, name_or_idx) -> Dict[str, object]:
+        self.idx = NOISE_NAMES.index(name_or_idx) if isinstance(name_or_idx, str) else int(name_or_idx) % len(NOISE_PROFILES)
+        return self.profile
+
+    def cycle(self) -> Dict[str, object]:
+        return self.set(self.idx + 1)
+
+    def _filtered(self, key: str, sos: np.ndarray, n: int) -> np.ndarray:
+        if key not in self._zi:
+            self._zi[key] = sps.sosfilt_zi(sos) * 0.0
+        y, self._zi[key] = sps.sosfilt(sos, self.rng.standard_normal(n), zi=self._zi[key])
+        return y / (np.std(y) + 1e-9)
+
+    def _component(self, kind: str, n: int, tt: np.ndarray, key: str) -> np.ndarray:
+        if kind == "brown":
+            return self._filtered(key, self._brown_sos, n)
+        if kind == "babble":
+            # several "voices" with independent ~3-6 Hz syllable envelopes
+            env = np.zeros(n)
+            for i, f in enumerate((3.1, 4.3, 5.2)):
+                env += np.clip(np.sin(2 * np.pi * f * tt + 1.7 * i + (key == "babble_r") * 0.9), 0, None)
+            x = self._filtered(key, self._babble_sos, n) * (0.35 + env)
+            return x / (np.std(x) + 1e-9)
+        raise ValueError(kind)
+
+    def generate(self, n: int) -> Tuple[np.ndarray, np.ndarray]:
+        p = self.profile
+        tt = (self.t + np.arange(n)) / SAMPLE_RATE
+        left = np.zeros(n)
+        right = np.zeros(n)
+        if p.get("white"):
+            left += float(p["white"]) * self.rng.standard_normal(n)
+            right += float(p["white"]) * self.rng.standard_normal(n)
+        for kind in ("brown", "babble"):
+            if p.get(kind):
+                lvl = float(p[kind])
+                common = self._component(kind, n, tt, kind)          # diffuse field: mostly shared,
+                left += lvl * (0.75 * common + 0.25 * self._component(kind, n, tt, kind + "_l"))
+                right += lvl * (0.75 * common + 0.25 * self._component(kind, n, tt, kind + "_r"))
+        if p.get("hum"):
+            lvl, f0 = p["hum"]
+            h = sum(np.sin(2 * np.pi * f0 * k * tt) / k for k in (1, 2, 3, 4))
+            h = h / (np.std(h) + 1e-9) * float(lvl)
+            left += h
+            right += h
+        if p.get("music"):
+            chords = [(262, 330, 392), (220, 262, 330), (175, 220, 262), (196, 247, 294)]  # C Am F G
+            chord = chords[int(tt[0] / 2.0) % len(chords)]
+            m = sum(np.sin(2 * np.pi * f * tt) + 0.3 * np.sin(4 * np.pi * f * tt) for f in chord)
+            beat = 0.6 + 0.4 * (np.sin(2 * np.pi * 2.0 * tt) > 0)  # 120 bpm pulse
+            m = m * beat
+            m = m / (np.std(m) + 1e-9) * float(p["music"])
+            left += m
+            right += 0.9 * m
+        self.t += n
+        return left.astype(np.float32), right.astype(np.float32)
 
 
 def ensure_audio_assets() -> Dict[str, np.ndarray]:
@@ -128,6 +217,7 @@ class SimSensors:
         self.audio_clips = ensure_audio_assets()
         self.audio_cursor: int = 0
         self.rng = np.random.default_rng(123)
+        self.noise = AmbientNoise(self.rng)  # background-noise test profile ([N] hotkey / --noise)
 
         # LiDAR ray angles in body frame: [-90 deg, +90 deg]
         self.lidar_angles = np.linspace(
@@ -279,9 +369,8 @@ class SimSensors:
         ear_l = (rx + 0.22 * cos_y - 0.08 * sin_y, ry + 0.22 * sin_y + 0.08 * cos_y)
         ear_r = (rx + 0.22 * cos_y + 0.08 * sin_y, ry + 0.22 * sin_y - 0.08 * cos_y)
 
-        # Subtle ambient room noise floor
-        left_ch = self.rng.normal(0.0, 0.002, size=AUDIO_WINDOW_SAMPLES).astype(np.float32)
-        right_ch = self.rng.normal(0.0, 0.002, size=AUDIO_WINDOW_SAMPLES).astype(np.float32)
+        # Ambient background noise (default "quiet" = the original 0.002 hiss floor)
+        left_ch, right_ch = self.noise.generate(AUDIO_WINDOW_SAMPLES)
 
         active_list: List[str] = []
         # Priority order: if smoke_alarm is active, it dominates or mixes with active sounds
@@ -344,5 +433,6 @@ class SimSensors:
             "channels": 2,
             "samples": AUDIO_WINDOW_SAMPLES,
             "active_gt": active_list,
+            "noise": self.noise.profile["name"],
         }
         return pcm_int16.tobytes(), meta
