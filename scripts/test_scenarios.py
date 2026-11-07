@@ -50,6 +50,21 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["alert_owner(knock"],
         "expect_alert": ["2_pulse"],
     },
+    "kettle": {
+        "desc": "Kettle (tier 2, kitchen) -> find owner in living room -> 2 pulses -> guide to the kettle",
+        "actions": [("at", 1.0, "J")],
+        "expect_complete": ["kettle"],
+        "expect_log": ["alert_owner(kettle", "guide_owner_to(kettle)"],
+        "expect_alert": ["2_pulse"],
+    },
+    "kettle_during_doorbell": {
+        "desc": "Doorbell mission running, kettle starts -> deferred (not merged into the doorbell) -> "
+                "doorbell completes first, then the kettle mission runs",
+        "actions": [("at", 1.0, "B"), ("on", "alert_owner(doorbell", 1.0, "J")],
+        "expect_complete": ["doorbell", "kettle"],
+        "expect_log": ["Heard kettle during the doorbell mission", "MISSION KETTLE"],
+        "expect_alert": ["1_pulse"],
+    },
     "smoke": {
         "desc": "Smoke alarm -> safety pre-emption -> continuous vibration -> evacuate via back door",
         "actions": [("at", 1.0, "M")],
@@ -96,6 +111,15 @@ SCENARIOS: Dict[str, Dict] = {
                     ("at", 4.0, "B")],
         "expect_complete": ["doorbell"],
         "expect_log": [],
+        "expect_alert": ["1_pulse"],
+        "forbid_sim": ["AVOID AREA: robot stepped ON"],
+    },
+    "carpet_rule_voice": {
+        "desc": "Same as carpet_rule, but SPOKEN: clip -> voice.py (Whisper + wake word) -> user_command "
+                "-> rule -> doorbell route never steps on the carpet",
+        "actions": [("voice", 0.5, "carpet_rule"), ("on", "RULE #", 1.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["OWNER SAID (voice)", "RULE #"],
         "expect_alert": ["1_pulse"],
         "forbid_sim": ["AVOID AREA: robot stepped ON"],
     },
@@ -171,6 +195,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
 
     WorldModel.log = capture
     alerts_seen = set()
+    voice_procs: List[subprocess.Popen] = []  # ("voice", t, clip) actions
     pending = list(spec["actions"])
     fired_on: Dict[int, float] = {}
     unacked: List[list] = []  # [key, last_sent_at, tries, hotkey_count_when_sent]
@@ -199,6 +224,15 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             alerts_seen.add(brain.alerts.mode)
             el = t0 - start
             for i, a in enumerate(list(pending)):
+                if a[0] == "voice":  # owner SPEAKS a recorded clip: real voice.py -> Whisper -> :5558
+                    if el >= a[1]:
+                        clip = ROOT / "assets" / "audio" / "voice" / f"{a[2]}.wav"
+                        voice_procs.append(subprocess.Popen(
+                            [sys.executable, "-u", str(ROOT / "nudge-brain" / "voice.py"), "--file", str(clip)],
+                            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True))
+                        print(f"    t={el:5.1f}s  owner says <{a[2]}.wav> (voice.py -> Whisper -> user_command)")
+                        pending.remove(a)
+                    continue
                 if a[0] == "cmd":  # owner command (AGENTS.md 9.4 `user_command`), as if typed in the GUI
                     if el >= a[1]:
                         cmd_pub.send_multipart([b"user_command", json.dumps(
@@ -249,7 +283,12 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     for l in sim.lines:
         if "SCENARIO" in l or "HOTKEY" in l or "AVOID AREA" in l:
             print(f"    {l}")
-    pressed = [a[-1] for a in spec["actions"] if a[0] != "cmd"]
+    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "voice")]
+    for vp in voice_procs:  # what the voice process heard / published
+        out = vp.communicate(timeout=30)[0] if vp.poll() is None else vp.stdout.read()
+        for line in (out or "").splitlines():
+            if "user_command" in line or "heard" in line:
+                print(f"    {line[:160]}")
     got = [l for l in sim.lines if "HOTKEY [" in l]
     lost = [k for k in pressed if not any(f"HOTKEY [{k}]" in l for l in got)]
     if lost:

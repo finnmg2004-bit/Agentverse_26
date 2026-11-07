@@ -47,7 +47,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_DIR = PROJECT_ROOT / "assets" / "models"
 VOICE_CLIPS = PROJECT_ROOT / "assets" / "audio" / "voice"
-VOICE_ENDPOINT = os.environ.get("NUDGE_VOICE_ENDPOINT", "tcp://127.0.0.1:5558")
+# Same variable as the brain (rules.py VOICE_PUB); NUDGE_VOICE_ENDPOINT kept as an alias.
+VOICE_ENDPOINT = os.environ.get("NUDGE_VOICE_PUB") or os.environ.get("NUDGE_VOICE_ENDPOINT", "tcp://127.0.0.1:5558")
 SR = 16000
 FRAME = 480  # 30 ms
 
