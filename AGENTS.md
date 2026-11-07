@@ -256,6 +256,10 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - **`C` or `5`**: Toggle **Chair** obstacle in `door_guest_living` (-7.6, 0.6)
 - **`X`**: Silence all active sounds
 - **`R`**: **Reset** the scene (robot to the entry-hall start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
+- **`N` or `6`**: Cycle **background noise** for hearing robustness tests: `quiet` → `fan` → `tv` → `vacuum` → `party` (start with `--noise NAME`)
+- **`V`**: Cycle **viewer camera**: `top` dollhouse view → `follow` (chase the robot) → `dog` (the head RGB-D camera = exactly what YOLO sees) (start with `--view NAME`)
+- **Scenario end condition** (sim ground truth): owner held ≥1 s within 1.15 m of the front door ends a doorbell/knock (sound stops, `SCENARIO COMPLETE`); owner at the back door or outside ends the smoke alarm (all alarms clear). Unresolved after 120 s → `SCENARIO FAILED`.
+- Prefer **letters** in the MuJoCo window: its built-in number-key shortcuts may also toggle geom-group visibility.
 
 **Mission complete indicator**: when the owner has been delivered, the brain reports `mission_status: "complete"`; the MuJoCo viewer shows a `MISSION COMPLETE` overlay (with sound, target and sim-time duration), the robot's halo turns steady green, and the dashboard shows a green banner. It stays until the next mission starts or `R` is pressed.
 
