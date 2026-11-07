@@ -37,7 +37,7 @@ BEZEL_PAD = 0.008
 
 IDLE_RGBA = (0.06, 0.06, 0.08, 1.0)
 BEZEL_RGBA = (0.02, 0.02, 0.02, 1.0)
-TIER_COLOUR = {"doorbell": "green", "knock": "yellow", "kettle": "amber", "complete": "white"}  # smoke_alarm: flashes
+TIER_COLOUR = {"doorbell": "green", "knock": "yellow", "kettle": "amber", "oven_timer": "amber", "complete": "white"}  # smoke_alarm: flashes
 LABEL_HEIGHT = 0.85                    # metres above the robot base for the floating viewer label
 LABEL_MAX = 99                         # mjvGeom.label is a 100-char C string
 

@@ -56,7 +56,8 @@ WASH_LEVEL = 2.5
 SOUND_INFO = {
     "doorbell": ("green", "1"),
     "knock": ("yellow", "2"),
-    "kettle": ("amber", "2"),      # tier 2, 2_pulse like knock; needs `sound` passed to update()
+    "kettle": ("amber", "2"),      # tier 2 sounds: amber, 2 blinks (same as their haptic code)
+    "oven_timer": ("amber", "2"),
     "smoke_alarm": ("orange", "fast"),
     "complete": ("white", "steady"),
 }
