@@ -288,6 +288,9 @@ class Go2Locomotion:
                 # High-frequency red emergency strobe
                 pulse = 0.55 + 0.45 * math.sin(t * 28.0)
                 self.model.geom_rgba[self.alert_halo_geom_id] = [1.0, 0.12, 0.12, float(pulse)]
+            elif alert_mode == "complete":
+                # Steady green: mission finished, owner delivered (sim-side visual only)
+                self.model.geom_rgba[self.alert_halo_geom_id] = [0.2, 0.95, 0.35, 0.85]
             else:
                 self.model.geom_rgba[self.alert_halo_geom_id] = [0.2, 0.9, 0.4, 0.0]
 

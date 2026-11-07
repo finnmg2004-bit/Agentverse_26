@@ -209,7 +209,8 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   - Topic `camera` (10 Hz multipart): `[topic, metadata_json, rgb_jpeg_bytes, depth_float16_bytes]`
   - Topic `audio` (2 Hz multipart, every 0.5 s): `[topic, metadata_json, stereo_int16_pcm_bytes]` (16 kHz stereo, 0.5 s window = 8000 samples x 2 channels)
 - **`nudge-brain` -> `sim` (PUB on `tcp://127.0.0.1:5556`)**:
-  - Topic `cmd` (20 Hz JSON): `{"vx": float, "vy": float, "wz": float, "alert_mode": "none"|"1_pulse"|"2_pulse"|"continuous", "guiding": bool}`
+  - Topic `cmd` (20 Hz JSON): `{"vx": float, "vy": float, "wz": float, "alert_mode": "none"|"1_pulse"|"2_pulse"|"continuous", "guiding": bool, "mission_status": "idle"|"active"|"complete", "mission_text": str, "episode": int}`. The sim ignores `cmd` packets whose `episode` doesn't match its own (stale commands from before an `R` reset).
+  - `state` also carries `"episode": int` (incremented by the `R` reset hotkey).
 - `robot_room` values are `house_layout.ROOMS` keys (`entry`, `living_room`, `guest`, …) or `"outside"`.
   - **Planned change (not yet implemented — coordinate before changing the contract)**: replace `alert_mode` with an alert event `"alert": {"sound": str, "tier": 1|2|3, "room": str, "message": str} | null` so the sim drives the haptic handle, LED, screen and speaker from one event (see 2.2). The brain only decides; the sim's output devices act.
 
@@ -251,6 +252,9 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - **`O` or `4`**: Cycle **Owner** room (`OWNER_ROOM_CYCLE`: `living_room` -> `guest` -> `dining` -> `family_room`)
 - **`C` or `5`**: Toggle **Chair** obstacle in `door_guest_living` (-7.6, 0.6)
 - **`X`**: Silence all active sounds
+- **`R`**: **Reset** the scene (robot to hallway start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
+
+**Mission complete indicator**: when the owner has been delivered, the brain reports `mission_status: "complete"`; the MuJoCo viewer shows a `MISSION COMPLETE` overlay (with sound, target and sim-time duration), the robot's halo turns steady green, and the dashboard shows a green banner. It stays until the next mission starts or `R` is pressed.
 
 ---
 

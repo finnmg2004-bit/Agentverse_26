@@ -7,7 +7,8 @@ One 1280x720 OpenCV window for the demo recording:
     planned path, owner belief, searched rooms
   - Sound confidence bars, mission/phase, current skill, agent decision + latency,
     haptic alert lamp, and the event log
-Keys pressed in this window are forwarded to the sim: B K M O C X (and 1-5). Q / Esc quits.
+  - Green "MISSION COMPLETE" banner once the owner has been delivered
+Keys pressed in this window are forwarded to the sim: B K M O C X R (and 1-5). Q / Esc quits.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ AMBER = (40, 180, 255)
 RED = (60, 60, 235)
 SOUND_COLORS = {"doorbell": (255, 210, 30), "knock": (30, 190, 255), "smoke_alarm": (60, 60, 240)}
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-FORWARD_KEYS = {ord(c): c for c in "BKMOCX12345"} | {ord(c.lower()): c for c in "BKMOCX"}
+FORWARD_KEYS = {ord(c): c for c in "BKMOCXR12345"} | {ord(c.lower()): c for c in "BKMOCXR"}
 
 
 def w2p(x: float, y: float) -> Tuple[int, int]:
@@ -182,6 +183,12 @@ class Dashboard:
         self._camera(img, cam, world.last_detection)
         self._map(img, world, nav_path, t)
         self._status(img, world, agent, skill_label, alerts, t)
+        status, detail = world.mission_status()
+        if status == "complete":
+            cv2.rectangle(img, (10, 10), (650, 78), (40, 120, 40), -1)
+            put(img, "MISSION COMPLETE", (24, 46), (255, 255, 255), 1.0, 2)
+            put(img, detail[:62], (24, 70), (220, 255, 220), 0.5, 1)
+            put(img, "R = reset", (560, 46), (220, 255, 220), 0.5, 1)
         if not world.connected:
             put(img, "WAITING FOR SIM (pixi run sim)", (360, 260), RED, 0.9, 2)
         cv2.imshow(self.title, img)

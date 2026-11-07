@@ -137,6 +137,11 @@ class SimSensors:
         if enable_camera:
             try:
                 self.renderer = mujoco.Renderer(model, height=CAM_HEIGHT, width=CAM_WIDTH)
+                # The robot's camera doesn't need shadows (4 lights x 4096^2 shadow maps per frame)
+                # or floor reflections: ~5x faster camera frames (173 -> 32 ms on llvmpipe).
+                # The on-screen viewer keeps them.
+                self.renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+                self.renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
             except Exception as exc:
                 print(f"[sensors] Note: Offscreen GL renderer unavailable ({exc}); using synthetic fallback.")
                 self.renderer = None
