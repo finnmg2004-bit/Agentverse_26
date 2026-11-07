@@ -66,6 +66,9 @@ python-sounddevice = ">=0.5.6,<0.6"
 glfw = ">=3.3"
 libgl-devel = "*"
 
+[target.win-64.dependencies]
+libblas = { version = "*", build = "*openblas" }
+
 [pypi-dependencies]
 mujoco = ">=3.1.6"
 opencv-python = ">=4.9.0"
@@ -73,3 +76,4 @@ onnxruntime = ">=1.18"
 ai-edge-litert = ">=1.2"
 dearpygui = ">=2.0"
 faster-whisper = ">=1.2.1, <2"
+piper-tts = ">=1.3"

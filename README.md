@@ -33,6 +33,9 @@ The owner is **"Mei Posed 001"**, a free scanned human from **Renderpeople** (<h
 
 Without it the sim falls back to the primitive owner, which YOLO does not recognise as a person (the brain's colour fallback still finds it).
 
+### Robot voice (credit)
+Nudge speaks with local [Piper](https://github.com/OHF-Voice/piper1-gpl) text-to-speech (`piper-tts`, GPL-3.0; installed as a dependency, not included in this repo) through `speech/tts.py`. Voice: **en_US-ljspeech-medium** from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) (MIT), trained from scratch on the [LJ Speech dataset](https://keithito.com/LJ-Speech-Dataset/) (public domain). `pixi run fetch-models` downloads it; test with `pixi run python speech/tts.py "Take my handle."`.
+
 ### Light bar model (credit)
 The light bar on the robot's back is **"Police Lights" by KIDosn** (<https://sketchfab.com/3d-models/police-lights-54321f506475441c8f92abdaa740b2d6>), licensed **CC BY 4.0** (<http://creativecommons.org/licenses/by/4.0/>). Modified: split into housing + three lens meshes, the centre checker panel turned into a clear lens, rescaled. The source GLB and the converted meshes are in `assets/lightbar/`; `pixi run prepare-lightbar` regenerates them.
 

@@ -112,7 +112,7 @@ Agentverse_26/
 git clone --recurse-submodules --shallow-submodules <this repo>   # or, in an existing clone:
 pixi run fetch-world      # git submodule update --init --depth 1 worlds/nerv-world (~390 MB)
 pixi run check-world      # must print "[check] all checks passed"
-pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite + Whisper base.en -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
+pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite + Whisper base.en + Piper TTS voice -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
 pixi run prepare-owner    # scanned owner: put Renderpeople `rp_mei_posed_001_OBJ/` in assets/models/ first (licence: not in git)
 pixi run sim              # terminal 1: MuJoCo viewer (cutaway view), hotkeys, ZMQ server
 pixi run brain            # terminal 2: brain + dashboard
@@ -253,7 +253,11 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 
 ### 6.1 LLM Plan: local at runtime, Modal only for offline training (agreed)
 - **Runtime is 100% local.** The demo's LLM runs in local Ollama (`NUDGE_OLLAMA_URL` must stay `http://127.0.0.1:11434`). Ollama *can* run on Modal behind a web endpoint, but a Modal call in the runtime loop is a cloud API call and costs us the 15% "operational autonomy" score. Remote Ollama is OK for dev experiments only, never in the recorded demo.
-- **Problem:** `gemma4:e2b` on a GTX 1650 answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog usually overrides it and the deterministic rules make the decisions. Its unaided choices are also sometimes wrong (e.g. re-alerting instead of guiding).
+- **Problem (first measurement, old tool-call prompt):** `gemma4:e2b` on a GTX 1650 answered in ~1.4–2.5 s (spikes to 5 s), so the watchdog usually overrode it.
+- **Measured 2026-11-07 on main's menu prompt (Teo, branch `claude/gemma-finetune-4982cb`, eval harness + 1,500/150 train/val examples):** base `gemma4:e2b` already picks the right option **97.8 %** of the time (above the 90 % gate), so a fine-tune can only buy **speed**. On the GTX 1650: median 2.8 s, only **62 % within the 4 s watchdog**; when it also writes the owner message (`say`) the median is ~4.9 s. **Cheapest fix (Finn, no training):** ask for `say` only after a nudge/alert option is chosen. Not yet measured on the RTX 5060 recording laptops — do that first. Other numbers (45 LLM cases, p95): `gemma4:e2b` p95 5.54 s, p50 2.3 s without `say`; `gemma3:1b` is faster (p50 2.31 s) but only **62.2 %** correct, so it is not an option without training.
+- **Rules quirks found in `deterministic_policy`** (Finn's lane; the training labels override them, the code is unchanged): (1) `timeout` while the owner holds the handle re-nudges instead of guiding; (2) `timeout` always rescans the current room, even an already-scanned or ~1 % one; (3) `arrived_in_room` with the owner seen 2–3 s ago -> `look_around` although the prompt says "visible now"; (4) `go_to_room(<current room>)` offered while `look_around` is on the menu. Also `MAX_NUDGES = 3` ("lead anyway") is not stated in the prompt.
+- **Tools on branch `claude/gemma-finetune-4982cb`** (not merged; `nudge-brain/` identical to main): `scripts/llm_eval` (`pixi run llm-eval [--models gemma4:e2b nudge-gemma]`; 56 hand-checked cases, 45 where the LLM is asked, rendered through `agent.py`'s own `build_menu` / `_menu_text` / `_schema` / `NudgeAgent._chat`) and `scripts/modal_finetune` (`make_data.py` 1,500 + 150 examples in the runtime format, disjoint from the eval; `train.py` Modal + Unsloth LoRA -> GGUF Q4_K_M, `--base 1b` or E2B; Modelfiles; README).
+- **Fine-tune status:** paused. Modal blocks all GPUs until a payment method is added (credits are active; cost so far $0.02). Next: add the card -> `pixi run llm-data` -> `python -m modal run scripts/modal_finetune/train.py::main --base 1b` -> download, `ollama create nudge-gemma`, compare (steps in `scripts/modal_finetune/README.md` on that branch). If §10 Option A is chosen, retarget the training to "instruction -> task program" instead. Full sequence: `pixi run llm-data` -> `modal run scripts/modal_finetune/train.py::main --base 1b` -> `modal run scripts/modal_finetune/train.py::download` -> `ollama create nudge-gemma -f scripts/modal_finetune/Modelfile.1b` -> `pixi run llm-eval --models gemma4:e2b nudge-gemma`.
 - **Plan — use the Modal credits for an offline fine-tune of a small Gemma (1B):**
   1. **Eval set first**: 30–50 scripted `(event, state) -> expected tool call` cases; measure accuracy and latency of the base models (`gemma4:e2b`, `gemma3:1b`) on the demo laptop.
   2. **Training data**: generate ~1–2k synthetic `(event, world.snapshot())` examples labelled by `deterministic_policy` in `nudge-brain/agent.py` (no hand labelling); short `reason` (≤ 5 words).
@@ -315,7 +319,7 @@ One window: live 3D view streamed from the sim (drag = orbit, right-drag = pan, 
 - [x] **M7**: Plain-code navigator (`navigator.py`: static floor-plan map + Dijkstra with clearance cost, doorway tags, LiDAR skirt + LiDAR blocked-doorway re-planning), `world_model.py`, and `alerts.py`.
 - Verified headless in the nerv house (real head-camera renders): demo story doorbell → owner moved → search → alert → guide → smoke pre-emption (0.6 s) → evacuation outside the back door; chair-blocked door → LiDAR re-plan via the entry hall.
 - [ ] **M7b**: Multimodal alert outputs (2.2): tier-coloured LED, on-robot screen texture, local TTS speaker, owner profile; tier → haptic/LED/screen/speech mapping in `alerts.py`; new `alert` event in the `cmd` contract.
-- [x] **M8**: Event-driven local agent (`agent.py`, `gemma4:e2b` via Ollama HTTP with `think: false`, no ADK yet) + deterministic `safety.py` watchdog & pre-emption. On a GTX 1650 Gemma answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog often takes over — needs a faster GPU, a smaller prompt/model, or a team decision on the watchdog.
+- [x] **M8**: Event-driven local agent (`agent.py`, `gemma4:e2b` via Ollama HTTP with `think: false`, no ADK yet) + deterministic `safety.py` watchdog & pre-emption. Menu-prompt accuracy 97.8 %, but on a GTX 1650 only 62 % of answers beat the 4 s watchdog (median 2.8 s, ~4.9 s with `say`) — see 6.1; measure on the RTX 5060.
 - [x] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + detection box, 2D house map + path, and active agent plan.
 - [x] **M9b**: LLM decides from perception-built option menus (structured output) incl. emergencies; probabilistic owner search; sound localisation from the ears; fire-aware exit choice + exit-blocked re-choice + escalation; realistic owner (wander, acknowledge by handle tap, let go); dashboard heat map, sound bearings, fire/exit overlay, decision timeline, acknowledgement indicator.
 - [ ] **M10**: End-to-end 60-second continuous one-take demo rehearsal & recording.
@@ -360,7 +364,7 @@ Gemma turns the sentence into a structured rule (Ollama JSON schema with enums o
 | Active rules + confirmation | Finn → Eden, Sean | `brain` status `rules` = `RuleBook.status()`: `[{"id", "type": "avoid_area"\|"sound_preference", "area", "sound", "policy", "from_hour", "to_hour", "summary", "text", "source"}]` (GUI shows the summaries and shades `avoid_area` via `house_layout.AVOID_AREAS[area]`); the owner confirmation is `nudge_says` (`{"text", "kind", "t"}`, shown as "Nudge says" on the GUI's 3D view). |
 | Carpet / avoid areas | Sean (sim + `house_layout.py`) → Finn, Eden | named rectangles, e.g. `AVOID_AREAS = {"living_room_carpet": (x0, y0, x1, y1)}` |
 | Sound registry | Ricktho → Finn, Sean, Eden | per sound: file, room, tier, alert pattern, YAMNet classes, target |
-| Speech | Teo → Sean | `speak(text)` (local TTS), model fetched by `pixi run fetch-models` |
+| Speech | Teo → Sean | `from speech.tts import speak, synthesize, warmup, stop` (top-level `speech/`, no sim/brain deps). `speak(text, block=False, interrupt=False) -> bool`: queued on a worker thread, returns at once; `interrupt=True` cuts off the current/queued speech (emergencies). `synthesize(text) -> (int16 mono pcm, sample_rate)`. Call `warmup()` at startup (voice load ~5 s in the background). Fails soft (no model / no audio device -> one log line). `NUDGE_TTS_MUTE=1` = no playback; `NUDGE_TTS_VOICE` = another Piper voice. Voice `en_US-ljspeech-medium` via `pixi run fetch-models`; try it: `pixi run python speech/tts.py "Take my handle."` |
 
 ### 9.5 The 60-second demo (proposed)
 1. Owner: *"Nudge, I've got a new carpet in the living room, please don't step on it."* → screen confirms, map shades the area (~10 s).
@@ -403,3 +407,52 @@ Ricktho's voice input is on `main` (commits "Add faster-whisper and sounddevice 
 2. Hotspots have one owner: `run_sim.py` = Sean, `agent.py` = Finn; in AGENTS.md edit only your own lane's text; add deps with `pixi add` in their own commit.
 3. New behaviour behind a flag/env until its scenario test passes. Small commits, push often.
 4. On Windows PowerShell, commit with `git commit -F msg.txt` if your message has quotes (PowerShell 5.1 mangles them).
+5. **Windows + Whisper:** numpy's MKL and ctranslate2 (faster-whisper) each load an OpenMP runtime, so the process aborts with "OMP: Error #15". `pixi.toml` pins `libblas = { build = "*openblas" }` for win-64 to fix it (verified: Piper says "Nudge, take me to the kitchen." and Whisper hears it exactly). Don't remove it. Also: don't pass a whole sentence as Whisper's `initial_prompt` (it hallucinates that sentence on plain noise); use a word list.
+
+---
+
+## 10. Next phase — "Teachable Nudge" (PROPOSAL by Teo, 2026-11-07 — not agreed yet; decide at the morning kick-off)
+**Why:** today Nudge only does jobs we coded (doorbell, knock, smoke, owner commands, place rules). The strongest story for *adapting* (25 %) and *ambition* (15 %) is: **the owner teaches Nudge a brand-new job in one sentence and it does it.** Two ways to get there: build toward **A (ideal)**, keep **B (fallback)** ready so we never end up with nothing.
+
+### 10.1 Option A — ideal: an agent that builds new behaviour and learns its own house
+1. **The robot maps the house itself.** At first start it **explores** (frontier exploration: drive to the nearest unexplored edge) and builds its own map: LiDAR -> occupancy grid; head camera + YOLO -> **object memory** (bed, sofa, TV, fridge, chair… with positions); **room names** inferred from objects (bed -> bedroom, stove/fridge -> kitchen, sofa + TV -> living room; Gemma suggests, the owner can confirm "this is the kitchen"). Saved to disk; the video starts from it (or shows the scan fast-forwarded).
+2. **Live updates.** While working it keeps the map current: new obstacles (chair in a doorway -> re-plan), moved objects ("the chair moved from the dining room to the guest-room door"), owner last seen where/when. The GUI shows **the robot's own map**. `sim/house_layout.py` stays only for tests / the judge's ground truth; the brain never reads it. (Honest note for the summary: the robot's pose comes from the sim; a real robot would use SLAM.)
+3. **Primitive actions** (plain code, safe; Gemma composes them): move `go_to(place|object|owner)`, `turn`, `scan_room`, `approach`, `wait(s)`, `wait_until(cond)`; perceive `find(person|object)`, `where_is_owner()`, `what_did_i_hear()`, `is_owner_moving()`, `time_now()`; interact `nudge()`, `vibrate(pattern)`, `say(text)` (Piper), `show(text)` (screen), `lights(pattern)`, `offer_handle()`, `guide(to)`, `ask_owner(question)` (voice/GUI answer), `call_emergency()`; memory `remember(fact)`, `recall(fact)`.
+4. **Teach (Gemma, schema-constrained):** sentence -> a small **task program**: trigger + steps (+ simple `if` on perception, `on_fail`). The JSON schema only allows known primitives, places and objects (from the robot's own map). Ambiguous -> `ask_owner` ("Which bed?"). Confirmed back on screen + voice, stored in a task file, listed/edited/deleted in the GUI.
+5. **Run (plain code):** trigger watcher (time / sound / owner idle / event such as "owner entered room") -> program runner executes the steps; Gemma is woken only for decisions and failures (re-plan), not every step.
+6. **Safety (plain code, always on):** tier-1 danger pre-empts any task; geofence (avoid areas, stairs, upper floors); speed caps; every program validated before running (known primitives only, max duration, no endless loops, reachable on the map); the watchdog fallback stays.
+7. **Switch:** `NUDGE_AGENT=planner|menu`; today's menu agent stays as the fallback.
+- Examples it must handle: "Every day at 10pm find me and bring me to my bed" · "If I haven't moved for two hours, come and check on me" · "When the oven timer goes, take me to the kitchen and remind me to switch it off" · "If someone knocks while I'm asleep, wake me gently".
+
+### 10.2 Option B — fallback: teachable tasks from existing skills
+- Same input (voice/GUI `user_command`), same task list in the GUI, same safety layer. Tasks may only chain **existing skills** (`find_owner` = search + approach, `alert_owner`, `say`, `offer_handle`, `guide_owner_to` a known place, `go_to_room`, `wait`); triggers `time` / `sound` / `idle` / `event`; static map (`nav_map.py`) + live LiDAR obstacles.
+- Example task object: `{"type": "task", "name": "bedtime", "trigger": {"kind": "time", "at": "22:00", "repeat": "daily"}, "steps": [{"skill": "find_owner"}, {"skill": "say", "text": "It's 10 pm. Time for bed."}, {"skill": "guide_owner_to", "target": "guest"}]}`
+- Anything it can't build from those skills -> it **says so** on screen and by voice: "Sorry, I can't do that yet. I can find you, remind you, or take you somewhere."
+- Needs a sim **clock** in `state` + a GUI "jump to 21:59" button; "bed" = the guest bedroom.
+
+### 10.3 Decision point
+Kick-off: agree the interfaces below (45 min). **At the ~2 h checkpoint:** if A can't yet teach + run **one** new job end to end on its own map, switch to B for the video. Everything shared (input, task list, GUI panels, safety, primitives that B also uses) carries over, so work for A is not wasted.
+
+### 10.4 Interfaces to agree first (draft)
+- **Task program** (JSON): `{name, trigger: {kind: time|sound|idle|event, ...}, steps: [{op, args, on_fail?}], until?}`; `op` is one of the primitives (A) or skills (B).
+- **Primitive API** (brain): `start(args) -> handle`, `status() -> running|ok|failed`, `result()`; ticked at 20 Hz by the runner.
+- **Robot map** (A): occupancy grid (5 cm; origin/resolution in a header) + `objects: [{id, cls, x, y, room, last_seen, moved_from?}]` + `rooms: [{name, cells|polygon, confidence}]`, published on a new ZMQ topic `robot_map` (add-only).
+- **Task store**: `assets/tasks.json` (gitignored), mirrored in the brain status as `tasks: [...]` for the GUI.
+
+### 10.5 Who does what (proposed)
+| Person | Option A | If we fall back to B |
+|---|---|---|
+| **Finn** — agent core | task-program format, runner, Gemma `teach` + `decide/re-plan` calls, `NUDGE_AGENT` switch, path planning on the robot's own map | task store + trigger watcher on existing skills |
+| **Teo** — maps + models | exploration scan, LiDAR occupancy grid, YOLO object memory, room naming, change detection; eval set of 50 new instructions -> expected programs; retarget the fine-tune to "instruction -> program" (stretch) | eval set for the task compiler; live-obstacle layer |
+| **Sean** — robot actions + sim | new primitives (`say` via `speech.tts`, `show` screen, `lights` via `sim/lightbar.py`, `wait_until`, `scan_room`…), sim clock, owner states (asleep, idle), real objects in the house (bed, sofa…) for YOLO | sim clock + screen + speech |
+| **Ricktho** — voice + triggers | `ask_owner` Q&A by voice, sound triggers from the sound registry, wake word / STT robustness | sound triggers |
+| **Eden** — GUI + story | robot-map view (rooms, objects, changes), teach/edit/delete tasks, live "what Nudge thinks", clock button; storyboard, summary, pitch; merge captain | task list + clock button |
+
+### 10.6 Overnight runs (1–2 machines, unattended)
+Overnight work must run **headless**, on its **own branch** (never push to `main` unattended), and end with a short report file + passing scenario tests. In the morning Eden merges at the kick-off.
+- **Machine 1 — Option A foundations (Teo's lane):** exploration scan + occupancy grid + YOLO object memory + change detection, behind a flag; a headless test that scans the house from the start pose and checks the rooms/objects found against `house_layout.py`.
+- **Machine 2 — agent core + safety net (Finn's interfaces, agreed tonight):** task-program format, validator and runner skeleton for B (reusable by A); the 50-instruction eval set; a **soak test** of the current demo (`pixi run test-scenarios` in a loop) to catch the flaky `doorbell` judge; if the Modal card is added, the fine-tune run (6.1).
+- Agree the 10.4 interfaces **before** starting the overnight runs, so the morning merge fits.
+
+### 10.7 The 60-second video (Option A)
+Fast-forwarded scan with rooms/objects appearing on the GUI map -> owner teaches a new job, Nudge asks one question and confirms -> someone moves the chair, the map updates live and Nudge re-routes -> smoke alarm pre-empts everything. (Option B: skip the scan; teach a simple job.)
