@@ -23,6 +23,19 @@ If you already cloned without submodules, run `pixi run fetch-world`. It downloa
 
 Optional, for the real local models: `pixi run fetch-models` downloads YOLOv8n and YAMNet into `assets/models/` and pulls Gemma via Ollama (install [Ollama](https://ollama.com) first). Without them the brain falls back to its built-in colour detector, spectral sound rules and deterministic rules.
 
+Optional, for the realistic owner: `pixi run prepare-owner` (see [Owner model](#owner-model-third-party-asset-not-in-git) below).
+
+### Owner model (third-party asset, not in git)
+The owner is **"Mei Posed 001"**, a free scanned human from **Renderpeople** (<https://renderpeople.com/free-3d-people/>), © Renderpeople. Their terms apply to free models too and do not allow sharing the files as downloadable 3D data (GTC §4.2b/§4.3b), so this public repo does not include them. To use it:
+1. Download the free model (OBJ version) from the link above.
+2. Unzip it so you have `assets/models/rp_mei_posed_001_OBJ/` (the whole `assets/models/` folder is gitignored).
+3. Run `pixi run prepare-owner`: it converts the 30k-triangle mesh and the 2k diffuse texture into `assets/models/owner/` for MuJoCo.
+
+Without it the sim falls back to the primitive owner, which YOLO does not recognise as a person (the brain's colour fallback still finds it).
+
+### Light bar model (credit)
+The light bar on the robot's back is **"Police Lights" by KIDosn** (<https://sketchfab.com/3d-models/police-lights-54321f506475441c8f92abdaa740b2d6>), licensed **CC BY 4.0** (<http://creativecommons.org/licenses/by/4.0/>). Modified: split into housing + three lens meshes, the centre checker panel turned into a clear lens, rescaled. The source GLB and the converted meshes are in `assets/lightbar/`; `pixi run prepare-lightbar` regenerates them.
+
 ## 2. Check the world (headless, no window)
 ```bash
 pixi run check-world
@@ -58,8 +71,8 @@ Press the hotkeys with the **MuJoCo window** focused (they also work in the dash
 ### The demo story
 1. Press **B**. The robot hears the doorbell and heads for the living room, where it expects the owner.
 2. While it crosses the dining room, press **O**. The owner moves to the guest bedroom.
-3. The robot looks around the empty living room, goes to the guest bedroom, spots the owner, nudges them (cyan pulse on its back) and starts guiding them toward the front door.
-4. Press **M**. The safety layer pre-empts the doorbell task: red `continuous` alert, and the robot leads the owner out the back door (west side of the living room) into the garden.
+3. The robot looks around the empty living room, goes to the guest bedroom, spots the owner, nudges them (the light bar's centre lens blinks green once per second = doorbell) and starts guiding them toward the front door.
+4. Press **M**. The safety layer pre-empts the doorbell task: red `continuous` alert (the light bar's red and blue ends flash back and forth = danger, centre blinks orange = smoke alarm), and the robot leads the owner out the back door (west side of the living room) into the garden.
 5. Optional: press **C** before **B**. The chair blocks the guest ↔ living door; the robot's LiDAR spots it and it reroutes through the entry hall.
 
 ### Viewer controls

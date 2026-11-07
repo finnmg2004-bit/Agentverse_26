@@ -9,6 +9,12 @@ platforms = ["linux-64", "win-64"]
 # Download YOLOv8n ONNX + YAMNet TFLite into assets/models/ and pull the local Gemma model via Ollama
 fetch-models = "python scripts/fetch_models.py"
 
+# Convert the scanned owner (Renderpeople OBJ in assets/models/, not committed) into a MuJoCo mesh
+prepare-owner = "python scripts/prepare_owner.py"
+
+# Re-split assets/lightbar/police_lights.glb into housing + lens meshes (outputs are committed)
+prepare-lightbar = "python scripts/prepare_lightbar.py"
+
 # Fetch the nerv-world house scene + its Unitree Go2 (git submodule, shallow, ~390 MB)
 fetch-world = "git submodule update --init --depth 1 worlds/nerv-world"
 

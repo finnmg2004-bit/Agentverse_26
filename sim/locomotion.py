@@ -28,6 +28,7 @@ from sim.house_layout import (
     ROBOT_START_POSE,
     get_room_at,
 )
+from sim.lightbar import LightBar
 from sim.nav_map import NavMap
 
 
@@ -69,6 +70,7 @@ class Go2Locomotion:
         self.alert_halo_geom_id: int = mujoco.mj_name2id(
             model, mujoco.mjtObj.mjOBJ_GEOM, "alert_halo"
         )
+        self.lightbar = LightBar(model)
 
         # Internal state
         self.pose_x: float = ROBOT_START_POSE[0]
@@ -294,6 +296,7 @@ class Go2Locomotion:
                 self.model.geom_rgba[self.alert_halo_geom_id] = [0.2, 0.95, 0.35, 0.85]
             else:
                 self.model.geom_rgba[self.alert_halo_geom_id] = [0.2, 0.9, 0.4, 0.0]
+        self.lightbar.update(self.model, float(self.data.time), alert_mode)
 
         self.data.time += dt
         mujoco.mj_forward(self.model, self.data)
