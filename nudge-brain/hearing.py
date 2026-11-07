@@ -46,7 +46,7 @@ def _load_tflite_interpreter(model_path: Path):
             from tflite_runtime.interpreter import Interpreter  # type: ignore
         except ImportError:
             from tensorflow.lite import Interpreter  # type: ignore
-    interp = Interpreter(model_path=str(model_path))
+    interp = Interpreter(model_path=str(model_path), num_threads=2)  # leave cores for sim / Whisper / YOLO
     interp.allocate_tensors()
     return interp
 

@@ -33,6 +33,9 @@ brain = "python nudge-brain/main.py"
 # Nudge Control GUI: 3D view, event buttons, agent reasoning. Pair with `pixi run sim --no-viewer`
 gui = "python gui/nudge_control.py"
 
+# Owner voice input: laptop mic -> local Whisper -> `user_command` on :5558 (say "Nudge, take me to the kitchen")
+voice = "python nudge-brain/voice.py"
+
 # Sim + brain together from ONE terminal; closing either window stops both.
 # Extra options pass through, e.g. `pixi run start --view dog --noise tv`
 start = { cmd = "python scripts/run_all.py", depends-on = ["fetch-world"] }
@@ -56,6 +59,7 @@ pip = ">=24.0"
 numpy = ">=1.26,<2.0"
 scipy = ">=1.12"
 pyzmq = ">=25.1"
+python-sounddevice = ">=0.5.6,<0.6"
 
 [target.linux-64.dependencies]
 # Linux GLFW / X11 / OpenGL runtime libs so MuJoCo viewer doesn't fail on missing .so files
@@ -68,3 +72,4 @@ opencv-python = ">=4.9.0"
 onnxruntime = ">=1.18"
 ai-edge-litert = ">=1.2"
 dearpygui = ">=2.0"
+faster-whisper = ">=1.2.1, <2"
