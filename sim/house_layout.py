@@ -178,6 +178,7 @@ LANDMARKS: Dict[str, Vec2] = {
     "terrace_door":       (14.2, 2.6),
     "terrace_outside":    EXITS["exit_terrace"]["outside"],  # alternative evacuation target (kitchen exit)
     "robot_dock":         (8.0, -2.7),                     # upstream ROBOT_HOME_XY
+    "kettle":             (13.2, 4.2),                     # kitchen, in front of the stove (kettle on the hob)
 }
 SMOKE_EVACUATION_TARGET = "back_exit_outside"
 
@@ -190,15 +191,32 @@ ROBOT_START_POSE: Vec3 = (ROBOT_START_XY[0], ROBOT_START_XY[1], ROBOT_START_YAW)
 ROBOT_START_ROOM = "entry"
 
 # --------------------------------------------------------------------------- #
-# Sound sources (x, y, z) — where the stereo-ear synth places each emitter.
+# Sound registry (AGENTS.md 2.1 / 9.4) — one entry per sound; adding a sound is a data change here
+# plus a clip in assets/audio/ (sim/sensors.py synthesizes placeholders) and, if YAMNet can't
+# recognise the clip, a spectral rule in nudge-brain/hearing.py.
+#   pos              (x, y, z) where the stereo-ear synth places the emitter
+#   room             room the source is in
+#   target_landmark  where Nudge leads the owner (LANDMARKS key)
+#   tier             1 = emergency (pre-empts everything), 2 = needs action, 3 = someone wants you
+#   alert_mode       haptic handle code sent in `cmd` (legacy: knock keeps 2_pulse until the
+#                    per-tier patterns of 2.1 land; the tier is the source of truth for priority)
+#   level            loudness (1.0 = doorbell); wall occlusion 0.45x/wall, capped at 3 walls
+#   file             clip in assets/audio/
+#   yamnet           YAMNet (AudioSet) class names whose max score is this sound's YAMNet score
+#   label / say      display name and the default "Nudge says" message (when Gemma writes none)
 # --------------------------------------------------------------------------- #
 SOUND_SOURCES: Dict[str, Dict[str, object]] = {
     "doorbell": {
         "pos": (-0.2, -4.35, 1.9),          # chime box beside the front door
         "room": "entry",
         "target_landmark": "front_door",
+        "tier": 3,
         "alert_mode": "1_pulse",
         "level": 1.0,
+        "file": "doorbell.wav",
+        "yamnet": ("Doorbell", "Ding-dong"),
+        "label": "Doorbell",
+        "say": "Doorbell. Hold my handle. I will take you to the front door.",
         "rgba_active": (0.1, 0.85, 1.0, 0.95),
         "rgba_idle": (0.1, 0.4, 0.5, 0.35),
     },
@@ -206,8 +224,13 @@ SOUND_SOURCES: Dict[str, Dict[str, object]] = {
         "pos": (-1.4, -4.45, 1.0),          # on the front door leaf
         "room": "entry",
         "target_landmark": "front_door",
+        "tier": 3,
         "alert_mode": "2_pulse",
         "level": 1.0,
+        "file": "knock.wav",
+        "yamnet": ("Knock",),
+        "label": "Knock",
+        "say": "Someone is knocking. Hold my handle. I will take you to the front door.",
         "rgba_active": (1.0, 0.75, 0.1, 0.95),
         "rgba_idle": (0.5, 0.38, 0.1, 0.35),
     },
@@ -215,12 +238,35 @@ SOUND_SOURCES: Dict[str, Dict[str, object]] = {
         "pos": (11.0, 4.2, 2.55),           # kitchen ceiling
         "room": "kitchen",
         "target_landmark": SMOKE_EVACUATION_TARGET,
+        "tier": 1,
         "alert_mode": "continuous",
         "level": 4.0,                     # loud: must carry through the whole house
+        "file": "smoke_alarm.wav",
+        "yamnet": ("Smoke detector, smoke alarm", "Fire alarm"),
+        "label": "Smoke alarm",
+        "say": "Smoke alarm! Hold my handle. We are going outside now.",
         "rgba_active": (1.0, 0.15, 0.15, 0.98),
         "rgba_idle": (0.5, 0.1, 0.1, 0.35),
     },
+    "kettle": {                           # tier 2 "needs action": the kettle has boiled
+        "pos": (12.55, 5.2, 1.0),           # on the stove hob (upstream h2_stove at 12.7, 5.25)
+        "room": "kitchen",
+        "target_landmark": "kettle",
+        "tier": 2,
+        "alert_mode": "2_pulse",
+        "level": 2.0,                     # a whistling kettle is loud; heard from the entry / living room
+        "file": "kettle.wav",
+        "yamnet": ("Whistle", "Steam whistle"),
+        "label": "Kettle",
+        "say": "The kettle is boiling. Hold my handle. I will take you to the kitchen.",
+        "rgba_active": (1.0, 0.55, 0.05, 0.95),
+        "rgba_idle": (0.5, 0.28, 0.05, 0.35),
+    },
 }
+SOUND_TIERS: Dict[str, int] = {name: int(spec["tier"]) for name, spec in SOUND_SOURCES.items()}
+DANGER_SOUNDS = tuple(n for n, t in SOUND_TIERS.items() if t == 1)
+# Sounds that start an ordinary (non-emergency) mission, highest priority first.
+ALERT_SOUNDS = tuple(sorted((n for n, t in SOUND_TIERS.items() if t > 1), key=lambda n: SOUND_TIERS[n]))
 
 # --------------------------------------------------------------------------- #
 # Movable chair obstacle (hotkey [C]): blocks the guest <-> living_room door,

@@ -32,10 +32,10 @@ from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, validate  # noqa: E402
+from sim.house_layout import ALERT_SOUNDS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
 
 LOOP_HZ = 20.0
 STATUS_HZ = 10.0  # `brain` status for the control GUI (gui/nudge_control.py)
-ALERT_SOUNDS = ("doorbell", "knock")
 NEW_SOUND_CONF = 0.5
 SILENCE_WINDOWS_TO_UNLATCH = 3  # 1.5 s of silence before the same sound can start a new mission
 UNLATCH_BELOW = 0.25
@@ -67,6 +67,7 @@ class Brain:
             self.dashboard = Dashboard()
 
         self.latched: dict = {}  # sound -> consecutive windows not heard
+        self.deferred: set = set()  # sounds heard during a mission for another place (alert after it)
         self.last_owner_seen_event = 0.0
         self.episode = None  # sim episode we are acting on; a change means the sim was reset ([R])
         self.last_status_pub = 0.0
@@ -83,6 +84,7 @@ class Brain:
         self.world = WorldModel()
         self.localizer.reset()
         self.latched = {}
+        self.deferred = set()
         self.last_owner_seen_event = 0.0
         self.episode = episode
         self.world.log(f"RESET by sim (episode {episode}) - ready")
@@ -111,6 +113,7 @@ class Brain:
             self.latched[s] = 0 if heard else self.latched[s] + 1
             if self.latched[s] >= SILENCE_WINDOWS_TO_UNLATCH:
                 del self.latched[s]
+                self.deferred.discard(s)
                 self.localizer.reset(s)
                 self.world.sound_estimates.pop(s, None)
 
@@ -126,10 +129,14 @@ class Brain:
                 self.agent.submit("new_sound", self.world)
             return
 
-        # 2. Doorbell / knock start (or update) a mission.
+        # 2. Doorbell / knock / kettle (non-danger registry sounds) start (or update) a mission.
+        #    A sound that needs the owner somewhere else than the running mission is deferred and
+        #    starts its own mission when the current one ends (if it is still sounding).
         label, conf = res.get("label"), float(res.get("confidence", 0.0))
-        if label in ALERT_SOUNDS and conf >= NEW_SOUND_CONF and label not in self.latched:
+        deferred_ready = label in self.deferred and self.world.mission is None
+        if label in ALERT_SOUNDS and conf >= NEW_SOUND_CONF and (label not in self.latched or deferred_ready):
             self.latched[label] = 0
+            self.deferred.discard(label)
             if self.world.is_emergency():
                 return
             if self.world.mission is None:
@@ -144,6 +151,11 @@ class Brain:
                     self.world.mission["say"] = (f"{name}. Maybe your parcel. Hold my handle. "
                                                  f"I will take you to the front door.")
                 self.agent.submit("new_sound", self.world)
+            elif (self.world.mission["sound"] != label
+                  and SOUND_SOURCES[label]["target_landmark"] != self.world.mission["target"]):
+                self.deferred.add(label)
+                self.world.log(f"Heard {label} during the {self.world.mission['sound']} mission: "
+                               f"will alert after it")
             elif self.world.mission["sound"] != label:
                 self.world.log(f"Mission sound updated: {label}")
                 self.world.mission["sound"] = label

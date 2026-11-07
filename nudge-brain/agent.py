@@ -62,6 +62,8 @@ DEFAULT_SAY = {
     "knock": "Someone is knocking. Hold my handle. I will take you to the front door.",
     "smoke_alarm": "Smoke alarm! Hold my handle. We are going outside now.",
 }
+# Sounds added to the registry later (e.g. kettle) bring their own default message.
+DEFAULT_SAY.update({k: str(v["say"]) for k, v in SOUND_SOURCES.items() if k not in DEFAULT_SAY and v.get("say")})
 
 SYSTEM_PROMPT = """You are the decision-maker inside Nudge, a robot assistance dog for a deafblind owner.
 The owner cannot hear household sounds and cannot see. You hear for them: you find them, nudge them

@@ -125,11 +125,7 @@ class NudgeSimulator:
         # Scene state controlled by hotkeys
         self.owner_room_idx: int = 0  # Starts in living_room
         self.chair_blocking: bool = False
-        self.active_sounds: Dict[str, bool] = {
-            "doorbell": False,
-            "knock": False,
-            "smoke_alarm": False,
-        }
+        self.active_sounds: Dict[str, bool] = {name: False for name in SOUND_SOURCES}  # registry-driven
         self.beacon_geom_ids: Dict[str, int] = {
             name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, f"beacon_{name}")
             for name in SOUND_SOURCES
@@ -279,6 +275,9 @@ class NudgeSimulator:
         elif k in ("M", "3"):
             self._start_sound("smoke_alarm")
             print(f"[sim] HOTKEY [M]: EMERGENCY Smoke Alarm triggered in the kitchen {SOUND_SOURCES['smoke_alarm']['pos'][:2]}!")
+        elif k in ("J", "7"):
+            self._start_sound("kettle")
+            print(f"[sim] HOTKEY [J]: Kettle whistling on the kitchen stove {SOUND_SOURCES['kettle']['pos'][:2]}!")
         elif k in ("O", "4"):
             self.owner_room_idx = (self.owner_room_idx + 1) % len(ROOM_ORDER)
             new_room = ROOM_ORDER[self.owner_room_idx]
@@ -419,7 +418,7 @@ class NudgeSimulator:
         """Callback invoked by `mujoco.viewer.launch_passive` on key press (viewer thread)."""
         if 32 <= keycode <= 126:
             ch = chr(keycode).upper()
-            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E", "N", "6", "V"):
+            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E", "N", "6", "V", "J", "7"):
                 self.pending_keys.append(ch)  # applied in step_once() on the main thread
 
     def apply_view(self, cam) -> None:
@@ -685,7 +684,7 @@ def main() -> None:
     ox, oy = sim.locomotion.get_owner_pos()
     print(f"[sim] Go2 started in {get_room_at(rx, ry)} at ({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
     print(f"[sim] Owner started in {get_room_at(ox, oy)} at ({ox:.2f}, {oy:.2f})")
-    print("[sim] Hotkeys: [B/1] Doorbell | [K/2] Knock | [M/3] Smoke Alarm | [O/4] Move Owner | [C/5] Chair | [X] Silence | [R] Reset")
+    print("[sim] Hotkeys: [B/1] Doorbell | [K/2] Knock | [M/3] Smoke Alarm | [J/7] Kettle | [O/4] Move Owner | [C/5] Chair | [X] Silence | [R] Reset")
     print("[sim]          [N/6] Background noise | [V] Camera view (top / follow / dog)")
     p = sim.sensors.noise.set(args.noise)
     sim.view_idx = VIEW_NAMES.index(args.view)

@@ -133,8 +133,9 @@ class AmbientNoise:
 
 def ensure_audio_assets() -> Dict[str, np.ndarray]:
     """
-    Ensure `assets/audio/{doorbell,knock,smoke_alarm}.wav` exist on disk as
-    16 kHz mono int16 WAV files and return their normalized float32 waveforms.
+    Ensure the clip of every `SOUND_SOURCES` entry (`assets/audio/<file>`, e.g. doorbell, knock,
+    smoke_alarm, kettle) exists as a 16 kHz mono int16 WAV (synthesized placeholder if missing)
+    and return their normalized float32 waveforms keyed by sound name.
     """
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     duration = 2.0
@@ -199,9 +200,30 @@ def ensure_audio_assets() -> Dict[str, np.ndarray]:
         sig = np.clip(carrier * env * 0.92, -0.98, 0.98)
         wavfile.write(str(smoke_path), SAMPLE_RATE, (sig * 32767).astype(np.int16))
 
+    # 4. Kettle (tier 2): steady whistle ~2.25 kHz with a slow wobble + breathy steam noise around
+    #    it and a faint 2nd harmonic. Kept clear of the doorbell bands (<= 2.05 kHz) and of the
+    #    smoke-alarm band + its neighbours (2.45-3.9 kHz) so hearing.py can tell them apart even
+    #    when two sounds play at once.
+    kettle_path = AUDIO_DIR / "kettle.wav"
+    if not kettle_path.exists():
+        rng = np.random.default_rng(7)
+        f_inst = 2250.0 + 25.0 * np.sin(2.0 * np.pi * 0.5 * t)  # 0.5 Hz wobble: whole cycle per 2 s loop
+        phase = 2.0 * np.pi * np.cumsum(f_inst) / SAMPLE_RATE
+        am = 1.0 + 0.15 * np.sin(2.0 * np.pi * 6.0 * t)  # turbulence flutter
+        whistle = am * (0.80 * np.sin(phase) + 0.07 * np.sin(2.0 * phase))
+        b, a = sps.butter(4, [2130.0, 2370.0], btype="bandpass", fs=SAMPLE_RATE)
+        steam = sps.lfilter(b, a, rng.standard_normal(t.shape))
+        steam = 0.25 * steam / (np.std(steam) + 1e-9) * float(np.std(whistle))
+        sig = whistle + steam
+        sig = np.clip(sig / (np.max(np.abs(sig)) + 1e-6) * 0.9, -0.98, 0.98)
+        wavfile.write(str(kettle_path), SAMPLE_RATE, (sig * 32767).astype(np.int16))
+
     clips: Dict[str, np.ndarray] = {}
-    for name in ("doorbell", "knock", "smoke_alarm"):
-        sr, data = wavfile.read(str(AUDIO_DIR / f"{name}.wav"))
+    for name, spec in SOUND_SOURCES.items():
+        path = AUDIO_DIR / str(spec.get("file", f"{name}.wav"))
+        if not path.exists():
+            raise FileNotFoundError(f"{path} missing for sound '{name}' (add the clip or a generator above)")
+        sr, data = wavfile.read(str(path))
         if data.ndim > 1:
             data = data[:, 0]
         clips[name] = data.astype(np.float32) / 32768.0

@@ -81,7 +81,7 @@ class WorldModel:
         self.sound: Dict[str, Any] = {
             "label": "silence",
             "confidence": 0.0,
-            "scores": {"doorbell": 0.0, "knock": 0.0, "smoke_alarm": 0.0},
+            "scores": {name: 0.0 for name in SOUND_SOURCES},
         }
 
         # Mission / task

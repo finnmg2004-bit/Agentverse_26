@@ -2,7 +2,8 @@
 """
 Milestone 6a: Local Acoustic Perception (`nudge-brain/hearing.py`).
 Performs:
-  1. 16 kHz audio classification (`doorbell`, `knock`, `smoke_alarm`, `silence`)
+  1. 16 kHz audio classification of every sound in the registry `SOUND_SOURCES`
+     (`doorbell`, `knock`, `smoke_alarm`, `kettle`) or `silence`
      using local YAMNet TFLite (`assets/models/yamnet.tflite`, get it with `pixi run fetch-models`)
      fused with a multi-band spectral classifier fallback. YAMNet is multi-label, so
      simultaneous sounds (e.g. `smoke_alarm` pre-empting `doorbell`) are both scored.
@@ -29,12 +30,22 @@ MODEL_DIR = PROJECT_ROOT / "assets" / "models"
 SAMPLE_RATE = 16000
 YAMNET_SAMPLES = 15600  # 0.975 s input window of the YAMNet TFLite model
 
-# Nudge sound -> YAMNet (AudioSet) display names from yamnet_class_map.csv. Score = max over the list.
+# Nudge sound -> YAMNet (AudioSet) display names from yamnet_class_map.csv (registry field `yamnet`).
+# Score = max over the list. There is no "kettle" class: Whistle / Steam whistle are the closest.
 YAMNET_CLASSES: Dict[str, Tuple[str, ...]] = {
-    "doorbell": ("Doorbell", "Ding-dong"),
-    "knock": ("Knock",),
-    "smoke_alarm": ("Smoke detector, smoke alarm", "Fire alarm"),
+    name: tuple(spec.get("yamnet", ())) for name, spec in SOUND_SOURCES.items() if spec.get("yamnet")
 }
+SOUNDS: Tuple[str, ...] = tuple(SOUND_SOURCES)
+KETTLE_TONAL_GATE = 8.0
+# YAMNet hears a loud kettle whistle as "Alarm" / "Fire alarm" (up to 0.85 next to the stove). When the
+# spectral kettle rule fires and the spectral smoke rule does NOT confirm a 3.1 kHz alarm, YAMNet's
+# smoke score is capped below the 0.6 pre-emption threshold. A real smoke alarm (also with the kettle
+# on) is still caught by the spectral smoke rule.
+YAMNET_SMOKE_CAP_WITH_KETTLE = 0.5
+
+
+def zero_scores() -> Dict[str, float]:
+    return {name: 0.0 for name in SOUNDS}
 
 
 def _load_tflite_interpreter(model_path: Path):
@@ -155,9 +166,9 @@ class StereoHearing:
         Classify a 0.5s 16 kHz stereo window and localize the active sound source.
         Returns:
           {
-            "label": "doorbell" | "knock" | "smoke_alarm" | "silence",
+            "label": <a SOUND_SOURCES key> | "silence",
             "confidence": float,
-            "scores": {"doorbell": float, "knock": float, "smoke_alarm": float},
+            "scores": {sound: float for every SOUND_SOURCES key},
             "rel_azimuth_deg": float,
             "world_azimuth_deg": float,
             "estimated_room": str | None,
@@ -180,7 +191,7 @@ class StereoHearing:
             return {
                 "label": "silence",
                 "confidence": 0.0,
-                "scores": {"doorbell": 0.0, "knock": 0.0, "smoke_alarm": 0.0},
+                "scores": zero_scores(),
                 "rel_azimuth_deg": 0.0,
                 "world_azimuth_deg": 0.0,
                 "estimated_room": None,
@@ -231,11 +242,28 @@ class StereoHearing:
         if crest_factor < 2.6:
             score_knock *= 0.30
 
+        # 4. Kettle signature: a pure whistle ~2.25 kHz. Tonality = strongest PSD bin in 2150-2400 Hz
+        #    over the median bin of the neighbouring 1.7-2.9 kHz: >= 19 with the kettle on anywhere in
+        #    the house under every noise profile (tv / vacuum / party included), <= 3.3 without it
+        #    (doorbell, knock, smoke alarm, noise). Gate at 8; confidence grows with log tonality.
+        k_band = (freqs >= 2150.0) & (freqs <= 2400.0)
+        k_floor = ((freqs >= 1700.0) & (freqs < 2100.0)) | ((freqs > 2450.0) & (freqs <= 2900.0))
+        kettle_tonal = float(np.max(psd[k_band]) / (np.median(psd[k_floor]) + 1e-14))
+        kettle_gate = kettle_tonal > KETTLE_TONAL_GATE
+        kettle_ratio = self._band_energy(freqs, psd, 2150.0, 2400.0) / total_energy
+        score_kettle = 0.0
+        if kettle_gate:
+            score_kettle = float(np.clip(max(kettle_ratio * 1.1,
+                                             0.55 + 0.15 * math.log10(kettle_tonal / KETTLE_TONAL_GATE)), 0.0, 0.97))
+
         spectral = {
             "doorbell": round(score_doorbell, 3),
             "knock": round(score_knock, 3),
             "smoke_alarm": round(score_smoke, 3),
+            "kettle": round(score_kettle, 3),
         }
+        for name in SOUNDS:  # a registry sound without a spectral rule relies on YAMNet alone
+            spectral.setdefault(name, 0.0)
 
         # Fuse with YAMNet: per sound, take the stronger of YAMNet and (if allowed) the spectral rules.
         yamnet_scores: Dict[str, float] = {}
@@ -245,7 +273,10 @@ class StereoHearing:
             yamnet_scores, top_name, top_score = self._yamnet()
             yamnet_top = (top_name, round(top_score, 3))
             scores = {}
-            for sound, y in yamnet_scores.items():
+            if kettle_gate and spectral["smoke_alarm"] < 0.3 and "smoke_alarm" in yamnet_scores:
+                yamnet_scores["smoke_alarm"] = min(yamnet_scores["smoke_alarm"], YAMNET_SMOKE_CAP_WITH_KETTLE)
+            for sound in SOUNDS:
+                y = yamnet_scores.get(sound, 0.0)
                 sp = spectral[sound] if self.allow_spectral else 0.0
                 scores[sound] = round(max(y, sp), 3)
                 sources[sound] = "yamnet" if y >= sp else "spectral"
