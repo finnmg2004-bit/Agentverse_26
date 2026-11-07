@@ -42,6 +42,7 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_complete": ["doorbell"],
         "expect_log": ["alert_owner(doorbell", "guide_owner_to(front_door)"],
         "expect_alert": ["1_pulse"],
+        "expect_sim": ["NUDGE SAYS:"],  # robot output: the "Nudge says" message reached the robot
     },
     "knock": {
         "desc": "Knock -> find owner -> 2 pulses -> guide to front door",
@@ -71,6 +72,7 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_complete": ["smoke_alarm"],
         "expect_log": ["SAFETY PRE-EMPT"],
         "expect_alert": ["continuous"],
+        "expect_sim": ["NUDGE SAYS:"],
     },
     "owner_moved": {
         "desc": "Doorbell, owner moved (living room -> guest room) while robot is en route -> search -> find",
@@ -104,7 +106,7 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_sim": ["AVOID AREA: robot stepped ON living_room_carpet"],
     },
     "carpet_rule": {
-        "desc": "[needs user_command in the brain] Owner: don't step on the new carpet -> doorbell -> "
+        "desc": "Owner: don't step on the new carpet -> doorbell -> "
                 "robot reaches the owner and the front door without ever stepping on the carpet",
         # was experimental until the brain handled user_command; passes with rules.py + avoid-area planner
         "actions": [("cmd", 0.5, "Nudge, I've got a new carpet in the living room, please don't step on it."),
@@ -281,7 +283,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     missing_sim = [s for s in spec.get("expect_sim", []) if not any(s in l for l in sim.lines)]
     forbidden = [l for l in sim.lines if any(s in l for s in spec.get("forbid_sim", []))]
     for l in sim.lines:
-        if "SCENARIO" in l or "HOTKEY" in l or "AVOID AREA" in l:
+        if "SCENARIO" in l or "HOTKEY" in l or "AVOID AREA" in l or "NUDGE SAYS" in l:
             print(f"    {l}")
     pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "voice")]
     for vp in voice_procs:  # what the voice process heard / published

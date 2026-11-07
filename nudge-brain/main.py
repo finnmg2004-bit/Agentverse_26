@@ -71,6 +71,7 @@ class Brain:
         self.last_owner_seen_event = 0.0
         self.episode = None  # sim episode we are acting on; a change means the sim was reset ([R])
         self.last_status_pub = 0.0
+        self.last_heard = None  # last thing the owner told the robot (voice or GUI), for the GUI echo
         self.world.log(f"Brain up | hearing={self.hearing.backend_name} vision={self.vision.backend} "
                        f"agent={self.agent.backend}")
 
@@ -182,6 +183,8 @@ class Brain:
         if not text:
             return
         conf = float(msg.get("confidence", 1.0) or 0.0)
+        # echo for the control GUI's "Heard:" line (also when the robot was too unsure to act on it)
+        self.last_heard = {"text": text, "source": source, "confidence": conf, "t": round(self.world.t_sim, 1)}
         if source == "voice" and conf < MIN_VOICE_CONFIDENCE:
             self.world.log(f'OWNER SAID ({source}, {conf:.2f}, too unsure): "{text}"')
             self.world.say("Sorry, I did not catch that. Please say it again.", "confirm")
@@ -368,6 +371,8 @@ class Brain:
                       "menu": self.agent.last_menu},
             "events": list(w.events),
             "backends": {"hearing": self.hearing.backend_name, "vision": self.vision.backend},
+            # last sentence the owner said/typed, as received (control GUI "Heard:" line)
+            "heard": self.last_heard,
         }
 
     def run(self, duration: float = 0.0) -> None:
