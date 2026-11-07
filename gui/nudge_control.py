@@ -826,13 +826,14 @@ class NudgeControl:
                 dpg.add_spacer(height=4)
 
     # ------------------------------------------------------------------ main loop
-    def run(self, auto: Optional[List[tuple]] = None, screenshot: Optional[tuple] = None) -> None:
+    def run(self, auto: Optional[List[tuple]] = None, screenshot: Optional[List[tuple]] = None) -> None:
         """`auto`: [(seconds, key), ...] buttons pressed on a schedule (testing / scripted demos).
-        `screenshot`: (path, seconds) save the window to a PNG at that time, then quit."""
+        `screenshot`: [(path, seconds), ...] save the window to PNGs at those times; quit after the last."""
         self.build()
         self.send_camera(force=True)
         start = time.monotonic()
         auto = sorted(auto or [])
+        shots = sorted(screenshot or [], key=lambda s: s[1])
         try:
             while dpg.is_dearpygui_running():
                 self.poll()
@@ -848,11 +849,12 @@ class NudgeControl:
                         self.send_command(what[4:])
                     else:
                         self.key(what.upper())
-                if screenshot and elapsed >= screenshot[1]:
-                    dpg.output_frame_buffer(file=screenshot[0])
+                if shots and elapsed >= shots[0][1]:
+                    dpg.output_frame_buffer(file=shots.pop(0)[0])
                     for _ in range(5):  # let the save callback run
                         dpg.render_dearpygui_frame()
-                    break
+                    if not shots:
+                        break
         finally:
             dpg.destroy_context()
             self.pub.close()
@@ -865,15 +867,16 @@ def main() -> None:
     ap.add_argument("--auto", default="",
                     help="Scripted actions: key, cam=<preset> or say=<sentence>, each @ seconds; separate with ';' "
                          "(or ',' when no sentence has a comma), e.g. 'say=I'm expecting a parcel@2;B@5;cam=Chase cam@6'")
-    ap.add_argument("--screenshot", default="", help="Save a PNG and quit, e.g. 'shot.png@30'")
+    ap.add_argument("--screenshot", default="",
+                    help="Save PNG(s), quit after the last, e.g. 'shot.png@30' or 'a.png@20;b.png@45'")
     args = ap.parse_args()
     sep = ";" if ";" in args.auto else ","
     auto = [(float(t), k) for k, t in (p.rsplit("@", 1) for p in args.auto.split(sep) if p.strip())]
-    shot = None
-    if args.screenshot:
-        path, secs = args.screenshot.rsplit("@", 1)
-        shot = (path, float(secs))
-    NudgeControl().run(auto, shot)
+    shots = []
+    for item in (s for s in args.screenshot.split(";") if s.strip()):
+        path, secs = item.rsplit("@", 1)
+        shots.append((path.strip(), float(secs)))
+    NudgeControl().run(auto, shots)
 
 
 if __name__ == "__main__":

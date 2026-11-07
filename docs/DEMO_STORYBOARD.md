@@ -18,6 +18,27 @@ and the critical failure handled on screen (smoke alarm pre-empts everything).
 
 Kettle (tier 2) is the backup for the doorbell beat if a second sound type should be shown.
 
+## Rehearsal results (Eden, automated GUI run of exactly this take)
+**It works end to end, but it does not fit in 60 s at real-time speed.** Measured: carpet rule confirmed
+~2 s after the sentence; Doorbell → robot guiding the owner ~33 s (owner needed a 2nd nudge); Smoke alarm
+with the back exit blocked → owner outside ~67 s. **Total ~115 s.** Guiding speed (0.35 m/s) and house size
+dominate. Options (team decision):
+1. **Cut the doorbell guide:** press **SMOKE ALARM** as soon as the robot has nudged the owner (~0:30),
+   skip [E]. Smoke from the living room took ~48 s in tests → ~80 s total. Still long.
+2. **Owner starts nearer the front door** (e.g. dining room via the owner dropdown before recording) so
+   both walks are shorter. Needs a rehearsal to measure.
+3. **Two beats only:** carpet rule → doorbell around the carpet → nudge + "Nudge says" (~40 s), and show
+   the smoke/blocked-exit run in the pitch instead.
+4. Ask the organisers whether a sped-up (time-lapse) continuous take counts as "one take".
+
+**What the run showed on screen (good material for the pitch):** Gemma chose the back exit; LiDAR then saw
+it blocked; the planner re-routed to the front door; **Gemma tried the terrace exit next to the kitchen
+fire and the safety layer rejected it** ("passes 1.6 m from the fire; front_door_outside keeps 12.5 m");
+the owner was evacuated outside via the front door. Before the guard (`safety.py`, FIRE_MARGIN_M), Gemma's
+terrace choice went through.
+**Known issue (Finn/Ricktho):** after the re-plan the brain's fire estimate jumped from "kitchen (installed
+alarm)" to "laundry (heard)"; that is why the terrace exit was not already excluded as "in the fire room".
+
 ## Before pressing record (checklist)
 - [ ] `git pull`, `pixi install`, `pixi run fetch-models` done on the recording laptop; Ollama running (tray icon)
 - [ ] Gemma warm: start the brain ~2 min early and wait for `Local LLM online`
