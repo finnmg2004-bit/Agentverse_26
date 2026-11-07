@@ -20,6 +20,9 @@ fi'
 # Run the MuJoCo simulation viewer (forces X11/GLFW compatibility on Linux Wayland/X11)
 sim = { cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" } }
 
+# Run the Nudge Brain process (perception, navigation, agent, safety, live dashboard)
+brain = { cmd = "python nudge-brain/main.py", env = { GDK_BACKEND = "x11" } }
+
 [dependencies]
 python = "3.11.*"
 pip = ">=24.0"

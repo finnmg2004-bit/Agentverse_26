@@ -2,6 +2,7 @@
 
 ## 1. Hackathon & Judging Context
 - **Event**: Agentverse 2026 — Robotics Track ("Give an agent a body").
+- **Security & Secret Hygiene Rule (CRITICAL)**: **NEVER hardcode, commit, or push API keys, tokens, credentials, or `.env` files to git.** All models in Nudge run 100% locally (YAMNet, YOLOv8n, local Gemma via Ollama), and any external keys/configs must stay strictly in `.gitignore`d `.env` files.
 - **Core Requirement**: An embodied agent in a simulated 3D world (MuJoCo) that perceives via simulated sensors, decides autonomously from sensor data (not a pre-scripted path), and acts in real time.
 - **Judging Weights**:
   - Perception-driven action: **25%**
@@ -93,6 +94,13 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - `cmd_vel = (vx, vy, wz)` where `vx` is forward (m/s), `vy` is left (m/s), `wz` is yaw rate (rad/s).
 - **Plan B (Default / Kinematic Base)**: Directly integrates `(vx, vy, wz)` on the Go2 freejoint (`qpos[0:7]`) with basic wall/obstacle collision clamping while keeping leg joints in their standing `"home"` pose (plus subtle sinusoidal trotting swing proportional to speed).
 - **Plan A (Optional Policy)**: Feeds `(vx, vy, wz)` to a MuJoCo Playground ONNX/JAX policy at 50 Hz.
+- **Owner Guiding Physics (`guiding: bool`)**: When `guiding=True` and the robot is within `1.4 m` of the owner, the owner smoothly follows a handle offset `0.55 m` behind/beside the robot at up to `0.4 m/s`.
+
+### Sensor & Asset Specifications (`sim/sensors.py` & `assets/audio/`)
+- **Head RGB-D Camera (`head_cam`)**: Mounted on Go2 base at `pos=(0.30, 0.0, 0.12)` looking forward, `fovy=60°`, resolution `320x240` rendered via `mujoco.Renderer` at 10 Hz (`rgb` JPEG + `depth` float16 meters).
+- **2D LiDAR Rangefinders**: 36 horizontal rays spanning `[-90°, +90°]` in body frame at height `z=0.32 m`, `max_range=4.0 m`, computed via `mujoco.mj_multiRay` (excluding the robot's own geoms).
+- **Stereo Ear Audio (`assets/audio/*.wav`)**: 16 kHz mono WAV files (`doorbell.wav`, `knock.wav`, `smoke_alarm.wav`). Left/right ear microphones at `(0.22, +0.08, 0.15)` and `(0.22, -0.08, 0.15)` synthesize 16 kHz stereo PCM with inverse-distance attenuation, wall occlusion attenuation (`0.45x` per wall crossed), Interaural Level Difference (ILD), and Interaural Time Difference (ITD).
+- **Owner Representation & Vision Detection**: Full humanoid articulated/composite MuJoCo mocap body with skin/clothing colors and a procedural person texture billboard so `vision.py` (local YOLOv8n + HSV/depth silhouette fallback) reliably detects the owner and projects their 3D `(x, y)` world position from the depth map.
 
 ### ZeroMQ Ports & JSON/Multipart Schema
 - **`sim` -> `nudge-brain` (PUB on `tcp://127.0.0.1:5555`)**:
@@ -105,7 +113,7 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 ---
 
 ## 6. Agent Tools & Safety Layer Rules
-- **Agent Model**: Local Gemma 4 E2B via Google ADK (wakes ONLY on discrete events: `new_sound`, `arrived_in_room`, `owner_seen`, `owner_not_found`, `timeout`).
+- **Agent Model**: Local Gemma 4 E2B via Google ADK / local Ollama HTTP API (`http://127.0.0.1:11434`, model `gemma4:e2b` / `gemma3:4b` with automatic deterministic tool-policy fallback if Ollama server takes > 2.0s or is offline). Wakes ONLY on discrete events: `new_sound`, `arrived_in_room`, `owner_seen`, `owner_not_found`, `timeout`.
 - **Agent Tools**:
   - `get_state() -> dict`
   - `go_to_room(room: str)`

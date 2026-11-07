@@ -1,4 +1,3 @@
-cat << 'EOF' > .gitignore
 # Pixi environment
 .pixi/
 *.egg-info/
@@ -16,5 +15,14 @@ __pycache__/
 *.onnx
 *.tflite
 *.mp4
+
+# Secrets & API keys (NEVER commit or push)
 .env
-EOF
+.env.*
+*.key
+*.pem
+*secret*
+*credentials*.json
+
+# Editor
+.vscode/
