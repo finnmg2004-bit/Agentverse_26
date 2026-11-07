@@ -37,6 +37,12 @@ YAMNET_CLASSES: Dict[str, Tuple[str, ...]] = {
 }
 SOUNDS: Tuple[str, ...] = tuple(SOUND_SOURCES)
 KETTLE_TONAL_GATE = 8.0
+# Knock = short wooden bursts. Burstiness = p95 / median energy of 10 ms frames in 110-600 Hz.
+# Party music (sustained chords at 175-392 Hz, inside the knock band) used to fire the knock rule
+# in 64 % of windows with nothing knocking; real knocks are >= 279 in a quiet room. Gate at 4:
+# 0 false knocks under every noise profile; knocks still heard from the entry / front door /
+# dining room under fan, TV, vacuum and party noise (only far rooms lose them under fan noise).
+KNOCK_BURST_GATE = 4.0
 # YAMNet hears a loud kettle whistle as "Alarm" / "Fire alarm" (up to 0.85 next to the stove). When the
 # spectral kettle rule fires and the spectral smoke rule does NOT confirm a 3.1 kHz alarm, YAMNet's
 # smoke score is capped below the 0.6 pre-emption threshold. A real smoke alarm (also with the kettle
@@ -73,6 +79,7 @@ class StereoHearing:
 
     def __init__(self, sample_rate: int = SAMPLE_RATE) -> None:
         self.sample_rate = sample_rate
+        self._knock_sos = signal.butter(4, [110.0, 600.0], btype="bandpass", fs=sample_rate, output="sos")
         self.backend_name = "LogMel-spectral"
         self.allow_spectral = os.environ.get("NUDGE_HEARING_FALLBACK", "1") != "0"
 
@@ -108,6 +115,15 @@ class StereoHearing:
         mapped = {sound: float(max(s[i] for i in idx)) for sound, idx in self.yamnet_index.items()}
         top = int(np.argmax(s))
         return mapped, self.yamnet_names[top], float(s[top])
+
+    def _burstiness(self, mono: np.ndarray, frame: int = 160) -> float:
+        """p95 / median energy of 10 ms frames in the knock band (110-600 Hz)."""
+        y = signal.sosfilt(self._knock_sos, mono)
+        n = (len(y) // frame) * frame
+        if n < frame * 8:
+            return 0.0
+        e = np.mean(y[:n].reshape(-1, frame) ** 2, axis=1)
+        return float(np.percentile(e, 95) / (np.median(e) + 1e-14))
 
     def _band_energy(
         self, freqs: np.ndarray, psd: np.ndarray, f_low: float, f_high: float
@@ -240,6 +256,9 @@ class StereoHearing:
         knock_ratio = e_knock / total_energy
         score_knock = float(np.clip(knock_ratio * 1.15, 0.0, 0.97))
         if crest_factor < 2.6:
+            score_knock *= 0.30
+        knock_burst = self._burstiness(mono)
+        if knock_burst <= KNOCK_BURST_GATE:
             score_knock *= 0.30
 
         # 4. Kettle signature: a pure whistle ~2.25 kHz. Tonality = strongest PSD bin in 2150-2400 Hz
