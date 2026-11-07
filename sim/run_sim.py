@@ -360,6 +360,11 @@ class NudgeSimulator:
             self.handle_hotkey(str(payload.get("key", "")))
         elif action == "owner_room":
             self.set_owner_room(str(payload.get("room", "")))
+        elif action == "sound":  # any registry sound by name (GUI buttons for sounds without a hotkey)
+            name = str(payload.get("name", ""))
+            if name in SOUND_SOURCES:
+                self._start_sound(name)
+                print(f"[sim] GUI: {SOUND_SOURCES[name].get('label', name)} started at {SOUND_SOURCES[name]['pos'][:2]}")
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()

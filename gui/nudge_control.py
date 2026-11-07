@@ -79,8 +79,28 @@ AMBER = (255, 180, 40, 255)
 RED = (235, 70, 70, 255)
 CYAN = (60, 200, 230, 255)
 PURPLE = (190, 140, 255, 255)
-SOUND_COL = {"doorbell": (40, 200, 255, 255), "knock": (255, 190, 40, 255), "smoke_alarm": (240, 60, 60, 255),
-             "kettle": (255, 130, 200, 255)}
+# ---- Everything below is data-driven so the GUI grows with the project (see gui/panels/__init__.py) ----
+# Sound buttons come from the sound registry (house_layout.SOUND_SOURCES: label, tier, rgba_active).
+# A sound listed here also gets a keyboard shortcut and is triggered through the sim's own hotkey
+# (keeps its side effects, e.g. doorbell stops knock); any other registry sound is triggered by name.
+SOUND_KEYS: Dict[str, str] = {"doorbell": "B", "knock": "K", "smoke_alarm": "M", "kettle": "J"}
+# Scene controls: (button label, sim hotkey). Add a line here when the sim gets a new hotkey.
+SCENE_CONTROLS: List[tuple] = [
+    ("Next room", "O"), ("Chair in door", "C"), ("Block back exit", "E"),
+    ("Owner wander", "W"), ("Noise", "N"),
+]
+FIXED_KEYS = ("X", "R")  # Silence, Reset
+
+
+def _sound_rgb(name: str) -> tuple:
+    rgba = SOUND_SOURCES.get(name, {}).get("rgba_active") or (0.8, 0.8, 0.8, 1.0)
+    return tuple(int(255 * c) for c in rgba[:3])
+
+
+SOUND_COL = {name: _sound_rgb(name) + (255,) for name in SOUND_SOURCES}
+# Button order: someone-wants-you (tier 3) first, emergencies last; registry order within a tier.
+SOUND_ORDER = sorted(SOUND_SOURCES, key=lambda n: (-int(SOUND_SOURCES[n].get("tier", 3)), list(SOUND_SOURCES).index(n)))
+BUTTONS_PER_ROW = 6
 SOURCE_COL = {"llm": PURPLE, "rules": (140, 180, 230, 255), "safety": RED, "watchdog": AMBER,
               "only option": (150, 150, 155, 255)}
 SOURCE_LABEL = {"llm": "GEMMA", "rules": "rules", "safety": "SAFETY", "watchdog": "watchdog",
@@ -104,6 +124,54 @@ _MAP_OY = (MAP_H - (_VY1 - _VY0) * MAP_SCALE) / 2.0
 
 def w2p(x: float, y: float) -> List[float]:
     return [_MAP_OX + (x - _VX0) * MAP_SCALE, _MAP_OY + (_VY1 - y) * MAP_SCALE]
+
+
+class PanelContext:
+    """What a plugin panel (gui/panels/*.py) gets: live data + ways to act. See gui/panels/__init__.py."""
+
+    def __init__(self, app: "NudgeControl") -> None:
+        self._app = app
+        self.fonts = app.fonts
+
+    @property
+    def state(self) -> Dict[str, Any]:  # sim `state` (robot pose, lidar, owner_pos_gt, ...)
+        return self._app.state
+
+    @property
+    def brain(self) -> Dict[str, Any]:  # brain `brain` status (mission, decisions, rules, ...)
+        return self._app.brain
+
+    @property
+    def voice(self) -> Dict[str, Any]:  # voice module `voice_status`
+        return self._app.voice
+
+    def key(self, k: str) -> None:  # press a sim hotkey
+        self._app.key(k)
+
+    def send(self, payload: dict) -> None:  # raw `gui` message to the sim
+        self._app.send(payload)
+
+    def send_command(self, text: str) -> None:  # "Tell Nudge" (user_command)
+        self._app.send_command(text)
+
+
+def load_panels() -> List[Any]:
+    """Import every gui/panels/*.py (not _*.py) that defines TITLE + build(ctx)."""
+    import importlib.util
+    panels = []
+    for py in sorted((Path(__file__).resolve().parent / "panels").glob("*.py")):
+        if py.name.startswith("_"):
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location(f"nudge_panels.{py.stem}", py)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "build"):
+                panels.append(mod)
+        except Exception as exc:  # a broken panel must never stop the GUI
+            print(f"[gui] panel {py.name} failed to load: {exc}")
+            panels.append(type("Broken", (), {"TITLE": py.stem, "ERROR": str(exc)}))
+    return panels
 
 
 def alert_lamp_on(mode: str, t: float) -> bool:
@@ -147,6 +215,12 @@ class NudgeControl:
         self.reason_sig: Any = None
         self.events_sig: Any = None
         self.last_sent: Optional[tuple] = None  # (text, monotonic time) of the last "Tell Nudge"
+        # Keyboard shortcuts = sound hotkeys + scene controls + Silence/Reset (all data-driven)
+        all_keys = list(SOUND_KEYS.values()) + [k for _, k in SCENE_CONTROLS] + list(FIXED_KEYS)
+        self.keymap = {getattr(dpg, f"mvKey_{k}"): k for k in all_keys if hasattr(dpg, f"mvKey_{k}")}
+        self.panels = load_panels()
+        self.panel_ctx: Optional[PanelContext] = None
+        self.last_panel_update = 0.0
 
         self.view_buf = np.zeros(VIEW_W * VIEW_H * 3, dtype=np.float32)
         self.cam_buf = np.zeros(CAM_W * CAM_H * 3, dtype=np.float32)
@@ -267,11 +341,14 @@ class NudgeControl:
     def on_key(self, sender, app_data) -> None:
         if dpg.is_item_focused("cmd_input"):  # typing a sentence must not ring the doorbell
             return
-        keys = {dpg.mvKey_B: "B", dpg.mvKey_K: "K", dpg.mvKey_M: "M", dpg.mvKey_O: "O",
-                dpg.mvKey_C: "C", dpg.mvKey_X: "X", dpg.mvKey_R: "R", dpg.mvKey_J: "J",
-                dpg.mvKey_E: "E", dpg.mvKey_W: "W", dpg.mvKey_N: "N"}
-        if app_data in keys:
-            self.key(keys[app_data])
+        if app_data in self.keymap:
+            self.key(self.keymap[app_data])
+
+    def trigger_sound(self, name: str) -> None:
+        if name in SOUND_KEYS:
+            self.key(SOUND_KEYS[name])
+        else:
+            self.send({"action": "sound", "name": name})
 
     # ------------------------------------------------------------------ UI construction
     def _load_fonts(self) -> None:
@@ -340,31 +417,37 @@ class NudgeControl:
                 dpg.draw_image("view_tex", (0, 0), (VIEW_W, VIEW_H))
                 dpg.add_draw_layer(tag="view_overlay")
 
-            # Event buttons
-            with dpg.group(horizontal=True):
-                b = dpg.add_button(label="Doorbell  [B]", width=150, height=36, callback=lambda: self.key("B"))
-                dpg.bind_item_theme(b, self._button_theme((30, 120, 170)))
-                b = dpg.add_button(label="Knock  [K]", width=120, height=36, callback=lambda: self.key("K"))
-                dpg.bind_item_theme(b, self._button_theme((160, 110, 20)))
-                b = dpg.add_button(label="Kettle  [J]", width=120, height=36, callback=lambda: self.key("J"))
-                dpg.bind_item_theme(b, self._button_theme((160, 60, 120)))
-                b = dpg.add_button(label="SMOKE ALARM  [M]", width=180, height=36, callback=lambda: self.key("M"))
-                dpg.bind_item_theme(b, self._button_theme((180, 35, 35)))
-                b = dpg.add_button(label="Silence  [X]", width=110, height=36, callback=lambda: self.key("X"))
-                dpg.bind_item_theme(b, self._button_theme((70, 70, 80)))
-                b = dpg.add_button(label="RESET  [R]", width=120, height=36, callback=lambda: self.key("R"))
-                dpg.bind_item_theme(b, self._button_theme((60, 110, 60)))
+            # Event buttons: one per registry sound (new sounds appear automatically), then Silence/Reset
+            buttons = []
+            for name in SOUND_ORDER:
+                spec = SOUND_SOURCES[name]
+                label = str(spec.get("label", name))
+                if int(spec.get("tier", 3)) == 1:
+                    label = label.upper()
+                if name in SOUND_KEYS:
+                    label += f"  [{SOUND_KEYS[name]}]"
+                rgb = tuple(int(c * 0.72) for c in _sound_rgb(name))
+                buttons.append((label, rgb, (lambda n: (lambda: self.trigger_sound(n)))(name)))
+            buttons.append(("Silence  [X]", (70, 70, 80), lambda: self.key("X")))
+            buttons.append(("RESET  [R]", (60, 110, 60), lambda: self.key("R")))
+            for i in range(0, len(buttons), BUTTONS_PER_ROW):
+                with dpg.group(horizontal=True):
+                    for label, rgb, cb in buttons[i:i + BUTTONS_PER_ROW]:
+                        b = dpg.add_button(label=label, width=(LEFT_W - 50) // BUTTONS_PER_ROW, height=34, callback=cb)
+                        dpg.bind_item_theme(b, self._button_theme(rgb))
+            # Owner + scene controls (SCENE_CONTROLS): wraps onto more rows as the list grows
             with dpg.group(horizontal=True):
                 dpg.add_text("Owner:")
                 rooms = [r for r in OWNER_SPOTS]
                 dpg.add_combo(rooms, default_value=ROOM_ORDER[0], width=150, tag="owner_combo")
                 dpg.add_button(label="Move owner there", callback=lambda: self.send(
                     {"action": "owner_room", "room": dpg.get_value("owner_combo")}))
-                dpg.add_button(label="Next room  [O]", callback=lambda: self.key("O"))
-                dpg.add_button(label="Chair in door  [C]", callback=lambda: self.key("C"))
-                dpg.add_button(label="Block back exit  [E]", callback=lambda: self.key("E"))
-                dpg.add_button(label="Owner wander  [W]", callback=lambda: self.key("W"))
-                dpg.add_button(label="Noise  [N]", callback=lambda: self.key("N"))
+                for label, k in SCENE_CONTROLS[:4]:
+                    dpg.add_button(label=f"{label}  [{k}]", callback=(lambda kk: (lambda: self.key(kk)))(k))
+            for i in range(4, len(SCENE_CONTROLS), 7):
+                with dpg.group(horizontal=True):
+                    for label, k in SCENE_CONTROLS[i:i + 7]:
+                        dpg.add_button(label=f"{label}  [{k}]", callback=(lambda kk: (lambda: self.key(kk)))(k))
             dpg.add_text("", tag="scene_txt", color=DIM)
 
             # Tell Nudge: commands, sound preferences and place rules (AGENTS.md 9.3)
@@ -387,15 +470,25 @@ class NudgeControl:
                 dpg.add_text("Rules:", color=DIM)
                 dpg.add_text("none", tag="rules_txt", wrap=LEFT_W - 80)
 
-            # Agent reasoning
-            with dpg.group(horizontal=True):
-                t = dpg.add_text("AGENT REASONING")
-                if "mid" in self.fonts:
-                    dpg.bind_item_font(t, self.fonts["mid"])
-                dpg.add_text("", tag="agent_backend_txt", color=DIM)
-            dpg.add_text("", tag="agent_pending_txt", color=AMBER)
-            with dpg.child_window(tag="reason_box", width=LEFT_W - 20, height=-1, border=True):
-                dpg.add_text("waiting for the brain (pixi run brain) ...", color=DIM)
+            # Tabs: the agent's reasoning first, then one tab per plugin panel (gui/panels/*.py)
+            with dpg.tab_bar(tag="main_tabs"):
+                with dpg.tab(label="Agent reasoning"):
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("", tag="agent_backend_txt", color=DIM)
+                    dpg.add_text("", tag="agent_pending_txt", color=AMBER)
+                    with dpg.child_window(tag="reason_box", width=LEFT_W - 20, height=-1, border=True):
+                        dpg.add_text("waiting for the brain (pixi run brain) ...", color=DIM)
+                self.panel_ctx = PanelContext(self)
+                for mod in self.panels:
+                    with dpg.tab(label=str(getattr(mod, "TITLE", mod.__name__))):
+                        if getattr(mod, "ERROR", None):
+                            dpg.add_text(f"panel failed to load: {mod.ERROR}", color=RED, wrap=LEFT_W - 40)
+                            continue
+                        try:
+                            mod.build(self.panel_ctx)
+                        except Exception as exc:
+                            dpg.add_text(f"panel build failed: {exc}", color=RED, wrap=LEFT_W - 40)
+                            mod.ERROR = str(exc)
 
     def _build_right(self) -> None:
         with dpg.child_window(width=RIGHT_W, height=-1, border=False, no_scrollbar=True):
@@ -407,20 +500,23 @@ class NudgeControl:
                         dpg.draw_image("cam_tex", (0, 0), (CAM_W, CAM_H))
                         dpg.add_draw_layer(tag="cam_overlay")
                 with dpg.child_window(width=RIGHT_W - CAM_W - 16, height=CAM_H + 26, border=True):
-                    dpg.add_text("HEARING", tag="hear_title")
-                    for name in SOUND_SOURCES:
-                        with dpg.group(horizontal=True):
-                            dpg.add_text(f"{name:<11}", color=SOUND_COL.get(name, TEXT))
-                            dpg.add_progress_bar(default_value=0.0, overlay="0.00", width=-1, tag=f"bar_{name}")
-                    dpg.add_text("", tag="heard_txt", color=AMBER, wrap=RIGHT_W - CAM_W - 30)
-                    dpg.add_separator()
+                    # Mission status stays on top; the hearing bars below scroll as the registry grows
                     dpg.add_text("", tag="phase_txt")
                     dpg.add_text("", tag="skill_txt", color=CYAN, wrap=RIGHT_W - CAM_W - 30)
                     with dpg.group(horizontal=True):
                         with dpg.drawlist(22, 22):
                             dpg.draw_circle((11, 11), 9, tag="lamp", fill=(60, 60, 60, 255), color=(0, 0, 0, 0))
                         dpg.add_text("HANDLE: none", tag="handle_txt")
-                    dpg.add_text("", tag="backend_txt", color=DIM, wrap=RIGHT_W - CAM_W - 30)
+                    dpg.add_separator()
+                    dpg.add_text("HEARING", tag="hear_title")
+                    dpg.add_text("", tag="heard_txt", color=AMBER, wrap=RIGHT_W - CAM_W - 30)
+                    with dpg.child_window(height=-1, border=False):
+                        for name in SOUND_ORDER:
+                            with dpg.group(horizontal=True):
+                                dpg.add_text(f"{str(SOUND_SOURCES[name].get('label', name))[:11]:<11}",
+                                             color=SOUND_COL.get(name, TEXT))
+                                dpg.add_progress_bar(default_value=0.0, overlay="0.00", width=-1, tag=f"bar_{name}")
+                        dpg.add_text("", tag="backend_txt", color=DIM, wrap=RIGHT_W - CAM_W - 40)
             dpg.add_text("MAP", tag="map_title")
             with dpg.drawlist(MAP_W, MAP_H, tag="map_dl"):
                 self._draw_static_map()
@@ -501,6 +597,17 @@ class NudgeControl:
         self._update_status(br if brain_ok else {}, brain_ok, tnow)
         self._update_map(st if sim_ok else {}, br if brain_ok else {}, tnow)
         self._update_reasoning(br if brain_ok else {}, brain_ok)
+        # Plugin panels refresh at ~10 Hz; a failing panel shows its error instead of crashing the GUI
+        if now - self.last_panel_update > 0.1 and self.panel_ctx is not None:
+            self.last_panel_update = now
+            for mod in self.panels:
+                if getattr(mod, "ERROR", None) or not hasattr(mod, "update"):
+                    continue
+                try:
+                    mod.update(self.panel_ctx)
+                except Exception as exc:
+                    mod.ERROR = f"update failed: {exc}"
+                    print(f"[gui] panel {getattr(mod, 'TITLE', mod.__name__)}: {mod.ERROR}")
         events = br.get("events", []) if brain_ok else []
         sig = tuple(events[:3])
         if sig != self.events_sig:
