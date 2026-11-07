@@ -122,7 +122,7 @@ planner.plan(H.ROBOT_START_XY, H.LANDMARKS["back_exit_outside"])   # [(x, y, doo
 ```
 
 ## Voice input
-`pixi run voice` (its own terminal) listens to the laptop microphone, turns speech into text locally with Whisper, and publishes sentences that start with the wake word, e.g. *"Nudge, take me to the kitchen"*, as `user_command` messages for the brain (ZMQ `tcp://127.0.0.1:5558`, see AGENTS.md 9.4 / 9.5b). "Nudge." on its own waits for the next sentence. No mic? `pixi run voice --text "Nudge, stop"` or `pixi run voice --file assets/audio/voice/come_here.wav`; `pixi run voice --selftest` checks the speech-to-text.
+`pixi run voice` (its own terminal) listens to the laptop microphone, turns speech into text locally with Whisper, and publishes sentences that start with the wake word, e.g. *"Nudge, take me to the kitchen"*, as `user_command` messages for the brain (ZMQ `tcp://127.0.0.1:5558`, see AGENTS.md 9.4 / 9.5b). "Nudge." on its own waits for the next sentence. No mic? `pixi run voice --text "Nudge, stop"` or `pixi run voice --file assets/audio/voice/come_here.wav`; `pixi run voice --selftest` checks the speech-to-text; **`pixi run voice --mic-test`** checks your real microphone before a demo (mute, clipping, noise floor, then say "Nudge, take me to the kitchen").
 
 ## Troubleshooting
 | Problem | Fix |

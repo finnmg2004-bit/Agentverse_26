@@ -8,6 +8,7 @@ local speech-to-text -> `user_command` for the brain (AGENTS.md 9.3 / 9.4). 100 
     pixi run voice --file assets/audio/voice/come_here.wav   # publish a recorded clip (no mic needed)
     pixi run voice --text "Nudge, take me to the kitchen"    # publish typed text through the same path
     pixi run voice --selftest           # run the test clips through Whisper + wake word, print, exit
+    pixi run voice --mic-test           # before recording: noise floor, mute / clipping, one spoken sentence
 
 Pipeline: mic (PipeWire `pw-record` -> PulseAudio -> ALSA -> sounddevice; NUDGE_MIC to force one)
   -> Silero VAD (bundled with faster-whisper) cuts the stream into sentences: a sentence ends after
@@ -424,6 +425,77 @@ def selftest() -> int:
     return 0 if ok else 1
 
 
+def mic_test(mic_choice: str = "", say: str = "Nudge, take me to the kitchen.") -> int:
+    """Pre-recording check (docs/DEMO_STORYBOARD.md "Mic tested"): noise floor, mute / clipping,
+    then one spoken sentence -> Whisper -> wake word. Prints a verdict and the fix for each problem."""
+    mic = make_mic(mic_choice)
+    if mic is None:
+        print("[mic-test] FAIL: no microphone backend (Linux: install pipewire / pulseaudio tools; or sounddevice)")
+        return 1
+    stt = SpeechToText()
+    from scipy.signal import butter, sosfilt
+
+    hp = butter(4, 100.0, "highpass", fs=SR, output="sos")  # speech band: ignore DC / laptop rumble
+
+    def speech_rms(x: np.ndarray) -> float:
+        return float(np.sqrt(np.mean(sosfilt(hp, x - np.mean(x))[SR // 10:] ** 2)))
+
+    print(f"[mic-test] mic backend: {mic.name}  |  speech-to-text: whisper-{stt.name}")
+    problems: List[str] = []
+    try:
+        mic.open()
+        print("[mic-test] 1/2  stay QUIET for 2 seconds ...", flush=True)
+        quiet = np.concatenate([mic.read(FRAME) for _ in range(int(2.0 * SR / FRAME))])
+        floor = speech_rms(quiet)
+        print(f"[mic-test]      noise floor RMS {floor:.4f} in the speech band (>100 Hz; raw RMS "
+              f"{float(np.sqrt(np.mean(quiet ** 2))):.4f}, peak {float(np.max(np.abs(quiet))):.3f})")
+        hint = mic_problem(quiet)
+        if hint:
+            problems.append(hint)
+        if floor > 0.05:
+            problems.append("very noisy room / mic gain too high (noise floor > 0.05)")
+        print(f'[mic-test] 2/2  now SAY: "{say}"  (up to 8 s)', flush=True)
+        seg, sentence, heard = Segmenter(), None, []
+        t0 = time.monotonic()
+        while sentence is None and time.monotonic() - t0 < 10.0:
+            f = mic.read(FRAME)
+            if f is None:
+                problems.append(f"{mic.name} stopped delivering audio")
+                break
+            heard.append(f)
+            sentence = seg.feed(f)
+    finally:
+        mic.close()
+    if heard:
+        hint = mic_problem(np.concatenate(heard))
+        if hint and hint not in problems:
+            problems.append(hint)
+    if sentence is None:
+        problems.append("no speech detected (too quiet, muted, or the wrong input device)")
+    else:
+        text, conf = stt.transcribe(sentence)
+        cmd = WakeWord().command(text)
+        level = speech_rms(sentence)
+        print(f'[mic-test]      heard {sentence.size / SR:.1f}s, speech RMS {level:.3f}: "{text}" (confidence {conf:.2f})')
+        print(f"[mic-test]      wake word -> command: {cmd!r}")
+        if cmd is None:
+            problems.append('wake word "Nudge" not recognised: start the sentence with "Nudge," and speak clearly')
+        if conf < 0.5:
+            problems.append(f"low confidence {conf:.2f} (< 0.5: the brain would ask to repeat) - move closer / reduce noise")
+        if level < 2.5 * max(floor, 1e-4):
+            problems.append("speech is barely above the noise floor - move closer to the mic")
+    if problems:
+        print("[mic-test] PROBLEMS:")
+        for prob in problems:
+            print(f"  - {prob}")
+        print("[mic-test] fixes: unmute `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`; clipping -> "
+              "`amixer -c <card> sset 'Internal Mic Boost' 0` (card from `arecord -l`); pick a device with "
+              "--mic pipewire|pulse|alsa|sounddevice; Windows: Settings > Sound > Input volume")
+        return 1
+    print("[mic-test] OK - the mic is ready for `pixi run voice`")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-wake", action="store_true", help="treat every sentence as a command")
@@ -432,7 +504,10 @@ def main() -> int:
     ap.add_argument("--mic", default="", help="pipewire | pulse | alsa | sounddevice (default: first that works)")
     ap.add_argument("--endpoint", default=VOICE_ENDPOINT)
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--mic-test", action="store_true", help="check the microphone + Whisper before recording a demo")
     args = ap.parse_args()
+    if args.mic_test:
+        return mic_test(args.mic)
     if args.selftest:
         return selftest()
 
