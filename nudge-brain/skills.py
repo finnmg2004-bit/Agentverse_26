@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from sim.legacy_box_house import LANDMARKS, ROOMS, SOUND_SOURCES
+from sim.house_layout import LANDMARKS, ROOMS, SOUND_SOURCES
 
 from alerts import HapticAlerts
 from navigator import Navigator, wrap

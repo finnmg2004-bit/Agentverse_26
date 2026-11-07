@@ -5,9 +5,9 @@ Accepts body-frame velocity commands `cmd_vel = (vx, vy, wz)` plus `guiding` and
 `alert_mode` states, and steps the Unitree Go2 robot in MuJoCo.
 
 Supports:
-  - Plan B (Default): Kinematic base integration on `qpos[0:7]` with wall/chair/owner
-    collision clamping, upright attitude stabilization, and speed-scaled sinusoidal
-    trotting leg animation on `qpos[7:19]` + `ctrl[0:12]`.
+  - Plan B (Default): Kinematic base integration on `qpos[0:7]` with house (static nav-map
+    clearance field: walls + furniture), chair and owner collision clamping, upright attitude stabilization, and speed-scaled sinusoidal
+    trotting leg animation on `qpos[7:19]` (kinematic: no ctrl, no mj_step).
   - Owner guiding physics: Smoothly moves the Owner mocap body behind the robot's
     guide handle at <= 0.4 m/s when `guiding=True` and within 1.4 m.
   - Visual haptic handle pulse indicator (`alert_halo`) on the Go2 back.
@@ -21,12 +21,14 @@ from typing import Tuple
 import mujoco
 import numpy as np
 
-from sim.legacy_box_house import (
+from sim.house_layout import (
     CHAIR_COLLISION_RADIUS,
+    OWNER_SPOTS,
+    OWNER_START_ROOM,
     ROBOT_START_POSE,
-    WALL_BOXES,
     get_room_at,
 )
+from sim.nav_map import NavMap
 
 
 def yaw_to_quat(yaw: float) -> np.ndarray:
@@ -47,15 +49,16 @@ class Go2Locomotion:
     """Velocity controller (`vx, vy, wz`) and guiding physics for Unitree Go2."""
 
     ROBOT_RADIUS: float = 0.25
-    STANDING_Z: float = 0.285
+    STANDING_Z: float = 0.27   # nerv Go2 'home' keyframe base height
     HOME_JOINTS: np.ndarray = np.array(
         [0.0, 0.9, -1.8, 0.0, 0.9, -1.8, 0.0, 0.9, -1.8, 0.0, 0.9, -1.8],
         dtype=np.float64,
     )
 
-    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData, nav_map: NavMap) -> None:
         self.model = model
         self.data = data
+        self.nav_map = nav_map
 
         # Look up mocap IDs for Owner and Chair
         owner_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "owner_body")
@@ -88,8 +91,7 @@ class Go2Locomotion:
         self.data.qpos[3:7] = yaw_to_quat(self.pose_yaw)
         self.data.qpos[7:19] = self.HOME_JOINTS
         self.data.qvel[:] = 0.0
-        if self.model.nu >= 12:
-            self.data.ctrl[:12] = self.HOME_JOINTS
+        # No ctrl writes: Plan B never calls mj_step, and the nerv Go2 actuators are torque motors.
         mujoco.mj_forward(self.model, self.data)
 
     def get_pose(self) -> Tuple[float, float, float]:
@@ -101,7 +103,7 @@ class Go2Locomotion:
         if self.owner_mocap_id >= 0:
             pos = self.data.mocap_pos[self.owner_mocap_id]
             return (float(pos[0]), float(pos[1]))
-        return (-3.2, -2.2)
+        return OWNER_SPOTS[OWNER_START_ROOM]
 
     def set_owner_pos(self, x: float, y: float, yaw: float = 0.0) -> None:
         """Teleport the Owner mocap body to (x, y)."""
@@ -120,32 +122,15 @@ class Go2Locomotion:
         self, next_x: float, next_y: float, allow_owner_close: bool = False
     ) -> Tuple[float, float]:
         """
-        Resolve 2D circle-vs-AABB (walls) and circle-vs-circle (chair & owner)
+        Resolve house clearance (static nav map) and circle-vs-circle (chair & owner)
         collisions so the robot never penetrates walls or furniture.
         """
         r = self.ROBOT_RADIUS
-        x, y = next_x, next_y
+        px, py = self.pose_x, self.pose_y
 
-        # 1. Wall AABB push-out
-        for _name, cx, cy, _cz, hx, hy, _hz in WALL_BOXES:
-            # Closest point on AABB to (x, y)
-            closest_x = max(cx - hx, min(x, cx + hx))
-            closest_y = max(cy - hy, min(y, cy + hy))
-            dx = x - closest_x
-            dy = y - closest_y
-            dist_sq = dx * dx + dy * dy
-            if dist_sq < r * r:
-                dist = math.sqrt(dist_sq)
-                if dist > 1e-6:
-                    push = r - dist
-                    x += (dx / dist) * push
-                    y += (dy / dist) * push
-                else:
-                    # Inside box center fallback
-                    if abs(x - cx) / hx > abs(y - cy) / hy:
-                        x = (cx + hx + r) if x >= cx else (cx - hx - r)
-                    else:
-                        y = (cy + hy + r) if y >= cy else (cy - hy - r)
+        # 1. House (walls + furniture): never end closer than r to a static obstacle,
+        #    unless already closer and moving away. Slide along obstacles axis by axis.
+        x, y = self._slide(px, py, next_x, next_y)
 
         # 2. Chair circle push-out
         if self.chair_mocap_id >= 0:
@@ -173,10 +158,28 @@ class Go2Locomotion:
                 x += (dx / dist) * push
                 y += (dy / dist) * push
 
-        # Keep within outer courtyard bounds (including back_exit_outside up to y=4.85)
-        x = max(-4.72, min(4.72, x))
-        y = max(-3.72, min(4.85, y))
+        # Chair / owner push-outs must not shove the robot into a wall.
+        if not self._ok(px, py, x, y):
+            x, y = self._slide(px, py, x, y)
+
+        # Keep within the mapped area (house + outside margin)
+        bx0, by0, bx1, by1 = self.nav_map.bounds
+        x = max(bx0 + r, min(bx1 - r, x))
+        y = max(by0 + r, min(by1 - r, y))
         return (x, y)
+
+    def _ok(self, px: float, py: float, x: float, y: float) -> bool:
+        c = self.nav_map.clearance(x, y)
+        return c >= self.ROBOT_RADIUS or c >= self.nav_map.clearance(px, py) + 1e-4
+
+    def _slide(self, px: float, py: float, x: float, y: float) -> Tuple[float, float]:
+        if self._ok(px, py, x, y):
+            return x, y
+        if self._ok(px, py, x, py):
+            return x, py
+        if self._ok(px, py, px, y):
+            return px, y
+        return px, py
 
     def step(
         self,
@@ -250,8 +253,6 @@ class Go2Locomotion:
         self.data.qpos[3:7] = yaw_to_quat(self.pose_yaw)
         self.data.qpos[7:19] = joints
         self.data.qvel[:] = 0.0
-        if self.model.nu >= 12:
-            self.data.ctrl[:12] = joints
 
         # Owner guiding physics: if guiding=True and robot is within 1.45 m of Owner,
         # Owner holds the handle offset 0.52m behind-left of the robot and walks at <= 0.4 m/s

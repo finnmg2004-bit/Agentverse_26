@@ -19,7 +19,10 @@ import mujoco
 import numpy as np
 from scipy.io import wavfile
 
-from sim.legacy_box_house import SOUND_SOURCES, count_walls_crossed
+from sim.house_layout import SOUND_SOURCES, count_walls_crossed
+
+# mj_ray geom groups: house (0, 1, 4, 5) + owner/chair (0); skip robot visual/collision (2, 3)
+LIDAR_GEOMGROUP = np.array([1, 1, 0, 0, 1, 1], dtype=np.uint8)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -131,6 +134,9 @@ class SimSensors:
             -0.5 * LIDAR_FOV_RAD, +0.5 * LIDAR_FOV_RAD, LIDAR_NUM_RAYS, dtype=np.float64
         )
         self.base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
+        # Sound beacons are a viewer aid for humans, not part of the world: the robot's camera
+        # must not see them (the cyan doorbell beacon looks like the owner's teal jacket).
+        self.beacon_geom_ids = [i for i in range(model.ngeom) if model.geom(i).name.startswith("beacon_")]
 
         # Initialize offscreen renderer for head_cam (320x240 RGB + Depth)
         self.renderer: Optional[mujoco.Renderer] = None
@@ -172,7 +178,7 @@ class SimSensors:
                 self.data,
                 ray_start,
                 vec[i],
-                None,
+                LIDAR_GEOMGROUP,
                 1,
                 self.base_body_id,
                 single_geom,
@@ -192,7 +198,12 @@ class SimSensors:
         """
         if self.renderer is not None:
             try:
-                self.renderer.update_scene(self.data, camera="head_cam")
+                saved_alpha = self.model.geom_rgba[self.beacon_geom_ids, 3].copy()
+                self.model.geom_rgba[self.beacon_geom_ids, 3] = 0.0
+                try:
+                    self.renderer.update_scene(self.data, camera="head_cam")
+                finally:
+                    self.model.geom_rgba[self.beacon_geom_ids, 3] = saved_alpha
                 rgb = self.renderer.render()  # uint8 (240, 320, 3) RGB
                 self.renderer.enable_depth_rendering()
                 depth = self.renderer.render()  # float32 (240, 320) meters
@@ -286,11 +297,14 @@ class SimSensors:
             world_angle = math.atan2(dy, dx)
             rel_azimuth = math.atan2(math.sin(world_angle - ryaw), math.cos(world_angle - ryaw))
 
-            # Distance + wall occlusion attenuation
+            # Distance + wall occlusion attenuation. Occlusion is capped at 3 walls: in the
+            # open-plan house sound also reaches the robot around walls through the archways.
             walls = count_walls_crossed((rx, ry), (sx, sy))
             dist_atten = 1.0 / (1.0 + 0.22 * dist)
-            wall_atten = (0.45 ** walls)
-            base_gain = max(0.12, dist_atten * wall_atten)
+            wall_atten = (0.45 ** min(walls, 3))
+            # Source loudness: a smoke alarm (~85 dB @ 3 m) is far louder than a doorbell chime.
+            level = float(SOUND_SOURCES[sound_name].get("level", 1.0))
+            base_gain = level * max(0.12, dist_atten * wall_atten)
 
             # Interaural Level Difference (ILD): sound on left (+rel_azimuth) is louder in Left ear
             ild = 0.38 * math.sin(rel_azimuth)

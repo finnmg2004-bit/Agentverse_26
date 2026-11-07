@@ -15,7 +15,8 @@ import time
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
-from sim.legacy_box_house import (
+from sim.house_layout import (
+    OUTSIDE,
     ROBOT_START_POSE,
     ROOM_GRAPH,
     ROOM_ORDER,
@@ -43,6 +44,8 @@ def room_hops(start: str, goal: str, blocked_doors: Optional[Set[str]] = None) -
             for (a, b), door in ROOM_GRAPH.items():
                 if a != room or b in seen or door in blocked:
                     continue
+                if b == OUTSIDE and goal != OUTSIDE:
+                    continue  # never route through the garden between rooms
                 if b == goal:
                     return hops
                 seen.add(b)
@@ -93,7 +96,7 @@ class WorldModel:
         self.t_sim = float(msg.get("t", self.t_sim))
         self.robot_pose = (float(pose[0]), float(pose[1]), float(pose[2]))
         room = str(msg.get("robot_room", self.robot_room))
-        self.robot_room = "bedroom" if room == "back_exit_outside" else room
+        self.robot_room = room
         self.lidar_ranges = [float(r) for r in msg.get("lidar_ranges", self.lidar_ranges)]
         self.guiding_active = bool(msg.get("guiding_active", False))
         self.connected = True

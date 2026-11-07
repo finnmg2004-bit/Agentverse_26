@@ -10,20 +10,21 @@ compiled scene by `pixi run check-world` (sim/check_world.py).
 Nudge only uses the GROUND FLOOR (z = 0). The Go2 in Plan B cannot climb stairs,
 so floors 1-2 and the stair core are out of bounds.
 
+The public names/shapes (ROOMS[...]["center"/"owner_spot"/"bounds_x"/"bounds_y"],
+DOORWAYS as (x, y), ROOM_GRAPH, ROOM_ORDER, LANDMARKS, SOUND_SOURCES, CHAIR_*,
+ROBOT_START_POSE, WALL_SEGMENTS_2D, get_room_at, count_walls_crossed, ...) are the
+same as the original 10x8 m box-house module, so sim and brain code is unchanged.
+
 World frame: +X = east, +Y = north, +Z = up, metres. Yaw 0 faces +X.
 
          y=17.5 +--------------------+-----------------+----------------+
-                |                    |                 |                |
                 |    family_room     |     gallery     |  garden_room   |
-                |                    |                 |                |
          y=6.08 +====[ open ]=====+=[open]=+=[open]=+--+-----+--[door]--+
-                |                 |                 |  stair |          |
-                |   living_room   =[open] dining    |  core  | kitchen  =[door]-> pool terrace (E)
-   west door <-=[door]            |                 | (no go)|          |
+                |   living_room   =[open] dining    |  stair | kitchen  =[door]-> pool terrace (E)
+   back door <-=[door]            |                 |  core  |   (smoke)|
          y=0.6  +--[door]---------+=====[ open ]====+--------+--[door]--+
-                |                 |                 | lobby0 |robot_home|laundry
-                |   guest         =[door]  entry    =[door]  =[door]    |
-                |   (bedroom)     |                 |        |          |
+                |  guest (bed)    =[door]  entry    =[door]  =[door]    |
+                |                 |  (robot start)  | lobby0 |robot_home| laundry
          y=-4.5 +-----------------+-----[FRONT]-----+--------+----------+
               x=-15             x=-6   x=-1.4     x=3.2    x=6   x=10  x=15
 """
@@ -42,38 +43,35 @@ Rect = Tuple[float, float, float, float]  # (x0, y0, x1, y1)
 # --------------------------------------------------------------------------- #
 WORLD_SUBMODULE = "worlds/nerv-world"
 WORLD_SCENE_XML = f"{WORLD_SUBMODULE}/build/house-go2.xml"  # generated upstream; never hand-edit
+NAV_MAP_FILE = "assets/maps/nerv_house_nav.npz"            # static occupancy map (sim/nav_map.py)
 
 FLOOR_Z = 0.0
 WALL_HEIGHT = 2.73          # interior clear height (upstream STOREY_H - slabs)
 WALL_THICK = 0.14
 
-HOUSE_BOUNDS: Rect = (-15.0, -4.5, 15.0, 17.5)  # ground-floor footprint
+HOUSE_BOUNDS = {"x_min": -15.0, "x_max": 15.0, "y_min": -4.5, "y_max": 17.5}  # ground-floor footprint
+OUTSIDE = "outside"         # pseudo-room returned by get_room_at() outside the house
 
 # --------------------------------------------------------------------------- #
 # Rooms (ground floor). Keys match upstream layout.py room keys.
-# `nudge` = True for rooms the agent may search / navigate to.
 # --------------------------------------------------------------------------- #
-ROOMS: Dict[str, dict] = {
-    "entry":       dict(label="Entry hall",        rect=(-6.0, -4.5, 3.2, 0.6),         nudge=True),
-    "guest":       dict(label="Guest bedroom",     rect=(-15.0, -4.5, -6.0, 0.6),       nudge=True),
-    "living_room": dict(label="Living room",       rect=(-15.0, 0.6, -6.0, 6.08),       nudge=True),
-    "dining":      dict(label="Dining room",       rect=(-6.0, 0.6, 3.2, 6.08),         nudge=True),
-    "family_room": dict(label="Garden family room", rect=(-15.0, 6.08, -3.0, 17.5),     nudge=True),
-    "kitchen":     dict(label="Kitchen",           rect=(6.0, 0.6, 15.0, 6.08),         nudge=True),
-    "lobby0":      dict(label="Stair lobby",       rect=(3.2, -4.5, 6.0, 0.6),          nudge=True),
-    "robot_home":  dict(label="Robot dock",        rect=(6.0, -4.5, 10.0, 0.6),         nudge=True),
-    "gallery":     dict(label="Garden gallery",    rect=(-3.0, 6.08, 6.0, 17.5),        nudge=False),
-    "garden_room": dict(label="Garden lounge",     rect=(6.0, 6.08, 15.0, 17.5),        nudge=False),
-    "laundry":     dict(label="Laundry",           rect=(10.0, -4.5, 15.0, 0.6),        nudge=False),
-    "stair_f0":    dict(label="Stair core",        rect=(3.2, 0.6, 6.0, 6.08),          nudge=False),
+_ROOM_DEFS: Dict[str, Tuple[str, Rect]] = {
+    "entry":       ("Entry hall",         (-6.0, -4.5, 3.2, 0.6)),
+    "guest":       ("Guest bedroom",      (-15.0, -4.5, -6.0, 0.6)),
+    "living_room": ("Living room",        (-15.0, 0.6, -6.0, 6.08)),
+    "dining":      ("Dining room",        (-6.0, 0.6, 3.2, 6.08)),
+    "family_room": ("Garden family room", (-15.0, 6.08, -3.0, 17.5)),
+    "kitchen":     ("Kitchen",            (6.0, 0.6, 15.0, 6.08)),
+    "lobby0":      ("Stair lobby",        (3.2, -4.5, 6.0, 0.6)),
+    "robot_home":  ("Robot dock",         (6.0, -4.5, 10.0, 0.6)),
+    "gallery":     ("Garden gallery",     (-3.0, 6.08, 6.0, 17.5)),
+    "garden_room": ("Garden lounge",      (6.0, 6.08, 15.0, 17.5)),
+    "laundry":     ("Laundry",            (10.0, -4.5, 15.0, 0.6)),
 }
+# Stair core: physically there (walls), but never a navigation target.
+STAIR_CORE: Rect = (3.2, 0.6, 6.0, 6.08)
 
-# Room center (navigation goal when "go to room" has no better target)
-ROOM_CENTERS: Dict[str, Vec2] = {
-    k: ((r["rect"][0] + r["rect"][2]) / 2.0, (r["rect"][1] + r["rect"][3]) / 2.0)
-    for k, r in ROOMS.items()
-}
-# Rooms with furniture in the middle get a clear "scan point" instead of the raw center.
+# Clear floor point the robot drives to for "go to room" / look_around (furniture-free).
 ROOM_SCAN_POINTS: Dict[str, Vec2] = {
     "entry":       (-1.4, -2.0),
     "guest":       (-9.5, -2.0),
@@ -83,9 +81,12 @@ ROOM_SCAN_POINTS: Dict[str, Vec2] = {
     "kitchen":     (8.0, 2.4),
     "lobby0":      (4.6, -2.0),
     "robot_home":  (8.0, -2.0),
+    "gallery":     (1.5, 11.0),
+    "garden_room": (12.5, 13.5),
+    "laundry":     (12.5, -2.2),
 }
 
-# Where the owner stands in each room (clear of furniture, verified by check_world)
+# Where the owner stands in each room (clear of furniture, verified by check_world).
 OWNER_SPOTS: Dict[str, Vec2] = {
     "living_room": (-11.0, 5.0),
     "guest":       (-10.0, -2.6),
@@ -95,50 +96,87 @@ OWNER_SPOTS: Dict[str, Vec2] = {
     "kitchen":     (8.4, 3.2),
 }
 OWNER_START_ROOM = "living_room"
-# Hotkey [O] cycles the owner through these rooms, in order.
+
+# Hotkey [O] cycles the owner through these rooms; the brain also searches them in this order.
 OWNER_ROOM_CYCLE: List[str] = ["living_room", "guest", "dining", "family_room"]
+ROOM_ORDER: List[str] = OWNER_ROOM_CYCLE
+
+ROOMS: Dict[str, dict] = {}
+for _key, (_label, _rect) in _ROOM_DEFS.items():
+    _x0, _y0, _x1, _y1 = _rect
+    _center = ROOM_SCAN_POINTS.get(_key, ((_x0 + _x1) / 2.0, (_y0 + _y1) / 2.0))
+    ROOMS[_key] = {
+        "label": _label,
+        "rect": _rect,
+        "bounds_x": (_x0, _x1),
+        "bounds_y": (_y0, _y1),
+        "center": _center,                       # navigation point (clear floor)
+        "geo_center": ((_x0 + _x1) / 2.0, (_y0 + _y1) / 2.0),
+        "owner_spot": OWNER_SPOTS.get(_key, _center),
+        "search": _key in ROOM_ORDER,
+    }
+ROOM_CENTERS: Dict[str, Vec2] = {k: r["center"] for k, r in ROOMS.items()}
 
 # --------------------------------------------------------------------------- #
-# Doorways (ground floor). Derived from upstream door rules:
-#   public<->public rooms: wide open archways; others: framed doors <= 2.4 m.
-# `a`/`b` are the rooms it connects; `pos` is the doorway center on the wall line.
+# Doorways. Derived from upstream door rules (public<->public rooms: wide open archways;
+# others: framed doors <= 2.4 m). `pos` = centre of the gap on the wall line,
+# `axis` = "x" if the wall is vertical (cross along x), "y" if horizontal.
 # --------------------------------------------------------------------------- #
-DOORWAYS: Dict[str, dict] = {
-    "door_entry_dining":      dict(a="entry",       b="dining",      pos=(-1.4, 0.6),   width=8.6,  kind="open"),
-    "door_dining_living":     dict(a="dining",      b="living_room", pos=(-6.0, 3.34),  width=4.88, kind="open"),
-    "door_guest_entry":       dict(a="guest",       b="entry",       pos=(-6.0, -1.95), width=2.4,  kind="door"),
-    "door_guest_living":      dict(a="guest",       b="living_room", pos=(-7.6, 0.6),   width=1.8,  kind="door"),
-    "door_living_family":     dict(a="living_room", b="family_room", pos=(-10.5, 6.08), width=8.4,  kind="open"),
-    "door_dining_family":     dict(a="dining",      b="family_room", pos=(-4.5, 6.08),  width=2.4,  kind="open"),
-    "door_dining_gallery":    dict(a="dining",      b="gallery",     pos=(0.1, 6.08),   width=5.6,  kind="open"),
-    "door_entry_lobby":       dict(a="entry",       b="lobby0",      pos=(3.2, -1.95),  width=2.4,  kind="door"),
-    "door_lobby_robothome":   dict(a="lobby0",      b="robot_home",  pos=(6.0, -1.95),  width=2.4,  kind="door"),
-    "door_robothome_kitchen": dict(a="robot_home",  b="kitchen",     pos=(8.0, 0.6),    width=2.4,  kind="door"),
-    "door_robothome_laundry": dict(a="robot_home",  b="laundry",     pos=(10.0, -1.95), width=2.4,  kind="door"),
-    # NOTE: upstream also cuts a kitchen<->laundry door at (13.4, 0.6), but the laundry
-    # cabinet stands right behind it, so it is NOT traversable and is left out of the graph.
-    "door_kitchen_garden":    dict(a="kitchen",     b="garden_room", pos=(13.4, 6.08),  width=1.8,  kind="door"),
-    "door_gallery_garden":    dict(a="gallery",     b="garden_room", pos=(6.0, 11.79),  width=10.8, kind="open"),
-    "door_family_gallery":    dict(a="family_room", b="gallery",     pos=(-3.0, 11.79), width=10.8, kind="open"),
+DOORWAY_INFO: Dict[str, dict] = {
+    "door_entry_dining":      dict(a="entry",       b="dining",      pos=(-1.4, 0.6),   width=8.6,  axis="y", kind="open"),
+    "door_dining_living":     dict(a="dining",      b="living_room", pos=(-6.0, 3.34),  width=4.88, axis="x", kind="open"),
+    "door_guest_entry":       dict(a="guest",       b="entry",       pos=(-6.0, -1.95), width=2.4,  axis="x", kind="door"),
+    "door_guest_living":      dict(a="guest",       b="living_room", pos=(-7.6, 0.6),   width=1.8,  axis="y", kind="door"),
+    "door_living_family":     dict(a="living_room", b="family_room", pos=(-10.5, 6.08), width=8.4,  axis="y", kind="open"),
+    "door_dining_family":     dict(a="dining",      b="family_room", pos=(-4.5, 6.08),  width=2.4,  axis="y", kind="open"),
+    "door_dining_gallery":    dict(a="dining",      b="gallery",     pos=(0.1, 6.08),   width=5.6,  axis="y", kind="open"),
+    "door_entry_lobby":       dict(a="entry",       b="lobby0",      pos=(3.2, -1.95),  width=2.4,  axis="x", kind="door"),
+    "door_lobby_robothome":   dict(a="lobby0",      b="robot_home",  pos=(6.0, -1.95),  width=2.4,  axis="x", kind="door"),
+    "door_robothome_kitchen": dict(a="robot_home",  b="kitchen",     pos=(8.0, 0.6),    width=2.4,  axis="y", kind="door"),
+    "door_robothome_laundry": dict(a="robot_home",  b="laundry",     pos=(10.0, -1.95), width=2.4,  axis="x", kind="door"),
+    "door_kitchen_garden":    dict(a="kitchen",     b="garden_room", pos=(13.4, 6.08),  width=1.8,  axis="y", kind="door"),
+    "door_gallery_garden":    dict(a="gallery",     b="garden_room", pos=(6.0, 11.79),  width=10.8, axis="x", kind="open"),
+    "door_family_gallery":    dict(a="family_room", b="gallery",     pos=(-3.0, 11.79), width=10.8, axis="x", kind="open"),
 }
+# Gaps that exist in the walls but are not traversable / not navigation edges.
+# (kitchen<->laundry: blocked by the laundry cabinet; stair core entrance: no stairs for us.)
+WALL_GAPS_ONLY: List[dict] = [
+    dict(pos=(13.4, 0.6), width=1.8, axis="y"),
+    dict(pos=(4.6, 0.6), width=1.2, axis="y"),
+]
 
-# Exterior doors (wall gap center) and a point just outside each one.
+# Exterior doors (wall gap centre) and a point just outside each one.
 EXITS: Dict[str, dict] = {
-    "front_door":    dict(room="entry",       pos=(-1.4, -4.5),  outside=(-1.4, -6.0), width=2.0),
-    "back_door":     dict(room="living_room", pos=(-15.0, 3.6),  outside=(-16.6, 3.6), width=2.0),
-    "terrace_door":  dict(room="kitchen",     pos=(15.0, 2.6),   outside=(16.6, 2.6),  width=2.2),
+    "exit_front":   dict(room="entry",       pos=(-1.4, -4.5), outside=(-1.4, -6.0), width=2.0, axis="y"),
+    "exit_back":    dict(room="living_room", pos=(-15.0, 3.6), outside=(-16.6, 3.6), width=2.0, axis="x"),
+    "exit_terrace": dict(room="kitchen",     pos=(15.0, 2.6),  outside=(16.6, 2.6),  width=2.2, axis="x"),
 }
+
+# Legacy-shaped views: name -> (x, y)  (interior doorways + exterior doors)
+DOORWAYS: Dict[str, Vec2] = {k: d["pos"] for k, d in DOORWAY_INFO.items()}
+DOORWAYS.update({k: e["pos"] for k, e in EXITS.items()})
+DOORWAY_WIDTH: Dict[str, float] = {k: d["width"] for k, d in DOORWAY_INFO.items()}
+DOORWAY_WIDTH.update({k: e["width"] for k, e in EXITS.items()})
+
+# Room adjacency (both directions) -> doorway name. Exits connect a room to OUTSIDE.
+ROOM_GRAPH: Dict[Tuple[str, str], str] = {}
+for _name, _d in DOORWAY_INFO.items():
+    ROOM_GRAPH[(_d["a"], _d["b"])] = _name
+    ROOM_GRAPH[(_d["b"], _d["a"])] = _name
+for _name, _e in EXITS.items():
+    ROOM_GRAPH[(_e["room"], OUTSIDE)] = _name
+    ROOM_GRAPH[(OUTSIDE, _e["room"])] = _name
 
 # --------------------------------------------------------------------------- #
 # Named navigation targets (what guide_owner_to(target) accepts)
 # --------------------------------------------------------------------------- #
 LANDMARKS: Dict[str, Vec2] = {
-    "front_door":         (-1.4, -3.9),   # inside, facing the front door
-    "front_door_outside": EXITS["front_door"]["outside"],
-    "back_door":          (-14.2, 3.6),   # inside living room, at the west garden door
-    "back_exit_outside":  EXITS["back_door"]["outside"],   # smoke-alarm evacuation target
+    "front_door":         (-1.4, -3.9),                    # inside the entry, facing the front door
+    "front_door_outside": EXITS["exit_front"]["outside"],
+    "back_door":          (-14.2, 3.6),                    # inside living room, at the west garden door
+    "back_exit_outside":  EXITS["exit_back"]["outside"],   # smoke-alarm evacuation target
     "terrace_door":       (14.2, 2.6),
-    "robot_dock":         (8.0, -2.7),    # upstream ROBOT_HOME_XY
+    "robot_dock":         (8.0, -2.7),                     # upstream ROBOT_HOME_XY
 }
 SMOKE_EVACUATION_TARGET = "back_exit_outside"
 
@@ -147,46 +185,154 @@ SMOKE_EVACUATION_TARGET = "back_exit_outside"
 # --------------------------------------------------------------------------- #
 ROBOT_START_XY: Vec2 = (-1.4, -2.5)
 ROBOT_START_YAW: float = math.pi / 2
+ROBOT_START_POSE: Vec3 = (ROBOT_START_XY[0], ROBOT_START_XY[1], ROBOT_START_YAW)
 ROBOT_START_ROOM = "entry"
 
 # --------------------------------------------------------------------------- #
 # Sound sources (x, y, z) — where the stereo-ear synth places each emitter.
 # --------------------------------------------------------------------------- #
-SOUND_SOURCES: Dict[str, dict] = {
-    "doorbell":    dict(pos=(-0.2, -4.35, 1.9), room="entry"),     # chime box beside the front door
-    "knock":       dict(pos=(-1.4, -4.45, 1.0), room="entry"),     # on the front door leaf
-    "smoke_alarm": dict(pos=(11.0, 4.2, 2.65), room="kitchen"),    # ceiling, over the stove side
+SOUND_SOURCES: Dict[str, Dict[str, object]] = {
+    "doorbell": {
+        "pos": (-0.2, -4.35, 1.9),          # chime box beside the front door
+        "room": "entry",
+        "target_landmark": "front_door",
+        "alert_mode": "1_pulse",
+        "level": 1.0,
+        "rgba_active": (0.1, 0.85, 1.0, 0.95),
+        "rgba_idle": (0.1, 0.4, 0.5, 0.35),
+    },
+    "knock": {
+        "pos": (-1.4, -4.45, 1.0),          # on the front door leaf
+        "room": "entry",
+        "target_landmark": "front_door",
+        "alert_mode": "2_pulse",
+        "level": 1.0,
+        "rgba_active": (1.0, 0.75, 0.1, 0.95),
+        "rgba_idle": (0.5, 0.38, 0.1, 0.35),
+    },
+    "smoke_alarm": {
+        "pos": (11.0, 4.2, 2.55),           # kitchen ceiling
+        "room": "kitchen",
+        "target_landmark": SMOKE_EVACUATION_TARGET,
+        "alert_mode": "continuous",
+        "level": 4.0,                     # loud: must carry through the whole house
+        "rgba_active": (1.0, 0.15, 0.15, 0.98),
+        "rgba_idle": (0.5, 0.1, 0.1, 0.35),
+    },
 }
 
 # --------------------------------------------------------------------------- #
 # Movable chair obstacle (hotkey [C]): blocks the guest <-> living_room door,
 # forcing a reroute through the entry hall.
 # --------------------------------------------------------------------------- #
-CHAIR_BLOCK_POS: Vec2 = DOORWAYS["door_guest_living"]["pos"]
-CHAIR_PARKED_POS: Vec2 = (-13.8, -3.6)  # guest-room corner, out of the way
-CHAIR_SIZE: Vec3 = (0.5, 0.5, 0.9)      # full extents (m)
+CHAIR_DOORWAY_POS: Vec3 = (DOORWAY_INFO["door_guest_living"]["pos"][0], DOORWAY_INFO["door_guest_living"]["pos"][1], 0.0)
+CHAIR_STOWED_POS: Vec3 = (-13.8, -3.6, 0.0)  # guest-room corner, out of the way
+CHAIR_COLLISION_RADIUS: float = 0.22
+
+
+# --------------------------------------------------------------------------- #
+# Wall segments (2D) for acoustic occlusion and the dashboard map:
+# all room edges merged per wall line, minus door/exit gaps.
+# --------------------------------------------------------------------------- #
+def _merge(intervals: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    out: List[List[float]] = []
+    for lo, hi in sorted(intervals):
+        if out and lo <= out[-1][1] + 1e-6:
+            out[-1][1] = max(out[-1][1], hi)
+        else:
+            out.append([lo, hi])
+    return [(a, b) for a, b in out]
+
+
+def _subtract(intervals: List[Tuple[float, float]], gaps: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    res = intervals
+    for glo, ghi in gaps:
+        nxt = []
+        for lo, hi in res:
+            if ghi <= lo or glo >= hi:
+                nxt.append((lo, hi))
+                continue
+            if glo > lo:
+                nxt.append((lo, glo))
+            if ghi < hi:
+                nxt.append((ghi, hi))
+        res = nxt
+    return [(a, b) for a, b in res if b - a > 1e-3]
+
+
+def _build_wall_segments() -> List[Tuple[Vec2, Vec2]]:
+    horiz: Dict[float, List[Tuple[float, float]]] = {}
+    vert: Dict[float, List[Tuple[float, float]]] = {}
+    rects = [r for _, r in _ROOM_DEFS.values()] + [STAIR_CORE]
+    for x0, y0, x1, y1 in rects:
+        for y in (y0, y1):
+            horiz.setdefault(round(y, 3), []).append((x0, x1))
+        for x in (x0, x1):
+            vert.setdefault(round(x, 3), []).append((y0, y1))
+    gaps = [(d["pos"], d["width"], d["axis"]) for d in DOORWAY_INFO.values()]
+    gaps += [(e["pos"], e["width"], e["axis"]) for e in EXITS.values()]
+    gaps += [(g["pos"], g["width"], g["axis"]) for g in WALL_GAPS_ONLY]
+
+    segs: List[Tuple[Vec2, Vec2]] = []
+    for y, ivs in horiz.items():
+        cut = [(p[0] - w / 2, p[0] + w / 2) for p, w, ax in gaps if ax == "y" and abs(p[1] - y) < 1e-3]
+        segs += [((a, y), (b, y)) for a, b in _subtract(_merge(ivs), cut)]
+    for x, ivs in vert.items():
+        cut = [(p[1] - w / 2, p[1] + w / 2) for p, w, ax in gaps if ax == "x" and abs(p[0] - x) < 1e-3]
+        segs += [((x, a), (x, b)) for a, b in _subtract(_merge(ivs), cut)]
+    return segs
+
+
+WALL_SEGMENTS_2D: List[Tuple[Vec2, Vec2]] = _build_wall_segments()
 
 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def room_at(x: float, y: float) -> Optional[str]:
-    """Ground-floor room key containing (x, y); None if outside the house."""
-    for key, r in ROOMS.items():
-        x0, y0, x1, y1 = r["rect"]
+def get_room_at(x: float, y: float) -> str:
+    """Ground-floor room key containing (x, y); 'stair_core' or OUTSIDE otherwise."""
+    for key, (_, (x0, y0, x1, y1)) in _ROOM_DEFS.items():
         if x0 <= x <= x1 and y0 <= y <= y1:
             return key
-    return None
+    x0, y0, x1, y1 = STAIR_CORE
+    if x0 <= x <= x1 and y0 <= y <= y1:
+        return "stair_core"
+    return OUTSIDE
+
+
+def room_at(x: float, y: float) -> Optional[str]:
+    """Like get_room_at() but None outside the house."""
+    r = get_room_at(x, y)
+    return None if r == OUTSIDE else r
+
+
+def get_landmark_room(target: str) -> str:
+    """Room associated with a named room or landmark."""
+    if target in ROOMS:
+        return target
+    if target in LANDMARKS:
+        return get_room_at(*LANDMARKS[target])
+    return ROBOT_START_ROOM
 
 
 def room_graph() -> Dict[str, List[Tuple[str, str]]]:
-    """Adjacency: room -> [(neighbor_room, doorway_name), ...]."""
-    g: Dict[str, List[Tuple[str, str]]] = {k: [] for k in ROOMS}
-    for name, d in DOORWAYS.items():
-        g[d["a"]].append((d["b"], name))
-        g[d["b"]].append((d["a"], name))
+    """Adjacency: room -> [(neighbor_room, doorway_name), ...] (includes OUTSIDE)."""
+    g: Dict[str, List[Tuple[str, str]]] = {}
+    for (a, b), door in ROOM_GRAPH.items():
+        g.setdefault(a, []).append((b, door))
     return g
 
 
 def nudge_rooms() -> List[str]:
-    return [k for k, r in ROOMS.items() if r["nudge"]]
+    return list(ROOMS)
+
+
+def count_walls_crossed(p1: Vec2, p2: Vec2) -> int:
+    """Count how many 2D wall segments intersect the line segment p1 -> p2."""
+    def ccw(a: Vec2, b: Vec2, c: Vec2) -> bool:
+        return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0])
+
+    def intersects(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool:
+        return ccw(a, c, d) != ccw(b, c, d) and ccw(a, b, c) != ccw(a, b, d)
+
+    return sum(1 for sa, sb in WALL_SEGMENTS_2D if intersects(p1, p2, sa, sb))

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Milestones 1–5: Main MuJoCo Simulator & ZMQ Telemetry/Command Server (`sim/run_sim.py`).
-Loads Unitree Go2 inside the 4-room house with Owner body, movable Chair, and sound beacons.
+Loads the nerv-world house (ground floor) + Unitree Go2 with Owner body, movable Chair,
+and sound beacons (sim/world.py; coordinates in sim/house_layout.py).
 Supports:
   - Interactive MuJoCo viewer with keyboard hotkeys:
-      [B / 1] Ring Doorbell (Hallway Front Door)
-      [K / 2] Knock on Front Door (Hallway Front Door)
-      [M / 3] Trigger Smoke Alarm (Kitchen — Emergency)
-      [O / 4] Cycle Owner room (living_room -> kitchen -> bedroom -> hallway)
-      [C / 5] Toggle Chair obstacle in living_room <-> kitchen doorway (-2.5, 0.0)
+      [B / 1] Ring Doorbell (Entry hall, front door)
+      [K / 2] Knock on Front Door (Entry hall)
+      [M / 3] Trigger Smoke Alarm (Kitchen ceiling — Emergency)
+      [O / 4] Cycle Owner room (living_room -> guest -> dining -> family_room)
+      [C / 5] Toggle Chair obstacle in the guest <-> living_room door (-7.6, 0.6)
       [X]     Silence all active sounds
   - ZeroMQ PUB on tcp://127.0.0.1:5555 (`state` @ 20 Hz, `camera` @ 10 Hz, `audio` @ 2 Hz)
   - ZeroMQ SUB on tcp://127.0.0.1:5556 (`cmd` @ 20 Hz + optional `sim_event` for scripted tests)
@@ -22,7 +23,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Dict
-import xml.etree.ElementTree as ET
 
 import mujoco
 import mujoco.viewer
@@ -34,40 +34,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from sim.legacy_box_house import (
+from sim.house_layout import (
     CHAIR_DOORWAY_POS,
     CHAIR_STOWED_POS,
     ROOMS,
     ROOM_ORDER,
     SOUND_SOURCES,
     get_room_at,
-    populate_house_xml,
 )
 from sim.locomotion import Go2Locomotion
+from sim.nav_map import load_or_build
 from sim.sensors import SimSensors
-
-
-GO2_DIR = PROJECT_ROOT / "mujoco_menagerie" / "unitree_go2"
-GO2_XML_PATH = GO2_DIR / "go2.xml"
-
-
-def build_house_with_go2_xml() -> str:
-    """Build complete MuJoCo XML combining Unitree Go2 and the 4-room Nudge house."""
-    if not GO2_XML_PATH.exists():
-        raise FileNotFoundError(
-            f"Could not find {GO2_XML_PATH}. Run `pixi run fetch-go2` first."
-        )
-
-    tree = ET.parse(GO2_XML_PATH)
-    root = tree.getroot()
-
-    compiler = root.find("compiler")
-    if compiler is None:
-        compiler = ET.SubElement(root, "compiler")
-    compiler.set("meshdir", str((GO2_DIR / "assets").resolve()))
-
-    populate_house_xml(root)
-    return ET.tostring(root, encoding="unicode")
+from sim.world import build_nudge_model
 
 
 class NudgeSimulator:
@@ -78,18 +56,12 @@ class NudgeSimulator:
         pub_endpoint: str = "tcp://127.0.0.1:5555",
         sub_endpoint: str = "tcp://127.0.0.1:5556",
         enable_camera: bool = True,
+        cutaway: bool = True,
     ) -> None:
-        xml_string = build_house_with_go2_xml()
-        self.model = mujoco.MjModel.from_xml_string(xml_string)
-        self.data = mujoco.MjData(self.model)
+        self.model, self.data = build_nudge_model(verbose=True, cutaway=cutaway)
+        self.nav_map = load_or_build(self.model, self.data)
 
-        home_key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "home")
-        if home_key_id >= 0:
-            mujoco.mj_resetDataKeyframe(self.model, self.data, home_key_id)
-        else:
-            mujoco.mj_resetData(self.model, self.data)
-
-        self.locomotion = Go2Locomotion(self.model, self.data)
+        self.locomotion = Go2Locomotion(self.model, self.data, self.nav_map)
         self.sensors = SimSensors(self.model, self.data, enable_camera=enable_camera)
 
         # Scene state controlled by hotkeys
@@ -138,14 +110,14 @@ class NudgeSimulator:
         if k in ("B", "1"):
             self.active_sounds["doorbell"] = True
             self.active_sounds["knock"] = False
-            print("[sim] HOTKEY [B]: Doorbell ringing at Front Door (2.5, -3.9)!")
+            print(f"[sim] HOTKEY [B]: Doorbell ringing at the front door {SOUND_SOURCES['doorbell']['pos'][:2]}!")
         elif k in ("K", "2"):
             self.active_sounds["knock"] = True
             self.active_sounds["doorbell"] = False
-            print("[sim] HOTKEY [K]: Knocking on Front Door (2.1, -3.9)!")
+            print(f"[sim] HOTKEY [K]: Knocking on the front door {SOUND_SOURCES['knock']['pos'][:2]}!")
         elif k in ("M", "3"):
             self.active_sounds["smoke_alarm"] = True
-            print("[sim] HOTKEY [M]: EMERGENCY Smoke Alarm triggered in Kitchen (-2.5, 3.8)!")
+            print(f"[sim] HOTKEY [M]: EMERGENCY Smoke Alarm triggered in the kitchen {SOUND_SOURCES['smoke_alarm']['pos'][:2]}!")
         elif k in ("O", "4"):
             self.owner_room_idx = (self.owner_room_idx + 1) % len(ROOM_ORDER)
             new_room = ROOM_ORDER[self.owner_room_idx]
@@ -156,7 +128,7 @@ class NudgeSimulator:
             self.chair_blocking = not self.chair_blocking
             pos = CHAIR_DOORWAY_POS if self.chair_blocking else CHAIR_STOWED_POS
             self.locomotion.set_chair_pos(*pos)
-            state_str = "BLOCKING doorway (-2.5, 0.0)" if self.chair_blocking else f"STOWED at {pos[:2]}"
+            state_str = f"BLOCKING doorway {CHAIR_DOORWAY_POS[:2]}" if self.chair_blocking else f"STOWED at {pos[:2]}"
             print(f"[sim] HOTKEY [C]: Chair obstacle {state_str}")
         elif k == "X":
             for s in self.active_sounds:
@@ -317,13 +289,18 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=0.0, help="Stop after N seconds (0 = infinite)")
     parser.add_argument("--pub", default="tcp://127.0.0.1:5555", help="ZMQ telemetry PUB address")
     parser.add_argument("--sub", default="tcp://127.0.0.1:5556", help="ZMQ command SUB address")
+    parser.add_argument("--render-camera", action="store_true",
+                        help="Headless only: render the real head camera offscreen (EGL) instead of the synthetic fallback")
+    parser.add_argument("--no-cutaway", action="store_true",
+                        help="Show the whole house (upper storeys + roof) instead of the ground-floor cutaway view")
     args = parser.parse_args()
 
-    print("[sim] Building 4-room house + Unitree Go2 + Owner + Chair + Sound Beacons...")
+    print("[sim] Building nerv-world house + Unitree Go2 + Owner + Chair + Sound Beacons...")
     sim = NudgeSimulator(
         pub_endpoint=args.pub,
         sub_endpoint=args.sub,
-        enable_camera=not args.headless,
+        enable_camera=(not args.headless) or args.render_camera,
+        cutaway=not args.no_cutaway,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
@@ -347,9 +324,12 @@ def main() -> None:
             with mujoco.viewer.launch_passive(
                 sim.model, sim.data, key_callback=sim.glfw_key_callback
             ) as viewer:
-                viewer.cam.lookat[:] = [0.0, 0.0, 0.4]
-                viewer.cam.distance = 10.5
-                viewer.cam.elevation = -48.0
+                # Dollhouse view of the west wing (entry, guest, living, dining) with ceilings hidden
+                if not args.no_cutaway:
+                    viewer.opt.geomgroup[1] = 0
+                viewer.cam.lookat[:] = [-6.5, 1.0, 0.0]
+                viewer.cam.distance = 21.0
+                viewer.cam.elevation = -62.0
                 viewer.cam.azimuth = 90.0
 
                 start_wall = time.perf_counter()

@@ -19,7 +19,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 from scipy import signal
 
-from sim.legacy_box_house import SOUND_SOURCES
+from sim.house_layout import SOUND_SOURCES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -157,8 +157,13 @@ class StereoHearing:
         # Importantly, we score each band against both total energy AND absolute power
         # so that if `smoke_alarm` starts while `doorbell` is playing, both get high scores!
         smoke_ratio = e_smoke / total_energy
-        smoke_abs = min(1.0, math.sqrt(e_smoke * 1200.0))
-        score_smoke = float(np.clip(max(smoke_ratio * 1.25, 0.85 * smoke_abs if smoke_ratio > 0.18 else 0.0), 0.0, 0.99))
+        smoke_abs = min(1.0, math.sqrt(e_smoke * 3000.0))  # calibrated for whole-house range (nerv house)
+        # Narrowband prominence: the alarm tone towers over its neighbouring bands even when a
+        # louder, closer sound (e.g. the doorbell right next to the robot) dominates total energy.
+        e_smoke_nb = self._band_energy(freqs, psd, 2450.0, 2900.0) + self._band_energy(freqs, psd, 3450.0, 3900.0)
+        smoke_prominent = e_smoke > 8.0 * e_smoke_nb + 1e-9
+        gate = smoke_ratio > 0.18 or (smoke_prominent and smoke_ratio > 0.02)
+        score_smoke = float(np.clip(max(smoke_ratio * 1.25, 0.85 * smoke_abs if gate else 0.0), 0.0, 0.99))
 
         doorbell_ratio = e_doorbell / total_energy
         score_doorbell = float(np.clip(doorbell_ratio * 1.20, 0.0, 0.98))
