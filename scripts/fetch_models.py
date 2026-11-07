@@ -5,6 +5,8 @@ Download the local perception / agent models (gitignored) — run with `pixi run
   assets/models/yolov8n.onnx          YOLOv8n person detector (Ultralytics release, AGPL-3.0)
   assets/models/yamnet.tflite         YAMNet AudioSet sound classifier (TF Hub / Google, Apache-2.0)
   assets/models/yamnet_class_map.csv  YAMNet class names (tensorflow/models, Apache-2.0)
+  assets/models/en_US-ljspeech-medium.onnx(.json)  Piper TTS voice for speech/tts.py (rhasspy/piper-voices,
+                                      MIT; trained on the public-domain LJ Speech dataset)
   Ollama model (default gemma4:e2b)   local LLM for nudge-brain/agent.py (needs Ollama installed)
 
 Every file is checked against a pinned SHA-256, so a corrupted or changed download is rejected.
@@ -44,6 +46,16 @@ FILES = [
         "yamnet_class_map.csv",
         "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2",
     ),
+]
+
+# Piper text-to-speech voice for speech/tts.py (pinned to a rhasspy/piper-voices commit).
+_PIPER = ("https://huggingface.co/rhasspy/piper-voices/resolve/e7229f7d33a10e145e109b886d661984201ac3c4/"
+          "en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx")
+FILES += [
+    ("en_US-ljspeech-medium.onnx", _PIPER,
+     "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22"),
+    ("en_US-ljspeech-medium.onnx.json", _PIPER + ".json",
+     "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860"),
 ]
 
 

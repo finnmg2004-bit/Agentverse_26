@@ -110,7 +110,7 @@ Agentverse_26/
 git clone --recurse-submodules --shallow-submodules <this repo>   # or, in an existing clone:
 pixi run fetch-world      # git submodule update --init --depth 1 worlds/nerv-world (~390 MB)
 pixi run check-world      # must print "[check] all checks passed"
-pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
+pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite + Piper TTS voice -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
 pixi run prepare-owner    # scanned owner: put Renderpeople `rp_mei_posed_001_OBJ/` in assets/models/ first (licence: not in git)
 pixi run sim              # terminal 1: MuJoCo viewer (cutaway view), hotkeys, ZMQ server
 pixi run brain            # terminal 2: brain + dashboard
@@ -358,7 +358,7 @@ Gemma turns the sentence into a structured rule (Ollama JSON schema with enums o
 | Active rules + confirmation | Finn → Eden, Sean | in the `brain` status: `rules: [...]`, plus the "Nudge says" text |
 | Carpet / avoid areas | Sean (sim + `house_layout.py`) → Finn, Eden | named rectangles, e.g. `AVOID_AREAS = {"living_room_carpet": (x0, y0, x1, y1)}` |
 | Sound registry | Ricktho → Finn, Sean, Eden | per sound: file, room, tier, alert pattern, YAMNet classes, target |
-| Speech | Teo → Sean | `speak(text)` (local TTS), model fetched by `pixi run fetch-models` |
+| Speech | Teo → Sean | `from speech.tts import speak, synthesize, warmup, stop` (top-level `speech/`, no sim/brain deps). `speak(text, block=False, interrupt=False) -> bool`: queued on a worker thread, returns at once; `interrupt=True` cuts off the current/queued speech (emergencies). `synthesize(text) -> (int16 mono pcm, sample_rate)`. Call `warmup()` at startup (voice load ~5 s in the background). Fails soft (no model / no audio device -> one log line). `NUDGE_TTS_MUTE=1` = no playback; `NUDGE_TTS_VOICE` = another Piper voice. Voice `en_US-ljspeech-medium` via `pixi run fetch-models`; try it: `pixi run python speech/tts.py "Take my handle."` |
 
 ### 9.5 The 60-second demo (proposed)
 1. Owner: *"Nudge, I've got a new carpet in the living room, please don't step on it."* → screen confirms, map shades the area (~10 s).

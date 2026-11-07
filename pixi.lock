@@ -93,7 +93,9 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/57/70/80f870701f8610e88649d3cd173a0e7ce66433913da3683035a4370063ad/websockets-17.4-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/65/da/254ec1df4f28ae0d03c410921053b570b116bd917dd64c296bdcc4b5192b/ai_edge_litert-2.3.0-cp311-cp311-manylinux_2_27_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/84/81/0112a7d510911f33018dc24023d1655bb772f84a4e95fe7f0180f66bbd17/piper_tts-1.8.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/93/90/6a6b168225cb354d343e01cd272e526b6798fd957693e878a785c71a2fd2/mujoco-4.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/9a/70/875f4a23bfc4731703a5835487d0d2fb999031bd415e7d17c0ae615c18b7/pathvalidate-3.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a9/80/19189ea605017473660e43762dc853d2797984b3c7bf30ce656099add30c/ml_dtypes-0.5.4-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b0/f9/735be957a2ca0981fb2abcf969f01b9cb52d5e2a452acbbf7d1842ad1392/mujoco_core-4.0.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
@@ -144,12 +146,14 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/vcomp14-14.51.36247-habf1de7_42.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zeromq-4.3.5-h3a581c9_12.conda
       - pypi: https://files.pythonhosted.org/packages/07/9b/289cc5dc331f1114f200f46a5d71d11fa43c586ec46208bf6789161d38fb/mujoco_studio-4.0.0-cp311-cp311-win_amd64.whl
+      - pypi: https://files.pythonhosted.org/packages/12/9c/c736d1961cf9ce0655278731b9430df41892ca2ded7b09dabcb340612158/piper_tts-1.8.0-cp39-abi3-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/55/66/00ca8b75a634c9fcf70579f9a242b96a7f7a3abeb21a02e2380fff491d2c/websockets-17.4-cp311-cp311-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/69/82/2e2bf967ade9567d77c307533566ef56a19c32e2114fc062a405703def88/onnxruntime-1.31.1-cp311-cp311-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/78/d6/b0d9d83177397c018efa3579c54990f8d9b3af17fdcf97b0e549609a0571/glfw-2.11.0-py2.py3-none-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/8a/55/b77bda4e5e5f5971fb51b07663694690e9afdb9402136c16a522bd621cad/protobuf-7.36.2-cp310-abi3-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/93/90/6a6b168225cb354d343e01cd272e526b6798fd957693e878a785c71a2fd2/mujoco-4.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/9a/70/875f4a23bfc4731703a5835487d0d2fb999031bd415e7d17c0ae615c18b7/pathvalidate-3.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a4/7d/f1c30a92854540bf789e9cd5dde7ef49bbe63f855b85a2e6b3db8135c591/opencv_python-4.11.0.86-cp37-abi3-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b4/24/70bd59276883fdd91600ca20040b41efd4902a923283c4d6edcb1de128d2/ml_dtypes-0.5.4-cp311-cp311-win_amd64.whl
@@ -1760,6 +1764,44 @@ packages:
   - numpy
   - websockets>=13
   requires_python: '>=3.11'
+- pypi: https://files.pythonhosted.org/packages/12/9c/c736d1961cf9ce0655278731b9430df41892ca2ded7b09dabcb340612158/piper_tts-1.8.0-cp39-abi3-win_amd64.whl
+  name: piper-tts
+  version: 1.8.0
+  sha256: 5da9bfdb05dfe15da3536859d422e605483ffa6d2b3ec2c5b9593bae6b5aa6a4
+  requires_dist:
+  - onnxruntime>=1,<2
+  - pathvalidate>=3,<4
+  - torch>=2,<3 ; extra == 'train'
+  - lightning>=2,<3 ; extra == 'train'
+  - tensorboard>=2,<3 ; extra == 'train'
+  - tensorboardx>=2,<3 ; extra == 'train'
+  - jsonargparse[signatures]>=4.27.7 ; extra == 'train'
+  - onnx>=1,<2 ; extra == 'train'
+  - pysilero-vad>=2.1,<3 ; extra == 'train'
+  - cython>=3,<4 ; extra == 'train'
+  - librosa<1 ; extra == 'train'
+  - black==24.8.0 ; extra == 'dev'
+  - flake8==7.1.1 ; extra == 'dev'
+  - isort==5.13.2 ; extra == 'dev'
+  - mypy==1.14.0 ; extra == 'dev'
+  - pylint==3.2.7 ; extra == 'dev'
+  - pytest==8.3.4 ; extra == 'dev'
+  - build==1.2.2 ; extra == 'dev'
+  - scikit-build<1 ; extra == 'dev'
+  - cmake>=3.18,<4 ; extra == 'dev'
+  - ninja>=1,<2 ; extra == 'dev'
+  - onnx>=1,<2 ; extra == 'dev'
+  - flask>=3,<4 ; extra == 'http'
+  - onnx>=1,<2 ; extra == 'alignment'
+  - g2pw>=0.1.1,<1 ; extra == 'zh'
+  - transformers>=4,<6 ; extra == 'zh'
+  - sentence-stream>=1.2.1,<2 ; extra == 'zh'
+  - unicode-rbnf>=2.4.0,<3 ; extra == 'zh'
+  - pyopenjtalk-plus>=0.4,<1 ; extra == 'ja'
+  - tltk>=1.6.8,<1.11 ; extra == 'th'
+  - pandas>=2,<3 ; extra == 'th'
+  - unicode-rbnf>=2.4.0,<3 ; extra == 'th'
+  requires_python: '>=3.9'
 - pypi: https://files.pythonhosted.org/packages/2c/8b/90eb44a40476fa0e71e05a0283947cfd74a5d36121a11d926ad6f3193cc4/opencv_python-4.11.0.86-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
   name: opencv-python
   version: 4.11.0.86
@@ -1841,6 +1883,44 @@ packages:
   sha256: bd39c1adb57b7273813e33b9768bed88d1ea656abfc914b4a6424ec0c5d62674
   requires_dist:
   - glfw-preview ; extra == 'preview'
+- pypi: https://files.pythonhosted.org/packages/84/81/0112a7d510911f33018dc24023d1655bb772f84a4e95fe7f0180f66bbd17/piper_tts-1.8.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl
+  name: piper-tts
+  version: 1.8.0
+  sha256: 25b4d3f31ff70c8fa7151908e00aaa5650cbdf16bca8fcf21299f3941b89a7d3
+  requires_dist:
+  - onnxruntime>=1,<2
+  - pathvalidate>=3,<4
+  - torch>=2,<3 ; extra == 'train'
+  - lightning>=2,<3 ; extra == 'train'
+  - tensorboard>=2,<3 ; extra == 'train'
+  - tensorboardx>=2,<3 ; extra == 'train'
+  - jsonargparse[signatures]>=4.27.7 ; extra == 'train'
+  - onnx>=1,<2 ; extra == 'train'
+  - pysilero-vad>=2.1,<3 ; extra == 'train'
+  - cython>=3,<4 ; extra == 'train'
+  - librosa<1 ; extra == 'train'
+  - black==24.8.0 ; extra == 'dev'
+  - flake8==7.1.1 ; extra == 'dev'
+  - isort==5.13.2 ; extra == 'dev'
+  - mypy==1.14.0 ; extra == 'dev'
+  - pylint==3.2.7 ; extra == 'dev'
+  - pytest==8.3.4 ; extra == 'dev'
+  - build==1.2.2 ; extra == 'dev'
+  - scikit-build<1 ; extra == 'dev'
+  - cmake>=3.18,<4 ; extra == 'dev'
+  - ninja>=1,<2 ; extra == 'dev'
+  - onnx>=1,<2 ; extra == 'dev'
+  - flask>=3,<4 ; extra == 'http'
+  - onnx>=1,<2 ; extra == 'alignment'
+  - g2pw>=0.1.1,<1 ; extra == 'zh'
+  - transformers>=4,<6 ; extra == 'zh'
+  - sentence-stream>=1.2.1,<2 ; extra == 'zh'
+  - unicode-rbnf>=2.4.0,<3 ; extra == 'zh'
+  - pyopenjtalk-plus>=0.4,<1 ; extra == 'ja'
+  - tltk>=1.6.8,<1.11 ; extra == 'th'
+  - pandas>=2,<3 ; extra == 'th'
+  - unicode-rbnf>=2.4.0,<3 ; extra == 'th'
+  requires_python: '>=3.9'
 - pypi: https://files.pythonhosted.org/packages/8a/55/b77bda4e5e5f5971fb51b07663694690e9afdb9402136c16a522bd621cad/protobuf-7.36.2-cp310-abi3-win_amd64.whl
   name: protobuf
   version: 7.36.2
@@ -1870,6 +1950,22 @@ packages:
   - pillow ; extra == 'usd'
   - usd-core ; extra == 'usd'
   requires_python: '>=3.11'
+- pypi: https://files.pythonhosted.org/packages/9a/70/875f4a23bfc4731703a5835487d0d2fb999031bd415e7d17c0ae615c18b7/pathvalidate-3.3.1-py3-none-any.whl
+  name: pathvalidate
+  version: 3.3.1
+  sha256: 5263baab691f8e1af96092fa5137ee17df5bdfbd6cff1fcac4d6ef4bc2e1735f
+  requires_dist:
+  - sphinx-rtd-theme>=1.2.2 ; extra == 'docs'
+  - sphinx>=2.4 ; extra == 'docs'
+  - urllib3<2 ; extra == 'docs'
+  - readmemaker>=1.2.0 ; extra == 'readme'
+  - path>=13,<18 ; extra == 'readme'
+  - allpairspy>=2 ; extra == 'test'
+  - click>=6.2 ; extra == 'test'
+  - faker>=1.0.8 ; extra == 'test'
+  - pytest>=6.0.1 ; extra == 'test'
+  - pytest-md-report>=0.6.2 ; extra == 'test'
+  requires_python: '>=3.9'
 - pypi: https://files.pythonhosted.org/packages/a4/7d/f1c30a92854540bf789e9cd5dde7ef49bbe63f855b85a2e6b3db8135c591/opencv_python-4.11.0.86-cp37-abi3-win_amd64.whl
   name: opencv-python
   version: 4.11.0.86
