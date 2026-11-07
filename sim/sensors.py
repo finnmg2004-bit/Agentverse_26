@@ -11,6 +11,7 @@ Provides:
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -28,6 +29,11 @@ LIDAR_GEOMGROUP = np.array([1, 1, 0, 0, 1, 1], dtype=np.uint8)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 AUDIO_DIR = PROJECT_ROOT / "assets" / "audio"
+# NUDGE_REAL_AUDIO=1: use real recordings from assets/audio/real/ (public domain / CC0, credited in
+# README.md) where one exists; YAMNet recognises them (doorbell 0.97, smoke alarm 0.99), unlike the
+# synthesized placeholders. Default off: the scenario tests are tuned on the synthesized clips.
+REAL_AUDIO_DIR = AUDIO_DIR / "real"
+USE_REAL_AUDIO = os.environ.get("NUDGE_REAL_AUDIO", "0") not in ("0", "", "false", "off")
 
 SAMPLE_RATE: int = 16000
 AUDIO_WINDOW_SEC: float = 0.5
@@ -231,14 +237,22 @@ def ensure_audio_assets() -> Dict[str, np.ndarray]:
         wavfile.write(str(oven_path), SAMPLE_RATE, (sig * 32767).astype(np.int16))
 
     clips: Dict[str, np.ndarray] = {}
+    real_used: List[str] = []
     for name, spec in SOUND_SOURCES.items():
         path = AUDIO_DIR / str(spec.get("file", f"{name}.wav"))
+        real = REAL_AUDIO_DIR / path.name
+        if USE_REAL_AUDIO and real.exists():
+            path = real
+            real_used.append(name)
         if not path.exists():
             raise FileNotFoundError(f"{path} missing for sound '{name}' (add the clip or a generator above)")
         sr, data = wavfile.read(str(path))
         if data.ndim > 1:
             data = data[:, 0]
         clips[name] = data.astype(np.float32) / 32768.0
+    if USE_REAL_AUDIO:
+        print(f"[sensors] NUDGE_REAL_AUDIO: real recordings for {', '.join(real_used) or 'nothing'}; "
+              f"synthesized for {', '.join(n for n in clips if n not in real_used)}")
     return clips
 
 
