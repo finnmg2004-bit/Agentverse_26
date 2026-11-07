@@ -10,7 +10,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Local model weights / temp recordings
+# Local model weights / temp recordings (models: `pixi run fetch-models`)
+assets/models/
 *.pt
 *.onnx
 *.tflite

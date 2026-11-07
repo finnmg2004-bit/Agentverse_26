@@ -11,6 +11,9 @@ fetch-go2 = """
 python -c "import os, subprocess; (subprocess.run(['git', 'clone', '--depth', '1', '--filter=blob:none', '--sparse', 'https://github.com/google-deepmind/mujoco_menagerie.git'], check=True), subprocess.run(['git', '-C', 'mujoco_menagerie', 'sparse-checkout', 'set', 'unitree_go2'], check=True)) if not os.path.isdir('mujoco_menagerie/unitree_go2') else print('unitree_go2 already present.')"
 """
 
+# Download YOLOv8n ONNX + YAMNet TFLite into assets/models/ and pull the local Gemma model via Ollama
+fetch-models = "python scripts/fetch_models.py"
+
 # Fetch the nerv-world house scene + its Unitree Go2 (git submodule, shallow, ~390 MB)
 fetch-world = "git submodule update --init --depth 1 worlds/nerv-world"
 
@@ -21,7 +24,7 @@ check-world = { cmd = "python sim/check_world.py", depends-on = ["fetch-world"] 
 house = { cmd = "python sim/view_house.py", depends-on = ["fetch-world"] }
 
 # Full sim pipeline (hotkeys + ZMQ) — still on the LEGACY 10x8 m box house until ported (default / Windows)
-sim = "python sim/run_sim.py"
+sim ="python sim/run_sim.py"
 
 # Run the Nudge Brain process (default / Windows)
 brain = "python nudge-brain/main.py"
@@ -51,3 +54,5 @@ libgl-devel = "*"
 [pypi-dependencies]
 mujoco = ">=3.1.6"
 opencv-python = ">=4.9.0"
+onnxruntime = ">=1.18"
+ai-edge-litert = ">=1.2"
