@@ -270,6 +270,17 @@ def add_nudge_entities(spec: mujoco.MjSpec) -> None:
     _add_scanned_owner(spec, owner)
     add_lightbar(spec, "base")
 
+    # Avoid-area rugs (house_layout.AVOID_AREAS): flat, visual only (contype/conaffinity 0 ->
+    # the static nav map, LiDAR rays at 0.32 m and physics all ignore them). A dark-red field
+    # with a lighter border so it reads as a carpet in the viewer and the head camera.
+    for name, (x0, y0, x1, y1) in H.AVOID_AREAS.items():
+        cx_, cy_, hx, hy = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2, (y1 - y0) / 2
+        wb.add_geom(name=f"rug_{name}_border", type=G.mjGEOM_BOX, pos=[cx_, cy_, 0.004],
+                    size=[hx, hy, 0.004], rgba=[0.86, 0.72, 0.45, 1.0], contype=0, conaffinity=0, group=0)
+        wb.add_geom(name=f"rug_{name}", type=G.mjGEOM_BOX, pos=[cx_, cy_, 0.010],
+                    size=[max(hx - 0.12, 0.05), max(hy - 0.12, 0.05), 0.004],
+                    rgba=[0.55, 0.10, 0.14, 1.0], contype=0, conaffinity=0, group=0)
+
     # Movable chair obstacle (starts stowed)
     cx, cy, cz = H.CHAIR_STOWED_POS
     chair = wb.add_body(name="chair_body", mocap=True, pos=[cx, cy, cz])
