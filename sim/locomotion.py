@@ -201,6 +201,7 @@ class Go2Locomotion:
         guiding: bool = False,
         alert_mode: str = "none",
         dt: float = 0.002,
+        sound: str | None = None,
     ) -> None:
         """
         Advance robot kinematics, trotting animation, owner guiding physics,
@@ -298,7 +299,7 @@ class Go2Locomotion:
         self.handle.update(self.model, dt, float(self.data.time),
                            extended=guiding or alert_mode in ("1_pulse", "2_pulse", "continuous"),
                            alert_mode=alert_mode)
-        self.lightbar.update(self.model, float(self.data.time), alert_mode)
+        self.lightbar.update(self.model, float(self.data.time), alert_mode, sound=sound)
 
         self.data.time += dt
         mujoco.mj_forward(self.model, self.data)

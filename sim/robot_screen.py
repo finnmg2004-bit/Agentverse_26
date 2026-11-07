@@ -27,7 +27,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
-from sim.lightbar import LIT
+from sim.lightbar import LIT, LIT_EMISSION
 
 SCREEN_SIDES = {"left": 1.0, "right": -1.0}
 # Base-frame placement: vertical panels on the trunk flanks, mid-body, just outside the shell.
@@ -37,7 +37,7 @@ BEZEL_PAD = 0.008
 
 IDLE_RGBA = (0.06, 0.06, 0.08, 1.0)
 BEZEL_RGBA = (0.02, 0.02, 0.02, 1.0)
-TIER_COLOUR = {"doorbell": "green", "knock": "yellow", "complete": "white"}  # smoke_alarm: flashes
+TIER_COLOUR = {"doorbell": "green", "knock": "yellow", "kettle": "amber", "complete": "white"}  # smoke_alarm: flashes
 LABEL_HEIGHT = 0.85                    # metres above the robot base for the floating viewer label
 LABEL_MAX = 99                         # mjvGeom.label is a 100-char C string
 
@@ -82,7 +82,8 @@ class RobotScreen:
         elif self.tier == "smoke_alarm":  # danger: red <-> orange, same rhythm family as the light bar
             rgba, emission = (LIT["red"] if (t % 0.5) < 0.25 else LIT["orange"]), 1.0
         else:
-            rgba, emission = LIT[TIER_COLOUR.get(self.tier, "white")], 0.8
+            colour = TIER_COLOUR.get(self.tier, "white")
+            rgba, emission = LIT[colour], min(0.8, LIT_EMISSION.get(colour, 0.8))
         for m in self.mats:
             model.mat_rgba[m] = rgba
             model.mat_emission[m] = emission

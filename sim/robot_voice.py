@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -22,6 +23,17 @@ ROOT = Path(__file__).resolve().parent.parent
 # (module, function) pairs tried in order. Teo's Piper TTS is speech/tts.py -> speech.tts.speak().
 # Never list plain "voice": nudge-brain/voice.py is Ricktho's voice INPUT (mic + Whisper).
 TTS_CANDIDATES = [("speech.tts", "speak"), ("nudge_tts", "speak"), ("voice_out", "speak")]
+
+# The owner's voice input (nudge-brain/voice.py, SELF_SPEECH_RE) ignores sentences that start with
+# "Nudge says", so the robot always speaks with that prefix: the laptop mic must never take the
+# robot's own speech for an owner command (AGENTS.md: voice section, note for Sean).
+SELF_SPEECH_RE = re.compile(r"^\W*nudge\W+says\b", re.IGNORECASE)
+
+
+def spoken_form(text: str) -> str:
+    """The sentence actually spoken: always starts with "Nudge says"."""
+    text = (text or "").strip()
+    return text if SELF_SPEECH_RE.match(text) else f"Nudge says: {text}"
 
 
 def _find_speak() -> Optional[Callable[[str], None]]:
@@ -58,10 +70,11 @@ class RobotVoice:
         self.last_text = text
         if not self.enabled:
             return False
+        spoken = spoken_form(text)
         if self._speak is None:
-            print(f"[voice] would say: {text}")
+            print(f"[voice] would say: {spoken}")
             return True
-        threading.Thread(target=self._safe_speak, args=(text, urgent), daemon=True).start()
+        threading.Thread(target=self._safe_speak, args=(spoken, urgent), daemon=True).start()
         return True
 
     def _safe_speak(self, text: str, urgent: bool = False) -> None:

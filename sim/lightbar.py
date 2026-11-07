@@ -43,7 +43,11 @@ GLOW_SCALE = 1.45  # glow shell half-size relative to the lens bounding box
 
 IDLE = {"red": (0.30, 0.02, 0.02, 0.95), "center": (0.88, 0.90, 0.94, 0.62), "blue": (0.02, 0.04, 0.32, 0.95)}
 LIT = {"red": (1.0, 0.05, 0.03, 1.0), "blue": (0.10, 0.35, 1.0, 1.0), "green": (0.15, 1.0, 0.25, 1.0),
-       "yellow": (1.0, 0.92, 0.08, 1.0), "orange": (1.0, 0.45, 0.02, 1.0), "white": (1.0, 1.0, 1.0, 1.0)}
+       "yellow": (1.0, 0.92, 0.08, 1.0), "orange": (1.0, 0.45, 0.02, 1.0), "white": (1.0, 1.0, 1.0, 1.0),
+       "amber": (1.0, 0.55, 0.0, 1.0)}  # amber: between knock yellow and smoke orange, never teal
+# Emission per lit colour (default 1.0). Bright emission pushes every warm colour to the same
+# saturated yellow on screen; amber at 0.4 renders ~(255, 160, 0) vs knock yellow (255, 255, 31).
+LIT_EMISSION = {"amber": 0.4}
 GLOW_ALPHA = 0.35
 WASH = {"red": (1.0, 0.06, 0.03), "blue": (0.08, 0.25, 1.0)}
 WASH_LEVEL = 2.5
@@ -52,6 +56,7 @@ WASH_LEVEL = 2.5
 SOUND_INFO = {
     "doorbell": ("green", "1"),
     "knock": ("yellow", "2"),
+    "kettle": ("amber", "2"),      # tier 2, 2_pulse like knock; needs `sound` passed to update()
     "smoke_alarm": ("orange", "fast"),
     "complete": ("white", "steady"),
 }
@@ -127,7 +132,7 @@ class LightBar:
         else:
             r, gg, b, _ = LIT[colour]
             model.mat_rgba[m] = LIT[colour]
-            model.mat_emission[m] = 1.0
+            model.mat_emission[m] = LIT_EMISSION.get(colour, 1.0)
             model.mat_rgba[g] = (r, gg, b, GLOW_ALPHA * glow_level)
             model.mat_emission[g] = 1.0
 

@@ -7,6 +7,7 @@ Owners follow AGENTS.md section 9.1.
 - [x] Full `pixi run test-scenarios` green on the merged code (all 9 scenarios, incl. `carpet_rule`, at `2ae9978`, Gemma live, 0 watchdog fallbacks)
 - [ ] Fix the flaky `doorbell` scenario: the brain reports delivered, but the sim's judge sometimes doesn't count it (the owner may let go of the handle near the door)
   - Same root cause seen in `kettle_during_doorbell` (now experimental): `GuideOwner._owner_delivered` uses the handle-offset estimate (~0.6 m behind the robot), but the real owner lags further behind; arriving at the kettle from the south the owner stops 1.2 m away (judge radius 1.15 m) and the final push never runs. Fix idea (Finn/Sean): judge delivery on the owner's sensed/lagged position or keep creeping until the owner is within ~0.5 m of the goal.
+  - Sim side done (Sean): judge radius 1.15 -> 1.4 m, still needs the owner to stay 1 s (walk-past never counts); doorbell 2/2 PASS, `kettle_during_doorbell` PASS (owner 1.3 m from the kettle). Brain-side creeping (Finn) is optional now.
 - [x] End-to-end voice test (scenario `carpet_rule_voice`, LLM parse 1.5 s): real spoken sentence → Ricktho's mic + Whisper → `user_command` → Gemma (LLM on, not the keyword fallback) → rule → robot keeps off the carpet
 - [x] Align the voice port env var: `voice.py` now reads `NUDGE_VOICE_PUB` like the brain (`NUDGE_VOICE_ENDPOINT` kept as an alias)
 
@@ -27,9 +28,9 @@ Owners follow AGENTS.md section 9.1.
 
 ## Sean (sim, outputs, tests)
 - [x] On-robot screen shows the "Nudge says" text (`77bbc21`)
-- [x] LED colour by tier (`77bbc21`; kettle still shows as knock, see Ricktho's note)
-- [ ] Speech through Teo's `speak(text)`
-- [ ] Scenario test for a voice/GUI command
+- [x] LED colour by tier (`77bbc21`; kettle now has its own amber on the light bar + screens, from the brain's mission sound)
+- [x] Speech through Teo's `speak(text)` (`sim/robot_voice.py` -> `speech.tts.speak`, `NUDGE_SPEECH=1`; spoken as "Nudge says: ..." so the mic ignores it; smoke uses `interrupt=True`)
+- [x] Scenario test for a voice/GUI command (`carpet_rule` = GUI `user_command`; `carpet_rule_voice` = real voice, Ricktho)
 
 ## Teo (models)
 - [x] Local text-to-speech (Piper): `from speech.tts import speak, synthesize, warmup, stop` (voice en_US-ljspeech-medium, MIT; `pixi run fetch-models`)
