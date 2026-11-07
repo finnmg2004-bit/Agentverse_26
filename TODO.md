@@ -4,7 +4,7 @@ Status after `baf3de5` (rules + carpet + voice merged). Tick an item off when it
 Owners follow AGENTS.md section 9.1.
 
 ## Verify
-- [ ] Full `pixi run test-scenarios` green on the merged code (all 9 scenarios, incl. `carpet_rule`)
+- [x] Full `pixi run test-scenarios` green on the merged code (all 9 scenarios, incl. `carpet_rule`, at `2ae9978`, Gemma live, 0 watchdog fallbacks)
 - [ ] Fix the flaky `doorbell` scenario: the brain reports delivered, but the sim's judge sometimes doesn't count it (the owner may let go of the handle near the door)
   - Same root cause seen in `kettle_during_doorbell` (now experimental): `GuideOwner._owner_delivered` uses the handle-offset estimate (~0.6 m behind the robot), but the real owner lags further behind; arriving at the kettle from the south the owner stops 1.2 m away (judge radius 1.15 m) and the final push never runs. Fix idea (Finn/Sean): judge delivery on the owner's sensed/lagged position or keep creeping until the owner is within ~0.5 m of the goal.
 - [x] End-to-end voice test (scenario `carpet_rule_voice`, LLM parse 1.5 s): real spoken sentence → Ricktho's mic + Whisper → `user_command` → Gemma (LLM on, not the keyword fallback) → rule → robot keeps off the carpet
@@ -22,8 +22,8 @@ Owners follow AGENTS.md section 9.1.
 - [ ] Simultaneous sounds handled by tier (a higher tier pre-empts, a lower one is queued)
 
 ## Sean (sim, outputs, tests)
-- [ ] On-robot screen shows the "Nudge says" text
-- [ ] LED colour by tier
+- [x] On-robot screen shows the "Nudge says" text (`77bbc21`)
+- [x] LED colour by tier (`77bbc21`; kettle still shows as knock, see Ricktho's note)
 - [ ] Speech through Teo's `speak(text)`
 - [ ] Scenario test for a voice/GUI command
 
@@ -34,8 +34,11 @@ Owners follow AGENTS.md section 9.1.
 - [ ] Fine-tune (paused): add a Modal payment method, then follow AGENTS.md 6.1
 
 ## Eden (GUI, integration, story)
-- [ ] GUI command/rule text box (sends `user_command`)
-- [ ] "Heard: '…'" display, active rules panel, no-go area on the map (the brain status already carries `rules` and `nudge_says`)
+- [x] GUI command/rule text box (sends `user_command`) + example sentences
+- [x] "Heard: '…'" display, active rules panel, no-go area on the map, "Nudge says" on the 3D view, mic indicator
+- [x] Kettle + scene buttons; sound buttons now generated from `SOUND_SOURCES` (new sounds appear automatically)
+- [x] **GUI plugin panels:** any `gui/panels/<name>.py` with `TITLE` + `build(ctx)` (+ `update(ctx)`) becomes a tab, no edits to `nudge_control.py` (see `gui/panels/__init__.py`); "Brain data" tab shows any new brain/sim field automatically
+- [ ] Demo storyboard + 1-page summary draft
 
 ## Demo (M10)
 - [ ] Demo scenario passes 3× in a row on the recording laptop
