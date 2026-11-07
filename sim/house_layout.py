@@ -240,6 +240,37 @@ EXIT_TARGETS: Dict[str, str] = {
 }
 CHAIR_COLLISION_RADIUS: float = 0.22
 
+# --------------------------------------------------------------------------- #
+# Avoid areas (AGENTS.md 9.4): named floor rectangles (x0, y0, x1, y1) the owner can
+# tell the robot to keep off ("I've got a new carpet in the living room, please don't
+# step on it"). Not obstacles: the static nav map ignores them; the brain's planner
+# avoids an area only while a matching rule is active, and a danger sound (smoke) may
+# override it. The sim draws each one as a flat rug and reports (ground truth) when the
+# robot steps on it ("[sim] AVOID AREA ...", `in_avoid_area` in `state`).
+#
+# living_room_carpet sits on the direct diagonal from the guest-room door to the owner
+# (-11, 5): with no rule the robot walks across it; with the rule it goes in through the
+# dining-room door and along the north wall instead (~1.2 m longer). It keeps clear of
+# the owner's spot, every living-room doorway and the back (evacuation) door.
+# --------------------------------------------------------------------------- #
+AVOID_AREAS: Dict[str, Tuple[float, float, float, float]] = {
+    "living_room_carpet": (-10.0, 2.4, -7.6, 4.4),
+}
+AVOID_AREA_LABELS: Dict[str, str] = {
+    "living_room_carpet": "the new carpet in the living room",
+}
+# Robot footprint half-size used when judging "stepped on": the Go2 body centre is ~0.3 m
+# from its feet, so the robot counts as on the area once its centre is within this margin.
+AVOID_AREA_MARGIN: float = 0.25
+
+
+def avoid_area_at(x: float, y: float, margin: float = 0.0) -> Optional[str]:
+    """Name of the avoid area containing (x, y) (rectangle grown by `margin`), else None."""
+    for name, (x0, y0, x1, y1) in AVOID_AREAS.items():
+        if x0 - margin <= x <= x1 + margin and y0 - margin <= y <= y1 + margin:
+            return name
+    return None
+
 
 # --------------------------------------------------------------------------- #
 # Wall segments (2D) for acoustic occlusion and the dashboard map:

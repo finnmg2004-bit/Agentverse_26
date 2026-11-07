@@ -18,12 +18,15 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Dict, List
+
+USER_COMMAND_PUB = "tcp://127.0.0.1:5557"  # same endpoint as gui/nudge_control.py
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -76,6 +79,26 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["RESET by sim (episode 1)"],
         "expect_alert": ["1_pulse"],
     },
+    "carpet_baseline": {
+        "desc": "No carpet rule: doorbell -> the default route crosses the living-room carpet (proves the "
+                "carpet is in the way, i.e. the rule demo is meaningful)",
+        "actions": [("at", 1.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": [],
+        "expect_alert": ["1_pulse"],
+        "expect_sim": ["AVOID AREA: robot stepped ON living_room_carpet"],
+    },
+    "carpet_rule": {
+        "desc": "[needs user_command in the brain] Owner: don't step on the new carpet -> doorbell -> "
+                "robot reaches the owner and the front door without ever stepping on the carpet",
+        "experimental": True,  # run explicitly until Finn's user_command / avoid-area planner lands
+        "actions": [("cmd", 0.5, "Nudge, I've got a new carpet in the living room, please don't step on it."),
+                    ("at", 4.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": [],
+        "expect_alert": ["1_pulse"],
+        "forbid_sim": ["AVOID AREA: robot stepped ON"],
+    },
     "demo": {
         "desc": "AGENTS.md demo story: doorbell, owner moved, then smoke alarm pre-empts while guiding",
         "actions": [("at", 1.0, "B"), ("at", 3.0, "O"), ("on", "guide_owner_to(front_door)", 2.0, "M")],
@@ -119,6 +142,18 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     import main as brain_main  # nudge-brain/main.py
 
     print(f"\n=== {name}: {spec['desc']}  [noise={noise}]")
+    # Owner commands go out where the Nudge Control GUI publishes them (AGENTS.md 9.4).
+    cmd_pub = None
+    if any(a[0] == "cmd" for a in spec["actions"]):
+        import zmq
+        cmd_pub = zmq.Context.instance().socket(zmq.PUB)
+        try:
+            cmd_pub.bind(USER_COMMAND_PUB)
+        except zmq.ZMQError as exc:
+            print(f"    cannot bind {USER_COMMAND_PUB} ({exc}) - close the Nudge Control GUI first")
+            cmd_pub.close(linger=0)
+            print(f"--> {name}: FAIL (setup)")
+            return False
     sim = SimProcess(gui, noise, duration=timeout + 15)
     with contextlib.redirect_stdout(io.StringIO()):
         brain = brain_main.Brain(show_dashboard=False)
@@ -164,6 +199,13 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             alerts_seen.add(brain.alerts.mode)
             el = t0 - start
             for i, a in enumerate(list(pending)):
+                if a[0] == "cmd":  # owner command (AGENTS.md 9.4 `user_command`), as if typed in the GUI
+                    if el >= a[1]:
+                        cmd_pub.send_multipart([b"user_command", json.dumps(
+                            {"text": a[2], "source": "gui", "confidence": 1.0}).encode("utf-8")])
+                        print(f"    t={el:5.1f}s  user_command: {a[2]!r}")
+                        pending.remove(a)
+                    continue
                 if a[0] == "at" and el >= a[1]:
                     fire = True
                 elif a[0] == "on" and any(a[1] in l for l in log):
@@ -196,20 +238,23 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
         WorldModel.log = orig_log
         brain.bridge.send_cmd(0.0, 0.0, 0.0)
         brain.bridge.close()
+        if cmd_pub is not None:
+            cmd_pub.close(linger=0)
         sim.stop()
 
     missing_log = [s for s in spec["expect_log"] if not any(s in l for l in log)]
     missing_alert = [m for m in spec["expect_alert"] if m not in alerts_seen]
-    passed = ok and not missing_log and not missing_alert
+    missing_sim = [s for s in spec.get("expect_sim", []) if not any(s in l for l in sim.lines)]
+    forbidden = [l for l in sim.lines if any(s in l for s in spec.get("forbid_sim", []))]
     for l in sim.lines:
-        if "SCENARIO" in l or "HOTKEY" in l:
+        if "SCENARIO" in l or "HOTKEY" in l or "AVOID AREA" in l:
             print(f"    {l}")
-    pressed = [a[-1] for a in spec["actions"]]
+    pressed = [a[-1] for a in spec["actions"] if a[0] != "cmd"]
     got = [l for l in sim.lines if "HOTKEY [" in l]
     lost = [k for k in pressed if not any(f"HOTKEY [{k}]" in l for l in got)]
     if lost:
         print(f"    hotkeys never reached the sim: {lost}")
-        ok = False
+    passed = ok and not lost and not missing_log and not missing_alert and not missing_sim and not forbidden
     for l in log:
         if "rejected" in l or "WATCHDOG" in l or "LLM error" in l:
             print(f"    note: {l}")
@@ -226,6 +271,10 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
         print(f"    missing brain log: {missing_log}")
     if missing_alert:
         print(f"    missing alert modes: {missing_alert}")
+    if missing_sim:
+        print(f"    missing sim output: {missing_sim}")
+    if forbidden:
+        print(f"    forbidden sim output ({len(forbidden)}x), first: {forbidden[0]}")
     print(f"--> {name}: {'PASS' if passed else 'FAIL'} ({elapsed:.1f}s)")
     return passed
 
@@ -235,15 +284,17 @@ def main() -> int:
     ap.add_argument("scenarios", nargs="*", help=f"subset of: {', '.join(SCENARIOS)}")
     ap.add_argument("--gui", action="store_true", help="show the MuJoCo viewer")
     ap.add_argument("--noise", default="quiet", help="background noise profile (quiet/fan/tv/vacuum/party)")
-    ap.add_argument("--timeout", type=float, default=100.0, help="per-scenario wall-clock limit (s)")
+    ap.add_argument("--timeout", type=float, default=150.0, help="per-scenario wall-clock limit (s)")
     ap.add_argument("-v", "--verbose", action="store_true", help="print the brain log live")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
     if args.list:
         for n, s in SCENARIOS.items():
-            print(f"{n:12s} {s['desc']}")
+            tag = " (experimental: run by name)" if s.get("experimental") else ""
+            print(f"{n:16s} {s['desc']}{tag}")
         return 0
-    names = args.scenarios or list(SCENARIOS)
+    # Experimental scenarios (features still being built) only run when named explicitly.
+    names = args.scenarios or [n for n, s in SCENARIOS.items() if not s.get("experimental")]
     unknown = [n for n in names if n not in SCENARIOS]
     if unknown:
         ap.error(f"unknown scenario(s): {unknown}")

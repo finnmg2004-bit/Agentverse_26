@@ -65,6 +65,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sim.house_layout import (
+    AVOID_AREA_MARGIN,
+    AVOID_AREAS,
     CHAIR_DOORWAY_POS,
     CHAIR_STOWED_POS,
     LANDMARKS,
@@ -73,6 +75,7 @@ from sim.house_layout import (
     ROOMS,
     ROOM_ORDER,
     SOUND_SOURCES,
+    avoid_area_at,
     get_room_at,
 )
 from sim.locomotion import Go2Locomotion
@@ -192,6 +195,12 @@ class NudgeSimulator:
         self.goal_since: Dict[str, float] = {}  # sound -> sim time the owner entered the goal radius
         self.last_scenario_check: float = 0.0
 
+        # Avoid areas (house_layout.AVOID_AREAS, e.g. the living-room carpet): ground-truth
+        # "did the robot step on it". Rules live in the brain; the sim only reports.
+        self.in_avoid_area: str | None = None
+        self.avoid_entered_at: float = 0.0
+        self.avoid_steps: int = 0  # entries this episode
+
     def _start_sound(self, name: str) -> None:
         if not self.active_sounds.get(name):
             self.sound_started[name] = float(self.data.time)
@@ -240,6 +249,21 @@ class NudgeSimulator:
                 self.sound_timed_out[name] = True
                 print(f"[sim] SCENARIO FAILED: {name} unresolved after {SCENARIO_TIMEOUT_S:.0f}s "
                       f"(owner at {ox:.2f}, {oy:.2f}, {dist:.1f} m from {target}).")
+
+    def check_avoid_areas(self) -> None:
+        """Print once on entering / leaving an avoid area (robot centre within the footprint margin)."""
+        rx, ry, _ = self.locomotion.get_pose()
+        area = avoid_area_at(rx, ry, AVOID_AREA_MARGIN)
+        t = float(self.data.time)
+        if area and area != self.in_avoid_area:
+            self.avoid_steps += 1
+            self.avoid_entered_at = t
+            sounds = [s for s, on in self.active_sounds.items() if on] or ["none"]
+            print(f"[sim] AVOID AREA: robot stepped ON {area} at ({rx:.2f}, {ry:.2f}) "
+                  f"[active sounds: {', '.join(sounds)}]")
+        elif not area and self.in_avoid_area:
+            print(f"[sim] AVOID AREA: robot left {self.in_avoid_area} after {t - self.avoid_entered_at:.1f}s")
+        self.in_avoid_area = area
 
     def handle_hotkey(self, key_name: str) -> None:
         """Process a single-character hotkey or scripted event command."""
@@ -376,6 +400,8 @@ class NudgeSimulator:
         self.cmd_guiding = False
         self.mission_status = "idle"
         self.mission_text = ""
+        self.in_avoid_area = None
+        self.avoid_steps = 0
         print(f"[sim] HOTKEY [R]: Scene RESET (episode {self.episode}): robot in "
               f"{get_room_at(*ROBOT_START_POSE[:2])}, owner in {ROOM_ORDER[0]}, chair stowed, sounds off")
 
@@ -516,6 +542,10 @@ class NudgeSimulator:
                 # Touch sensor on the guide handle: the owner taps it to acknowledge an alert.
                 "handle_tap": self.owner.handle_tap,
                 "owner_state_gt": self.owner.status(),  # debug only, like owner_pos_gt
+                # Ground truth for avoid-area tests / GUI shading (rules themselves live in the brain).
+                "in_avoid_area": self.in_avoid_area,
+                "avoid_steps": self.avoid_steps,
+                "avoid_areas": {k: list(v) for k, v in AVOID_AREAS.items()},
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -579,6 +609,7 @@ class NudgeSimulator:
             dt=dt,
         )
         self.check_scenario_end()
+        self.check_avoid_areas()
         self.publish_telemetry(float(self.data.time))
         self.publish_view(float(self.data.time))
 
