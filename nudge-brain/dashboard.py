@@ -159,7 +159,7 @@ class Dashboard:
         # Mission & agent
         x = 410
         m = world.mission
-        mtxt = "none" if m is None else f"{m['sound'].upper()} -> {m['target']}"
+        mtxt = "none" if m is None else f"{m['sound'].upper()} -> {m['target'] or 'owner'}"
         put(img, f"MISSION: {mtxt}", (x, y0 + 22), RED if world.is_emergency() else TEXT, 0.55, 2)
         put(img, f"phase: {world.phase}", (x, y0 + 48), TEXT, 0.5)
         put(img, f"skill: {skill_label}", (x, y0 + 72), CYAN, 0.5)
@@ -182,13 +182,35 @@ class Dashboard:
         for i, line in enumerate(list(world.events)[:8]):
             put(img, line[:58], (lx, y0 + 44 + i * 21), DIM if i else TEXT, 0.4)
 
-    def render(self, world, agent, cam, skill_label: str, alerts, nav_path) -> Optional[str]:
-        """Draw one frame. Returns a sim hotkey to forward, 'quit', or None."""
+    def _voice(self, img, world, agent, voice) -> None:
+        """Owner request lines: mic state / what was heard, how it was understood, Nudge's reply."""
+        y = 495 + 170
+        if voice is None or not voice.enabled:
+            put(img, "VOICE: off", (20, y), DIM, 0.42)
+        elif voice.state == "listening":
+            lvl = min(1.0, voice.level * 12)
+            put(img, "VOICE: LISTENING - speak now", (20, y), RED, 0.5, 2)
+            cv2.rectangle(img, (300, y - 12), (300 + int(90 * lvl), y - 2), RED, -1)
+        elif voice.state == "transcribing":
+            put(img, "VOICE: transcribing...", (20, y), AMBER, 0.5, 2)
+        elif agent.last_request:
+            r = agent.last_request
+            put(img, f'OWNER: "{r["text"][:40]}"', (20, y), CYAN, 0.42)
+            what = r["intent"] + (f"({r['target']})" if r.get("target") else "")
+            put(img, f"  -> {what}  [{r['source'].split()[0]} {r['latency']:.1f}s]", (20, y + 19), CYAN, 0.42)
+        else:
+            put(img, f"VOICE: press [T] and speak ({voice.backend})"[:52], (20, y), DIM, 0.42)
+        if world.last_reply:
+            put(img, f'NUDGE: "{world.last_reply[:38]}"', (20, y + 38), TEXT, 0.42)
+
+    def render(self, world, agent, cam, skill_label: str, alerts, nav_path, voice=None) -> Optional[str]:
+        """Draw one frame. Returns a sim hotkey to forward, 'talk' ([T]), 'quit', or None."""
         t = time.monotonic()
         img = np.full((H, W, 3), BG, np.uint8)
         self._camera(img, cam, world.last_detection)
         self._map(img, world, nav_path, t)
         self._status(img, world, agent, skill_label, alerts, t)
+        self._voice(img, world, agent, voice)
         status, detail = world.mission_status()
         if status == "complete":
             cv2.rectangle(img, (10, 10), (650, 78), (40, 120, 40), -1)
@@ -201,6 +223,8 @@ class Dashboard:
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), ord("Q"), 27):
             return "quit"
+        if key in (ord("t"), ord("T")):
+            return "talk"
         return FORWARD_KEYS.get(key)
 
     def close(self) -> None:

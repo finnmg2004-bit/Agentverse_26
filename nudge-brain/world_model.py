@@ -4,7 +4,8 @@ Milestone 7a: World Model (`nudge-brain/world_model.py`).
 Single shared belief state for the brain:
   - Robot pose / room / LiDAR (from sim `state` telemetry)
   - Owner belief (last seen position, room, visibility) from vision or the guide handle
-  - Latest hearing result and the active mission (doorbell / knock / smoke_alarm)
+  - Latest hearing result and the active mission (doorbell / knock / smoke_alarm, or an owner
+    request: "sound" = "voice_request", "target" = where to take them or None for "come here")
   - Rooms already searched, doorways currently believed blocked, and an event log
 """
 
@@ -82,7 +83,7 @@ class WorldModel:
         }
 
         # Mission / task
-        self.mission: Optional[Dict[str, Any]] = None  # {"sound", "target", "started", "started_sim"}
+        self.mission: Optional[Dict[str, Any]] = None  # {"sound", "target", "started", "started_sim"[, "request"]}
         # Outcome of the last finished mission, kept until a new mission starts or the sim resets:
         # {"status": "complete", "sound", "target", "duration_s" (sim time)}
         self.last_result: Optional[Dict[str, Any]] = None
@@ -92,6 +93,7 @@ class WorldModel:
         self.nav_path: List[Tuple[float, float]] = []
 
         self.events: Deque[str] = deque(maxlen=10)
+        self.last_reply: str = ""  # what Nudge last "said" to the owner (screen / speech, see AGENTS.md 2.2)
 
     # ------------------------------------------------------------------ updates
     def update_state(self, msg: Dict[str, Any]) -> None:
@@ -173,20 +175,37 @@ class WorldModel:
         )
 
     # ------------------------------------------------------------------ mission
-    def start_mission(self, sound: str) -> None:
-        target = str(SOUND_SOURCES[sound]["target_landmark"])
+    def start_mission(self, sound: str, target: Optional[str] = None, request: Optional[str] = None) -> None:
+        if request is None:
+            target = str(SOUND_SOURCES[sound]["target_landmark"])
         self.mission = {"sound": sound, "target": target, "started": time.monotonic(),
                         "started_sim": self.t_sim}
+        if request is not None:
+            self.mission["request"] = request
         self.last_result = None
         self.phase = "searching"
         self.searched_rooms.clear()
-        self.log(f"MISSION {sound.upper()} -> owner to {target}")
+        self.log(f"MISSION {sound.upper()} -> " + (f"owner to {target}" if target else "go to the owner"))
+
+    def is_request(self) -> bool:
+        return self.mission is not None and "request" in self.mission
+
+    def cancel_mission(self, why: str) -> None:
+        if self.mission:
+            self.log(f"Mission {self.mission['sound']} cancelled: {why}")
+        self.mission = None
+        self.last_result = None
+        self.phase = "idle"
+
+    def reply(self, text: str) -> None:
+        self.last_reply = text
+        self.log(f'NUDGE SAYS: "{text}"')
 
     def finish_mission(self) -> None:
         if self.mission:
             duration = self.t_sim - float(self.mission.get("started_sim", self.t_sim))
             self.last_result = {"status": "complete", "sound": self.mission["sound"],
-                                "target": self.mission["target"], "duration_s": round(duration, 1)}
+                                "target": self.mission["target"] or "the owner", "duration_s": round(duration, 1)}
             self.log(f"Mission {self.mission['sound']} complete ({duration:.1f} s sim time)")
         self.mission = None
         self.phase = "idle"
@@ -194,8 +213,14 @@ class WorldModel:
     def mission_status(self) -> Tuple[str, str]:
         """("idle" | "active" | "complete", human-readable detail) for the sim overlay & dashboard."""
         if self.mission is not None:
+            if self.is_request():
+                goal = f"owner to {self.mission['target']}" if self.mission["target"] else "go to the owner"
+                return "active", f"VOICE \"{self.mission['request'][:40]}\" -> {goal}"
             return "active", f"{self.mission['sound'].upper()} -> owner to {self.mission['target']}"
         r = self.last_result
+        if r is not None and r["sound"] == "voice_request":
+            done = "robot with the owner" if r["target"] == "the owner" else f"owner delivered to {r['target']}"
+            return "complete", f"VOICE REQUEST: {done} in {r['duration_s']:.1f} s"
         if r is not None:
             return "complete", (f"{r['sound'].upper()}: owner delivered to {r['target']} "
                                 f"in {r['duration_s']:.1f} s")
@@ -218,7 +243,8 @@ class WorldModel:
             "owner_distance_m": None if self.owner_pos is None else round(self.dist_to_owner(), 2),
             "sound": {"label": self.sound.get("label"), "confidence": self.sound.get("confidence")},
             "mission": None if self.mission is None else {
-                "sound": self.mission["sound"], "deliver_owner_to": self.mission["target"]},
+                "sound": self.mission["sound"], "deliver_owner_to": self.mission["target"],
+                **({"request": self.mission["request"]} if self.is_request() else {})},
             "phase": self.phase,
             "searched_rooms": sorted(self.searched_rooms),
             "blocked_doors": sorted(self.blocked_doors),

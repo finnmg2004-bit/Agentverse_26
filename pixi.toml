@@ -34,7 +34,10 @@ brain = "python nudge-brain/main.py"
 # Extra options pass through, e.g. `pixi run start --view dog --noise tv`
 start = { cmd = "python scripts/run_all.py", depends-on = ["fetch-world"] }
 
-# End-to-end scenario tests (doorbell, knock, smoke, owner_moved, chair, reset, demo); add --gui to watch
+# Type an owner request into a running brain, e.g. `pixi run say take me to the kitchen` (same channel as a chat GUI)
+say = "python scripts/say.py"
+
+# End-to-end scenario tests (doorbell, knock, smoke, owner_moved, chair, reset, demo, voice_*); add --gui to watch
 test-scenarios = { cmd = "python scripts/test_scenarios.py", depends-on = ["fetch-world"] }
 
 [target.linux-64.tasks]
@@ -53,6 +56,7 @@ pip = ">=24.0"
 numpy = ">=1.26,<2.0"
 scipy = ">=1.12"
 pyzmq = ">=25.1"
+python-sounddevice = ">=0.5.6,<0.6"
 
 [target.linux-64.dependencies]
 # Linux GLFW / X11 / OpenGL runtime libs so MuJoCo viewer doesn't fail on missing .so files
@@ -64,3 +68,4 @@ mujoco = ">=3.1.6"
 opencv-python = ">=4.9.0"
 onnxruntime = ">=1.18"
 ai-edge-litert = ">=1.2"
+faster-whisper = ">=1.2.1, <2"

@@ -83,7 +83,7 @@ def validate_action(action: Dict[str, Any], world) -> Tuple[bool, str]:
         if not (world.guiding_active or world.dist_to_owner() < 1.6):
             return False, "owner not at the handle"
     if tool == "alert_owner":
-        if args.get("sound") not in SOUND_SOURCES:
+        if args.get("sound") not in SOUND_SOURCES and args.get("sound") != "voice_request":
             return False, f"bad sound {args.get('sound')!r}"
         if not world.owner_recently_seen(8.0):
             return False, "owner location unknown"

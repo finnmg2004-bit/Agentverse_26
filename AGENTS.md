@@ -3,7 +3,7 @@
 ## 1. Hackathon & Judging Context
 - **Event**: Agentverse 2026 — Robotics Track ("Give an agent a body").
 - **Core Requirement**: An embodied agent in a simulated 3D world (MuJoCo) that perceives via simulated sensors, decides autonomously from sensor data (not a pre-scripted path), and acts in real time.
-- **Security & Secret Hygiene Rule (CRITICAL)**: **NEVER hardcode, commit, or push API keys, tokens, credentials, or `.env` files to git.** All models in Nudge run 100% locally (YAMNet, YOLOv8n, local Gemma via Ollama), and any external keys/configs must stay strictly in `.gitignore`d `.env` files.
+- **Security & Secret Hygiene Rule (CRITICAL)**: **NEVER hardcode, commit, or push API keys, tokens, credentials, or `.env` files to git.** All models in Nudge run 100% locally (YAMNet, YOLOv8n, Whisper speech-to-text, local Gemma via Ollama), and any external keys/configs must stay strictly in `.gitignore`d `.env` files.
 - **Judging Weights**:
   - Perception-driven action: **25%**
   - Adapting when the scene changes mid-run: **25%**
@@ -88,7 +88,7 @@ Agentverse_26/
 │   ├── sensors.py            # Head RGB-D renderer, 2D LiDAR raycasts, stereo ear audio synth
 │   └── run_sim.py            # Main MuJoCo viewer loop, keyboard hotkeys, ZMQ PUB/SUB server (`pixi run sim`)
 └── nudge-brain/              # PROCESS 2: Perception, Navigation, Local Agent & Dashboard
-    ├── bridge.py             # ZeroMQ client (subscribes to sensors :5555, publishes cmds :5556)
+    ├── bridge.py             # ZeroMQ client (subscribes to sensors :5555, publishes cmds :5556, owner requests in on :5558)
     ├── hearing.py            # Local YAMNet classifier + stereo ILD/ITD azimuth estimator
     ├── vision.py             # Local YOLOv8n person detector + depth-to-world (x, y) projection
     ├── world_model.py        # Tracks robot pose, owner belief state, active sounds, task status
@@ -96,7 +96,9 @@ Agentverse_26/
     ├── safety.py             # Hard invariants: smoke alarm pre-emption, 2.0s LLM watchdog, speed cap
     ├── alerts.py             # Haptic handle pulse state machine (1 pulse, 2 pulses, continuous)
     ├── skills.py             # Executes agent tool calls as behaviours (go_to_room, look_around, alert_owner, guide...)
-    ├── agent.py              # Event-driven Gemma 4 E2B via Google ADK (local Ollama/vLLM backend)
+    ├── agent.py              # Event-driven Gemma 4 E2B via Google ADK (local Ollama/vLLM backend) + owner-request parsing
+    ├── voice.py              # Owner voice: laptop mic (tap-to-talk [T]) -> local Whisper speech-to-text
+    ├── intents.py            # Owner request -> task (come_here / go_to / stop / find_object); keyword fallback + LLM prompt
     ├── dashboard.py          # Live OpenCV telemetry window for the screen recording
     └── main.py               # Brain orchestrator loop
 ```
@@ -106,7 +108,7 @@ Agentverse_26/
 git clone --recurse-submodules --shallow-submodules <this repo>   # or, in an existing clone:
 pixi run fetch-world      # git submodule update --init --depth 1 worlds/nerv-world (~390 MB)
 pixi run check-world      # must print "[check] all checks passed"
-pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
+pixi run fetch-models     # YOLOv8n ONNX + YAMNet TFLite + Whisper base.en -> assets/models/, + `ollama pull gemma4:e2b` (install Ollama first)
 pixi run prepare-owner    # scanned owner: put Renderpeople `rp_mei_posed_001_OBJ/` in assets/models/ first (licence: not in git)
 pixi run sim              # terminal 1: MuJoCo viewer (cutaway view), hotkeys, ZMQ server
 pixi run brain            # terminal 2: brain + dashboard
@@ -217,18 +219,20 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - **`nudge-brain` -> `sim` (PUB on `tcp://127.0.0.1:5556`)**:
   - Topic `cmd` (20 Hz JSON): `{"vx": float, "vy": float, "wz": float, "alert_mode": "none"|"1_pulse"|"2_pulse"|"continuous", "guiding": bool, "mission_status": "idle"|"active"|"complete", "mission_text": str, "episode": int}`. The sim ignores `cmd` packets whose `episode` doesn't match its own (stale commands from before an `R` reset).
   - `state` also carries `"episode": int` (incremented by the `R` reset hotkey).
+- **Owner requests -> `nudge-brain` (SUB bound by the brain on `tcp://127.0.0.1:5558`; any number of publishers connect)**:
+  - Topic `owner_request` (JSON): `{"text": str, "channel": "chat"|"voice"|"handle"}`. For the chat GUI; `scripts/say.py` / `pixi run say <text>` is a reference publisher (connect, wait ~0.4 s, send). Spoken requests from the mic don't use ZMQ (they are captured inside the brain).
 - `robot_room` values are `house_layout.ROOMS` keys (`entry`, `living_room`, `guest`, …) or `"outside"`.
   - **Planned change (not yet implemented — coordinate before changing the contract)**: replace `alert_mode` with an alert event `"alert": {"sound": str, "tier": 1|2|3, "room": str, "message": str} | null` so the sim drives the haptic handle, LED, screen and speaker from one event (see 2.2). The brain only decides; the sim's output devices act.
 
 ---
 
 ## 6. Agent Tools & Safety Layer Rules
-- **Agent Model**: Local Gemma 4 E2B via Google ADK / local Ollama HTTP API (`http://127.0.0.1:11434`, model `gemma4:e2b` / `gemma3:4b` with automatic deterministic tool-policy fallback if Ollama server takes > 2.0s or is offline). Wakes ONLY on discrete events: `new_sound`, `arrived_in_room`, `owner_seen`, `owner_not_found`, `timeout`.
+- **Agent Model**: Local Gemma 4 E2B via Google ADK / local Ollama HTTP API (`http://127.0.0.1:11434`, model `gemma4:e2b` / `gemma3:4b` with automatic deterministic tool-policy fallback if Ollama server takes > 2.0s or is offline). Wakes ONLY on discrete events: `new_sound`, `owner_request`, `arrived_in_room`, `owner_seen`, `owner_not_found`, `timeout`.
 - **Agent Tools**:
   - `get_state() -> dict`
   - `go_to_room(room: str)` — `room` ∈ `house_layout.nudge_rooms()`
   - `look_around()`
-  - `alert_owner(sound: str, place: str)`
+  - `alert_owner(sound: str, place: str)` — `sound` ∈ `SOUND_SOURCES` or `"voice_request"` (1 pulse = "I'm here")
   - `offer_handle()`
   - `guide_owner_to(target: str)` — `target` ∈ `house_layout.LANDMARKS`
   - `investigate_sound()`
@@ -236,6 +240,14 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
   1. **Smoke Alarm Pre-emption**: If `smoke_alarm` is detected with confidence >= 0.6, immediately interrupt any current plan, find owner, set `continuous` alert, and execute `guide_owner_to(SMOKE_EVACUATION_TARGET)` (= `"back_exit_outside"`). *(Planned: generalize to tier-based pre-emption — a higher-priority tier always interrupts a lower one; see 2.1.)*
   2. **2.0 s Watchdog**: If the LLM takes > 2.0s to return a tool call after an event, deterministic fallback rules take over immediately.
   3. **Proximity Speed Cap**: Clamp speed <= 0.4 m/s whenever within 1.0 m of the owner.
+
+### 6.0 Owner requests (voice / chat) — implemented
+- **Input**: `[T]` in the dashboard = tap-to-talk on the real laptop mic (`voice.py`: PipeWire `pw-record` → PulseAudio → ALSA → sounddevice; energy endpointing, ends after 0.8 s silence) → **Whisper base.en** (faster-whisper int8, CPU, ~0.5 s, offline; `NUDGE_STT_MODEL=tiny.en` is faster). Typed requests arrive on `owner_request` (:5558). `--no-voice` disables the mic/STT.
+- **Understanding**: `agent.parse_request(text)` asks Gemma with `intents.INTENT_PROMPT` → `{"intent", "target", "object", "say"}`, validated by `intents.validate`; on LLM offline / > 2.0 s / invalid → `intents.parse_keywords` (deterministic). Intents: `come_here`, `go_to(target ∈ ROOMS ∪ LANDMARKS)`, `stop`, `find_object(object)` (not a capability yet: replies "can't search yet"), `unknown`.
+- **Execution**: `come_here` / `go_to` start a mission with `sound = "voice_request"`, `target` (None for come_here) and `request` = the words, then the normal event loop runs: find the owner **with the camera** → `alert_owner("voice_request")` → `guide_owner_to(target)`; come_here ends after the nudge. **Navigation never uses the voice** (no voice localisation): map + LiDAR + camera only.
+- **Priority**: smoke alarm > doorbell/knock > owner request. During the evacuation every request (incl. `stop`) is refused with "Fire alarm. Follow me out first." A new request replaces a running request or doorbell mission; `stop` cancels any non-emergency mission.
+- **Replies**: `world.reply()` → dashboard `NUDGE: "…"` + log (`NUDGE SAYS`). Spoken replies (local TTS) / screen are M7b.
+- **Tests**: `assets/audio/voice/*.wav` (Piper TTS, LJSpeech voice, public domain) are injected through Whisper by `scripts/test_scenarios.py` (`voice_come`, `voice_take_me`, `voice_stop`, `voice_smoke`) — no mic needed.
 
 ### 6.1 LLM Plan: local at runtime, Modal only for offline training (agreed)
 - **Runtime is 100% local.** The demo's LLM runs in local Ollama (`NUDGE_OLLAMA_URL` must stay `http://127.0.0.1:11434`). Ollama *can* run on Modal behind a web endpoint, but a Modal call in the runtime loop is a cloud API call and costs us the 15% "operational autonomy" score. Remote Ollama is OK for dev experiments only, never in the recorded demo.
@@ -259,6 +271,7 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - **`X`**: Silence all active sounds
 - **`R`**: **Reset** the scene (robot to the entry-hall start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
 - **`N` or `6`**: Cycle **background noise** for hearing robustness tests: `quiet` → `fan` → `tv` → `vacuum` → `party` (start with `--noise NAME`)
+- **`T`** (dashboard window only): **Talk** — record one owner request from the laptop microphone (see 6.0)
 - **`V`**: Cycle **viewer camera**: `top` dollhouse view → `follow` (chase the robot) → `dog` (the head RGB-D camera = exactly what YOLO sees) (start with `--view NAME`)
 - **Scenario end condition** (sim ground truth): owner held ≥1 s within 1.15 m of the front door ends a doorbell/knock (sound stops, `SCENARIO COMPLETE`); owner at the back door or outside ends the smoke alarm (all alarms clear). Unresolved after 120 s → `SCENARIO FAILED`.
 - Prefer **letters** in the MuJoCo window: its built-in number-key shortcuts may also toggle geom-group visibility.
@@ -280,4 +293,6 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 - [ ] **M7b**: Multimodal alert outputs (2.2): tier-coloured LED, on-robot screen texture, local TTS speaker, owner profile; tier → haptic/LED/screen/speech mapping in `alerts.py`; new `alert` event in the `cmd` contract.
 - [x] **M8**: Event-driven local agent (`agent.py`, `gemma4:e2b` via Ollama HTTP with `think: false`, no ADK yet) + deterministic `safety.py` watchdog & pre-emption. On a GTX 1650 Gemma answers in ~1.4–2.5 s (spikes to 5 s), so the 2.0 s watchdog often takes over — needs a faster GPU, a smaller prompt/model, or a team decision on the watchdog.
 - [x] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + detection box, 2D house map + path, and active agent plan.
+- [x] **M8b**: Owner requests by voice (real mic + local Whisper) or chat (`owner_request` on :5558): come here / take me to <place> / stop (section 6.0).
+- [ ] **M8c**: `find_object` — object memory from YOLO detections + object props in the house.
 - [ ] **M10**: End-to-end 60-second continuous one-take demo rehearsal & recording.

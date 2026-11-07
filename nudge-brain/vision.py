@@ -52,7 +52,12 @@ class OwnerDetector:
             try:
                 import onnxruntime as ort  # type: ignore
 
-                self.ort = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+                # Default = one thread per core that busy-spins between frames: ~5 cores burnt at
+                # 10 Hz, starving the sim, Whisper and Gemma. 4 threads without spinning is as fast.
+                opts = ort.SessionOptions()
+                opts.intra_op_num_threads = 4
+                opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+                self.ort = ort.InferenceSession(str(onnx_path), opts, providers=["CPUExecutionProvider"])
                 self.ort_input = self.ort.get_inputs()[0].name
                 self.backend = "YOLOv8n-ORT"
             except Exception as exc:

@@ -18,7 +18,12 @@ from sim.house_layout import SOUND_SOURCES
 PRIORITY = {"none": 0, "1_pulse": 1, "2_pulse": 1, "continuous": 2}
 
 
+VOICE_REQUEST = "voice_request"  # mission "sound" for an owner request; the nudge means "I'm here"
+
+
 def mode_for_sound(sound: str) -> str:
+    if sound == VOICE_REQUEST:
+        return "1_pulse"
     return str(SOUND_SOURCES.get(sound, {}).get("alert_mode", "none"))
 
 

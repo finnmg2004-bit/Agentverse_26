@@ -30,7 +30,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "nudge-brain"))
 
 # Actions: ("at", seconds_after_start, key) or ("on", "brain log substring", delay_s, key)
+#   key "voice:<clip>" = the owner says assets/audio/voice/<clip>.wav (runs through Whisper, no mic needed)
 # expect_complete: sounds the sim must report as SCENARIO COMPLETE
+# done_log: brain log substrings that must all appear before the scenario ends (owner requests have no sim sound)
 # expect_log: substrings that must appear in the brain log; expect_alert: alert modes that must occur
 SCENARIOS: Dict[str, Dict] = {
     "doorbell": {
@@ -83,7 +85,40 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["SAFETY PRE-EMPT", "Owner seen in guest"],
         "expect_alert": ["1_pulse", "continuous"],
     },
+    "voice_come": {
+        "desc": "Owner says 'come here' -> find them with the camera -> nudge (1 pulse) -> done",
+        "actions": [("at", 1.0, "voice:come_here")],
+        "expect_complete": [],
+        "done_log": ["Robot is with the owner"],
+        "expect_log": ["REQUEST -> come_here", "alert_owner(voice_request"],
+        "expect_alert": ["1_pulse"],
+    },
+    "voice_take_me": {
+        "desc": "Owner says 'take me to the dining room' -> find owner -> nudge -> guide them to the dining room",
+        "actions": [("at", 1.0, "voice:take_me_dining")],
+        "expect_complete": [],
+        "done_log": ["Mission voice_request complete"],
+        "expect_log": ["REQUEST -> go_to(dining)", "guide_owner_to(dining)"],
+        "expect_alert": ["1_pulse"],
+    },
+    "voice_stop": {
+        "desc": "Owner says 'come here', then 'stop' while Nudge is on its way -> mission cancelled",
+        "actions": [("at", 1.0, "voice:come_here"), ("on", "SKILL go_to_room", 2.0, "voice:stop")],
+        "expect_complete": [],
+        "done_log": ["cancelled: owner said stop"],
+        "expect_log": ["REQUEST -> stop"],
+        "expect_alert": [],
+    },
+    "voice_smoke": {
+        "desc": "Voice request running, smoke alarm pre-empts it, and 'stop' can't cancel the evacuation",
+        "actions": [("at", 1.0, "voice:take_me_dining"), ("on", "alert_owner(voice_request", 0.5, "M"),
+                    ("on", "SAFETY PRE-EMPT", 2.0, "voice:stop")],
+        "expect_complete": ["smoke_alarm"],
+        "expect_log": ["SAFETY PRE-EMPT", "Fire alarm. Follow me out first."],
+        "expect_alert": ["continuous"],
+    },
 }
+VOICE_DIR = ROOT / "assets" / "audio" / "voice"
 
 
 class SimProcess:
@@ -169,7 +204,13 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
                     fire = el - fired_on[i] >= a[2]
                 else:
                     fire = False
-                if fire:
+                if fire and a[-1].startswith("voice:"):
+                    clip = a[-1].split(":", 1)[1]
+                    if not brain.voice.inject_wav(str(VOICE_DIR / f"{clip}.wav")):
+                        continue  # still transcribing the previous clip: retry next tick
+                    print(f"    t={el:5.1f}s  owner says <{clip}.wav>")
+                    pending.remove(a)
+                elif fire:
                     brain.bridge.send_sim_event(a[-1])
                     print(f"    t={el:5.1f}s  press [{a[-1]}]")
                     pending.remove(a)
@@ -185,7 +226,8 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
                     brain.bridge.send_sim_event(key)
                     print(f"    t={el:5.1f}s  resend [{key}] (not acknowledged by sim)")
                     u[1], u[2] = el, tries + 1
-            if not pending and all(sim.completed(s) for s in spec["expect_complete"]):
+            if (not pending and all(sim.completed(s) for s in spec["expect_complete"])
+                    and all(any(d in l for l in log) for d in spec.get("done_log", []))):
                 ok = True
                 break
             time.sleep(max(0.0, 1 / brain_main.LOOP_HZ - (time.monotonic() - t0)))
@@ -202,7 +244,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     for l in sim.lines:
         if "SCENARIO" in l or "HOTKEY" in l:
             print(f"    {l}")
-    pressed = [a[-1] for a in spec["actions"]]
+    pressed = [a[-1] for a in spec["actions"] if not a[-1].startswith("voice:")]
     got = [l for l in sim.lines if "HOTKEY [" in l]
     lost = [k for k in pressed if not any(f"HOTKEY [{k}]" in l for l in got)]
     if lost:
@@ -219,7 +261,8 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     print(f"    decisions: {len(decisions)} ({llm} by LLM, {len(decisions) - llm} by rules) | "
           f"alerts seen: {sorted(a for a in alerts_seen if a != 'none')}")
     if not ok:
-        print(f"    sim did not report SCENARIO COMPLETE for {spec['expect_complete']} within {timeout:.0f}s")
+        print(f"    not finished within {timeout:.0f}s: sim SCENARIO COMPLETE {spec['expect_complete']}, "
+              f"brain log {spec.get('done_log', [])}")
     if missing_log:
         print(f"    missing brain log: {missing_log}")
     if missing_alert:

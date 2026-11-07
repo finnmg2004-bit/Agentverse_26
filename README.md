@@ -21,7 +21,7 @@ pixi install
 ```
 If you already cloned without submodules, run `pixi run fetch-world`. It downloads the house into `worlds/nerv-world` (about 390 MB).
 
-Optional, for the real local models: `pixi run fetch-models` downloads YOLOv8n and YAMNet into `assets/models/` and pulls Gemma via Ollama (install [Ollama](https://ollama.com) first). Without them the brain falls back to its built-in colour detector, spectral sound rules and deterministic rules.
+Optional, for the real local models: `pixi run fetch-models` downloads YOLOv8n, YAMNet and Whisper base.en (speech-to-text for voice requests) into `assets/models/` and pulls Gemma via Ollama (install [Ollama](https://ollama.com) first). Without them the brain falls back to its built-in colour detector, spectral sound rules and deterministic rules, and voice requests are off (typed requests still work).
 
 Optional, for the realistic owner: `pixi run prepare-owner` (see [Owner model](#owner-model-third-party-asset-not-in-git) below).
 
@@ -75,6 +75,18 @@ Press the hotkeys with the **MuJoCo window** focused (they also work in the dash
 4. Press **M**. The safety layer pre-empts the doorbell task: red `continuous` alert (the light bar's red and blue ends flash back and forth = danger, centre blinks orange = smoke alarm), and the robot leads the owner out the back door (west side of the living room) into the garden.
 5. Optional: press **C** before **B**. The chair blocks the guest ↔ living door; the robot's LiDAR spots it and it reroutes through the entry hall.
 
+### Talk to Nudge (owner requests)
+The owner can ask Nudge for things. Press **T** in the **dashboard window**, speak into the laptop microphone, then stop talking. Recording ends after about 0.8 s of silence; Whisper turns it into text locally (about 0.5 s on the CPU) and Gemma (or keyword rules) works out the task. Typed requests use the same path: `pixi run say take me to the kitchen` (a chat GUI can publish to the same channel, see AGENTS.md).
+
+| Say | Nudge does |
+|---|---|
+| "Come here", "Where are you?" | Finds the owner with its camera, walks up and nudges them (1 pulse) |
+| "Take me to the kitchen / front door / bedroom / dining room…" | Finds the owner, nudges them, offers the handle and guides them there |
+| "Stop", "Cancel" | Cancels the current task (never the smoke-alarm evacuation) |
+| "Where is my phone?" | Says it can't search for objects yet |
+
+Voice only decides *what* to do. The robot still finds the owner with its camera and navigates with the map and LiDAR. A doorbell interrupts a request, and the smoke alarm overrides everything. Nudge's replies appear in the dashboard (`NUDGE: "…"`) and the brain log; spoken replies are planned (AGENTS.md 2.2).
+
 ### Viewer controls
 
 | Action | Control |
@@ -118,11 +130,13 @@ planner.plan(H.ROBOT_START_XY, H.LANDMARKS["back_exit_outside"])   # [(x, y, doo
 | Headless machine | `MUJOCO_GL=egl pixi run check-world` (the viewer itself needs a display) |
 | Robot walks into furniture / map looks stale | `pixi run build-map` (rebuilds `assets/maps/nerv_house_nav.npz`) |
 | Warning about the `project` field in pixi.toml | Harmless (pixi renamed it `workspace`) |
+| `VOICE: heard nothing (mic muted or silent?)` | Unmute the microphone (Linux: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`, or the sound settings). Pick a recorder with `NUDGE_MIC=pipewire\|pulse\|alsa\|sounddevice`. |
+| Voice too slow / not installed | `NUDGE_STT_MODEL=tiny.en` (faster, after `pixi run fetch-models --stt tiny.en`); `--no-voice` turns it off |
 
 ## Repository map
 ```
 worlds/nerv-world/   house scene + Go2 model (submodule, read-only)
 sim/                 simulator process: world loader, layout, nav map, locomotion, sensors, viewer, ZMQ server
 nudge-brain/         brain process: ZMQ bridge, hearing, vision, navigator, world model, agent, safety, dashboard
-assets/audio/        doorbell / knock / smoke-alarm WAV clips
+assets/audio/        doorbell / knock / smoke-alarm WAV clips; voice/ = owner request test clips (Piper TTS, LJSpeech voice)
 ```

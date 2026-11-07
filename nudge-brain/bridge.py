@@ -3,12 +3,14 @@
 Milestone 5: ZeroMQ Bridge (`nudge-brain/bridge.py`).
 Subscribes to `sim` telemetry on `tcp://127.0.0.1:5555` (`state`, `camera`, `audio`)
 and publishes velocity/alert/guiding commands (`cmd`) on `tcp://127.0.0.1:5556`.
+Also binds `tcp://127.0.0.1:5558` (SUB, topic `owner_request`) for typed owner requests from a
+chat GUI or `scripts/say.py`: JSON `{"text": str, "channel": "chat"|"voice"|"handle"}`.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -22,6 +24,7 @@ class BrainBridge:
         self,
         sub_endpoint: str = "tcp://127.0.0.1:5555",
         pub_endpoint: str = "tcp://127.0.0.1:5556",
+        request_endpoint: str = "tcp://127.0.0.1:5558",
     ) -> None:
         self.ctx = zmq.Context.instance()
 
@@ -39,6 +42,16 @@ class BrainBridge:
         self.pub_sock.setsockopt(zmq.SNDHWM, 10)
         self.pub_sock.setsockopt(zmq.LINGER, 0)
         self.pub_sock.bind(pub_endpoint)
+
+        # Owner requests (chat GUI / scripts/say.py) on :5558; many publishers connect to us.
+        self.req_sock = self.ctx.socket(zmq.SUB)
+        self.req_sock.setsockopt(zmq.LINGER, 0)
+        self.req_sock.setsockopt_string(zmq.SUBSCRIBE, "owner_request")
+        try:
+            self.req_sock.bind(request_endpoint)
+        except zmq.ZMQError as exc:
+            print(f"[bridge] owner_request channel unavailable on {request_endpoint}: {exc}")
+        self.requests: List[Dict[str, Any]] = []  # drained by the brain each tick
 
         # Latest decoded telemetry packets
         self.latest_state: Optional[Dict[str, Any]] = None
@@ -106,6 +119,17 @@ class BrainBridge:
                 except Exception:
                     pass
 
+        while True:
+            try:
+                parts = self.req_sock.recv_multipart(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+            try:
+                msg = json.loads(parts[1].decode("utf-8"))
+                if str(msg.get("text", "")).strip():
+                    self.requests.append({"text": str(msg["text"])[:200], "channel": str(msg.get("channel", "chat"))})
+            except Exception:
+                pass
         return updated
 
     def send_cmd(
@@ -141,3 +165,4 @@ class BrainBridge:
     def close(self) -> None:
         self.sub_sock.close()
         self.pub_sock.close()
+        self.req_sock.close()

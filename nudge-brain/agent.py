@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
 Milestone 8a: Event-driven Local Agent (`nudge-brain/agent.py`).
-Wakes ONLY on discrete events (new_sound, arrived_in_room, owner_seen, owner_not_found,
+Wakes ONLY on discrete events (new_sound, owner_request, arrived_in_room, owner_seen, owner_not_found,
 owner_alerted, handle_taken, guide_complete, timeout) and picks exactly one tool call.
+Owner requests ("take me to the kitchen") are first turned into a task by `parse_request()`
+(LLM, else the keyword parser in `intents.py`), then run as a `voice_request` mission.
 
 Decision sources, in order:
   1. Safety layer — during a smoke-alarm emergency every decision is deterministic.
@@ -26,7 +28,9 @@ from typing import Any, Dict, List, Optional
 
 from sim.house_layout import LANDMARKS, ROOMS, SOUND_SOURCES
 
+import intents
 import safety
+from alerts import VOICE_REQUEST
 
 OLLAMA_URL = os.environ.get("NUDGE_OLLAMA_URL", "http://127.0.0.1:11434")
 MODEL_CANDIDATES = ["gemma4:e2b", "gemma3:4b", "gemma3:1b"]
@@ -38,13 +42,16 @@ Reply with ONE JSON object only: {{"tool": "<name>", "args": {{...}}, "reason": 
 Tools:
 - go_to_room(room)               room in {sorted(ROOMS)}
 - look_around()                  spin 360 deg in the current room to find the owner with the camera
-- alert_owner(sound, place)      walk to the owner, nudge them, vibrate the code. sound in {sorted(SOUND_SOURCES)}; only if owner seen recently
+- alert_owner(sound, place)      walk to the owner, nudge them, vibrate the code. sound in {sorted(SOUND_SOURCES) + [VOICE_REQUEST]}; only if owner seen recently
 - offer_handle()                 present the guide handle to the owner
 - guide_owner_to(target)         lead the owner holding the handle. target in {sorted(LANDMARKS)} or a room
 - investigate_sound()            go to the room the current sound comes from
 
 Rules:
 - doorbell/knock: find owner -> alert_owner -> guide_owner_to("front_door").
+- voice_request (the owner asked for something, see mission.request): find owner -> alert_owner(sound="voice_request")
+  -> guide_owner_to(deliver_owner_to). If deliver_owner_to is null ("come here") the task ends after alert_owner.
+- After new_sound or owner_request: if owner_seen_last_5s is false, go_to_room(owner_believed_room) first; never alert_owner an owner you have not seen.
 - After arrived_in_room: look_around unless the owner is visible.
 - After owner_not_found: go_to_room of the most likely unsearched room (never a room in searched_rooms).
 - After owner_alerted or handle_taken: guide_owner_to the mission's deliver_owner_to target.
@@ -61,9 +68,9 @@ def deterministic_policy(event: str, world) -> Dict[str, Any]:
         return {"tool": "get_state", "args": {}}
     sound, target = mission["sound"], mission["target"]
 
-    if event in ("new_sound", "owner_seen") and world.owner_recently_seen(3.0):
+    if event in ("new_sound", "owner_request", "owner_seen") and world.owner_recently_seen(3.0):
         return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
-    if event in ("new_sound", "owner_not_found"):
+    if event in ("new_sound", "owner_request", "owner_not_found"):
         return {"tool": "go_to_room", "args": {"room": world.best_search_room()}}
     if event == "arrived_in_room":
         if world.owner_recently_seen(2.0):
@@ -90,6 +97,9 @@ class NudgeAgent:
         self._pending: Optional[Dict[str, Any]] = None  # {"id", "event", "result"}
         self.last_decision: Dict[str, Any] = {"tool": "-", "args": {}, "source": "-", "reason": "", "latency": 0.0}
         self.history: List[str] = []
+        # Owner request being understood: {"id", "text", "result", "t0"}; separate from tool decisions.
+        self._req: Optional[Dict[str, Any]] = None
+        self.last_request: Dict[str, Any] = {}
         if self.enabled:
             threading.Thread(target=self._probe_loop, daemon=True).start()
 
@@ -124,10 +134,10 @@ class NudgeAgent:
                     pass
             time.sleep(20.0)
 
-    def _chat(self, user: str, timeout: float) -> Dict[str, Any]:
+    def _chat(self, user: str, timeout: float, system: str = SYSTEM_PROMPT) -> Dict[str, Any]:
         resp = self._http("/api/chat", {
             "model": self.model,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "stream": False,
             "format": "json",
             # Gemma 4 reasons ("thinks") by default, which eats num_predict and leaves an empty answer
@@ -147,6 +157,58 @@ class NudgeAgent:
         with self._lock:
             if self._pending and self._pending["id"] == req_id:
                 self._pending["result"] = result
+
+    def _intent_worker(self, req_id: int, text: str) -> None:
+        try:
+            result: Any = self._chat(f"owner said: {text!r}", timeout=safety.WATCHDOG_S + 1.0,
+                                     system=intents.INTENT_PROMPT)
+        except Exception as exc:
+            result = {"error": str(exc)}
+        with self._lock:
+            if self._req and self._req["id"] == req_id:
+                self._req["result"] = result
+
+    # ------------------------------------------------------------------ owner requests
+    def parse_request(self, text: str) -> None:
+        """Start understanding an owner request; collect the outcome with `poll_request()`."""
+        with self._lock:
+            self._request_id += 1
+            self._req = {"id": self._request_id, "text": text, "result": None, "t0": time.monotonic()}
+        if self.enabled and self.llm_online:
+            threading.Thread(target=self._intent_worker, args=(self._request_id, text), daemon=True).start()
+
+    def cancel_request(self) -> None:
+        with self._lock:
+            self._req = None
+
+    def poll_request(self) -> Optional[Dict[str, Any]]:
+        """-> {"intent", "target", "object", "say", "text", "source", "latency"} once decided, else None."""
+        with self._lock:
+            req = self._req
+        if req is None:
+            return None
+        elapsed = time.monotonic() - req["t0"]
+        parsed, source = None, "rules"
+        if self.enabled and self.llm_online:
+            result = req["result"]
+            if result is None and elapsed <= safety.WATCHDOG_S:
+                return None
+            if result is None:
+                source = "watchdog"
+            else:
+                ok, why, clean = intents.validate(result)
+                if ok:
+                    parsed, source = clean, "llm"
+                else:
+                    print(f"[agent] LLM request parse rejected ({why}): {str(result)[:80]}")
+                    source = "rules (LLM rejected)"
+        if parsed is None:
+            parsed = intents.parse_keywords(req["text"])
+        with self._lock:
+            if self._req is req:
+                self._req = None
+        self.last_request = {**parsed, "text": req["text"], "source": source, "latency": round(elapsed, 2)}
+        return self.last_request
 
     # ------------------------------------------------------------------ public API
     @property
