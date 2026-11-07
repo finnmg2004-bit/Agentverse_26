@@ -317,3 +317,57 @@ One window: live 3D view streamed from the sim (drag = orbit, right-drag = pan, 
 - [x] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + detection box, 2D house map + path, and active agent plan.
 - [x] **M9b**: LLM decides from perception-built option menus (structured output) incl. emergencies; probabilistic owner search; sound localisation from the ears; fire-aware exit choice + exit-blocked re-choice + escalation; realistic owner (wander, acknowledge by handle tap, let go); dashboard heat map, sound bearings, fire/exit overlay, decision timeline, acknowledgement indicator.
 - [ ] **M10**: End-to-end 60-second continuous one-take demo rehearsal & recording.
+
+---
+
+## 9. Team Plan to the Deadline (agreed 2026-11-07 — **submit by 14:00, deadline 15:00 on 2026-11-08**)
+About 6–7 working hours left. **Must-haves first; *stretch* only if your must-haves are pushed and green.**
+
+### 9.1 Lanes (stay in your own files; outside them make small, additive changes and tell the owner)
+| Person | Lane | Owns | Must-have | *Stretch* |
+|---|---|---|---|---|
+| **Ricktho** | Sounds + voice | `sim/sensors.py` (audio), `assets/audio/`, `nudge-brain/hearing.py`, sound registry in `sim/house_layout.py`, new voice module (e.g. `nudge-brain/voice.py`) | **Voice input**: local speech-to-text (Whisper/Vosk), wake word "Nudge", publish `user_command`. One new tiered sound (oven timer or kettle). | Real recordings; more sounds; TV-doorbell detection support |
+| **Teo** | Models | `scripts/fetch_models.py`, `nudge-brain/vision.py`, model setup, `training/` | Speech-to-text model in `fetch-models` + benchmark with Ricktho. **Local text-to-speech** (Piper) `speak(text)` for "Nudge says". | Small Gemma eval set + prompt tuning (no fine-tune: too risky in the time) |
+| **Finn** | Brain + reasoning | `nudge-brain/agent.py`, `safety.py`, `skills.py`, `navigator.py`, `world_model.py`, `owner_belief.py`, `evacuation.py`, `sound_localizer.py`, `main.py` | Handle `user_command`: Gemma turns text into a structured command/rule (schema-constrained, see 9.3); **avoid areas** in the planner; danger sounds override place rules; reasoning mentions active rules. | "Is the sound real?" (TV doorbell); simultaneous sounds by tier |
+| **Sean** | Sim, robot outputs, tests | `sim/run_sim.py`, `sim/owner_behavior.py` (check with Finn), `scripts/run_all.py`, `scripts/test_scenarios.py` | **Carpet object** in the living room (visible, area in `house_layout.py`, a route around it exists). **Robot outputs**: on-robot screen shows "Nudge says", LED colour by tier, speech via Teo's TTS. **Scenario tests**: carpet rule → doorbell never steps on it; voice/GUI command. | TV as a sound source (`tv_on` in `state`); owner states (asleep, bathroom) |
+| **Eden** | GUI, integration, story | `gui/`, AGENTS.md upkeep, deliverables | GUI: command/rule text box (same `user_command`), "Heard: '…'" display, **active rules** panel, no-go area on the map. Merge captain at checkpoint + freeze. **Storyboard, 1-page summary, pitch.** | Recording-only layout; TV on/off button |
+
+### 9.2 Timeline (working hours from the start)
+| When | What |
+|---|---|
+| 0:00 | Everyone pulls `main`. Ricktho + Finn + Sean agree the `user_command` format and the carpet area in the first 15 min. |
+| 0:00–3:30 | **Build** must-haves. |
+| ~2:00 | **Checkpoint**: everyone pushes what works; Eden merges and runs `pixi run test-scenarios`. |
+| 3:30 | **Feature freeze** — bug fixes only. |
+| 3:30–4:30 | **Integrate**: the demo scenario passes 3x in a row on the recording laptop. |
+| 4:30–6:30 | **Record** the 60 s video (several takes), write the 1-page summary, build the 5-min pitch. |
+| by 14:00 | **Submit** (1 h buffer before 15:00). |
+
+### 9.3 What the owner can tell the robot (voice or GUI text — voice is mainly for deaf owners who speak; never the only input)
+| Kind | Example | Enforced by |
+|---|---|---|
+| Command | "Nudge, take me to the kitchen" / "stop" | becomes an option on the agent's menu |
+| Sound preference | "I'm expecting a parcel today" / "don't wake me for the oven timer after 11pm" | alert policy; **never** applies to danger sounds |
+| Place rule | "I've just got a new carpet in the living room, please don't step on it" | planner avoid-area; a danger sound may override it (Gemma explains why) |
+Gemma turns the sentence into a structured rule (Ollama JSON schema with enums of known rooms/objects), e.g. `{"type": "avoid_area", "area": "living_room_carpet", "until": null}`; plain code enforces it; the robot **confirms on its screen** ("OK. I will not walk on the new carpet.").
+
+### 9.4 Hand-offs (ZMQ: only ever **add** fields)
+| Hand-off | From → To | Contract |
+|---|---|---|
+| `user_command` (new topic; brain subscribes to the GUI's :5557 and to the voice publisher) | Ricktho (voice), Eden (GUI) → Finn | `{"text": str, "source": "voice"\|"gui", "confidence": float}` |
+| Active rules + confirmation | Finn → Eden, Sean | in the `brain` status: `rules: [...]`, plus the "Nudge says" text |
+| Carpet / avoid areas | Sean (sim + `house_layout.py`) → Finn, Eden | named rectangles, e.g. `AVOID_AREAS = {"living_room_carpet": (x0, y0, x1, y1)}` |
+| Sound registry | Ricktho → Finn, Sean, Eden | per sound: file, room, tier, alert pattern, YAMNet classes, target |
+| Speech | Teo → Sean | `speak(text)` (local TTS), model fetched by `pixi run fetch-models` |
+
+### 9.5 The 60-second demo (proposed)
+1. Owner: *"Nudge, I've got a new carpet in the living room, please don't step on it."* → screen confirms, map shades the area (~10 s).
+2. **Doorbell** → robot goes to the owner **around the carpet**, nudges, screen shows the "Nudge says" message, guides to the front door (~25 s).
+3. **Smoke alarm** pre-empts → continuous vibration → fire-aware exit; crosses the carpet only if that is safest, and says why (~20 s).
+Backup: if voice isn't solid by the freeze, type the same sentence in the GUI. Voice gets its own short clip in the pitch.
+
+### 9.6 Rules for working independently
+1. Before every push: `git pull`, then `pixi run test-scenarios` (or at least the scenario you touched).
+2. Hotspots have one owner: `run_sim.py` = Sean, `agent.py` = Finn; in AGENTS.md edit only your own lane's text; add deps with `pixi add` in their own commit.
+3. New behaviour behind a flag/env until its scenario test passes. Small commits, push often.
+4. On Windows PowerShell, commit with `git commit -F msg.txt` if your message has quotes (PowerShell 5.1 mangles them).
