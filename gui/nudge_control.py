@@ -79,7 +79,8 @@ AMBER = (255, 180, 40, 255)
 RED = (235, 70, 70, 255)
 CYAN = (60, 200, 230, 255)
 PURPLE = (190, 140, 255, 255)
-SOUND_COL = {"doorbell": (40, 200, 255, 255), "knock": (255, 190, 40, 255), "smoke_alarm": (240, 60, 60, 255)}
+SOUND_COL = {"doorbell": (40, 200, 255, 255), "knock": (255, 190, 40, 255), "smoke_alarm": (240, 60, 60, 255),
+             "kettle": (255, 130, 200, 255)}
 SOURCE_COL = {"llm": PURPLE, "rules": (140, 180, 230, 255), "safety": RED, "watchdog": AMBER,
               "only option": (150, 150, 155, 255)}
 SOURCE_LABEL = {"llm": "GEMMA", "rules": "rules", "safety": "SAFETY", "watchdog": "watchdog",
@@ -267,7 +268,8 @@ class NudgeControl:
         if dpg.is_item_focused("cmd_input"):  # typing a sentence must not ring the doorbell
             return
         keys = {dpg.mvKey_B: "B", dpg.mvKey_K: "K", dpg.mvKey_M: "M", dpg.mvKey_O: "O",
-                dpg.mvKey_C: "C", dpg.mvKey_X: "X", dpg.mvKey_R: "R"}
+                dpg.mvKey_C: "C", dpg.mvKey_X: "X", dpg.mvKey_R: "R", dpg.mvKey_J: "J",
+                dpg.mvKey_E: "E", dpg.mvKey_W: "W", dpg.mvKey_N: "N"}
         if app_data in keys:
             self.key(keys[app_data])
 
@@ -342,13 +344,15 @@ class NudgeControl:
             with dpg.group(horizontal=True):
                 b = dpg.add_button(label="Doorbell  [B]", width=150, height=36, callback=lambda: self.key("B"))
                 dpg.bind_item_theme(b, self._button_theme((30, 120, 170)))
-                b = dpg.add_button(label="Knock  [K]", width=130, height=36, callback=lambda: self.key("K"))
+                b = dpg.add_button(label="Knock  [K]", width=120, height=36, callback=lambda: self.key("K"))
                 dpg.bind_item_theme(b, self._button_theme((160, 110, 20)))
-                b = dpg.add_button(label="SMOKE ALARM  [M]", width=190, height=36, callback=lambda: self.key("M"))
+                b = dpg.add_button(label="Kettle  [J]", width=120, height=36, callback=lambda: self.key("J"))
+                dpg.bind_item_theme(b, self._button_theme((160, 60, 120)))
+                b = dpg.add_button(label="SMOKE ALARM  [M]", width=180, height=36, callback=lambda: self.key("M"))
                 dpg.bind_item_theme(b, self._button_theme((180, 35, 35)))
-                b = dpg.add_button(label="Silence  [X]", width=120, height=36, callback=lambda: self.key("X"))
+                b = dpg.add_button(label="Silence  [X]", width=110, height=36, callback=lambda: self.key("X"))
                 dpg.bind_item_theme(b, self._button_theme((70, 70, 80)))
-                b = dpg.add_button(label="RESET  [R]", width=130, height=36, callback=lambda: self.key("R"))
+                b = dpg.add_button(label="RESET  [R]", width=120, height=36, callback=lambda: self.key("R"))
                 dpg.bind_item_theme(b, self._button_theme((60, 110, 60)))
             with dpg.group(horizontal=True):
                 dpg.add_text("Owner:")
@@ -357,8 +361,11 @@ class NudgeControl:
                 dpg.add_button(label="Move owner there", callback=lambda: self.send(
                     {"action": "owner_room", "room": dpg.get_value("owner_combo")}))
                 dpg.add_button(label="Next room  [O]", callback=lambda: self.key("O"))
-                dpg.add_button(label="Chair block / unblock  [C]", callback=lambda: self.key("C"))
-                dpg.add_text("", tag="scene_txt", color=DIM)
+                dpg.add_button(label="Chair in door  [C]", callback=lambda: self.key("C"))
+                dpg.add_button(label="Block back exit  [E]", callback=lambda: self.key("E"))
+                dpg.add_button(label="Owner wander  [W]", callback=lambda: self.key("W"))
+                dpg.add_button(label="Noise  [N]", callback=lambda: self.key("N"))
+            dpg.add_text("", tag="scene_txt", color=DIM)
 
             # Tell Nudge: commands, sound preferences and place rules (AGENTS.md 9.3)
             with dpg.group(horizontal=True):
