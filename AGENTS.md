@@ -56,6 +56,7 @@ nudge/
     ├── navigator.py          # Topological room graph + doorway waypoints + LiDAR obstacle stop/skirt
     ├── safety.py             # Hard invariants: smoke alarm pre-emption, 2.0s LLM watchdog, speed cap
     ├── alerts.py             # Haptic handle pulse state machine (1 pulse, 2 pulses, continuous)
+    ├── skills.py             # Executes agent tool calls as behaviours (go_to_room, look_around, alert_owner, guide...)
     ├── agent.py              # Event-driven Gemma 4 E2B via Google ADK (local Ollama/vLLM backend)
     ├── dashboard.py          # Live OpenCV telemetry window for the screen recording
     └── main.py               # Brain orchestrator loop
@@ -141,12 +142,12 @@ The brain NEVER sends raw joint torques. It only sends body-frame velocity comma
 
 ## 8. 10-Milestone Roadmap & Current Status
 - [x] **M1**: Go2 loaded in MuJoCo viewer on Linux with Pixi (`pixi.toml` + `sim/run_sim.py`).
-- [ ] **M2 (In Progress)**: 4-room house layout (`sim/house_layout.py`), Owner body, movable Chair, sound beacons, and hotkeys (`B, K, M, O, C, X`).
-- [ ] **M3**: Velocity interface (`vx, vy, wz`) in `sim/locomotion.py` (Plan B kinematic + trotting legs, wall collision stop, and owner-following when guiding).
-- [ ] **M4**: Simulated sensors (`sim/sensors.py`): Head RGB-D camera, 2D LiDAR rangefinders, and synthetic stereo ear audio from real WAV clips with distance/wall attenuation.
-- [ ] **M5**: ZeroMQ bridge (`sim/run_sim.py` <-> `nudge-brain/bridge.py`).
-- [ ] **M6**: Local perception (`hearing.py` with YAMNet + stereo azimuth; `vision.py` with YOLOv8n + depth localization).
-- [ ] **M7**: Plain-code navigator (`navigator.py` doorway graph + LiDAR obstacle skirt), `world_model.py`, and `alerts.py`.
-- [ ] **M8**: Event-driven Gemma 4 E2B agent (`agent.py`) + deterministic `safety.py` watchdog & pre-emption.
-- [ ] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + YOLO box, 2D house map + path, and active agent plan.
+- [x] **M2**: 4-room house layout (`sim/house_layout.py`), Owner body, movable Chair, sound beacons, and hotkeys (`B, K, M, O, C, X`).
+- [x] **M3**: Velocity interface (`vx, vy, wz`) in `sim/locomotion.py` (Plan B kinematic + trotting legs, wall collision stop, and owner-following when guiding).
+- [x] **M4**: Simulated sensors (`sim/sensors.py`): Head RGB-D camera, 2D LiDAR rangefinders (per-ray `mj_ray`), and synthetic stereo ear audio from real WAV clips with distance/wall attenuation.
+- [x] **M5**: ZeroMQ bridge (`sim/run_sim.py` <-> `nudge-brain/bridge.py`).
+- [x] **M6**: Local perception (`hearing.py` log-mel classifier + stereo azimuth; `vision.py` YOLOv8n via OpenCV DNN when `assets/models/yolov8n.onnx` exists, else HSV + depth fallback). TODO: drop in YAMNet / YOLO weight files.
+- [x] **M7**: Plain-code navigator (`navigator.py` doorway graph + LiDAR skirt + LiDAR blocked-doorway re-planning), `world_model.py`, and `alerts.py`.
+- [x] **M8**: Event-driven local agent (`agent.py`, Gemma via Ollama HTTP, no ADK yet) + deterministic `safety.py` watchdog & pre-emption.
+- [x] **M9**: Live telemetry dashboard (`dashboard.py`) showing sound confidence, camera + detection box, 2D house map + path, and active agent plan.
 - [ ] **M10**: End-to-end 60-second continuous one-take demo rehearsal & recording.
