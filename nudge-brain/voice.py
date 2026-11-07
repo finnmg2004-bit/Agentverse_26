@@ -60,9 +60,12 @@ MIN_SPEECH_S = 0.25
 PRE_ROLL_S = 1.0
 WAKE_ARM_S = 6.0  # "Nudge." alone -> the next sentence within 6 s is the command
 
-# Biases Whisper toward the words Nudge understands (wake word, rooms, commands).
-STT_PROMPT = ("Nudge, come here. Nudge, take me to the kitchen. Nudge, stop. Front door, back door, "
-              "living room, bedroom, dining room, family room, hallway, garden, carpet.")
+# Biases Whisper toward the words Nudge understands (wake word, rooms, commands). A word list, not
+# whole sentences: on a very short clip ("Nudge.") Whisper can copy a sentence-style prompt back as
+# the transcript ("Nudge, take me to the kitchen." x 25 in a test) -> a command nobody gave.
+STT_PROMPT = ("Nudge. Kitchen, front door, back door, living room, bedroom, dining room, family room, "
+              "hallway, garden, carpet, stop, come here, phone, oven, kettle.")
+MAX_WORDS_PER_S = 4.5  # fast speech is ~3-4 words/s; more than this is a Whisper hallucination
 # Whisper sometimes spells the wake word differently.
 WAKE_RE = re.compile(r"^\W*(?:(?:hey|ok|okay)\W+)?(?:nudge|nudges|nudge's|nudj|nuj|budge|nadge|nodge)\b\W*(.*)$",
                      re.IGNORECASE | re.DOTALL)
@@ -214,13 +217,19 @@ class SpeechToText:
             raise RuntimeError(self.error or "speech-to-text model not loaded")
         segs, _ = self.model.transcribe(audio.astype(np.float32), language="en", beam_size=1,
                                         initial_prompt=STT_PROMPT, condition_on_previous_text=False,
-                                        vad_filter=False)
+                                        vad_filter=False, no_repeat_ngram_size=4, max_new_tokens=96)
         # Whisper invents text for noise ("Thank you."); drop segments it thinks are not speech.
         segs = [s for s in segs if s.no_speech_prob < 0.6]
         if not segs:
             return "", 0.0
         conf = float(np.exp(np.mean([s.avg_logprob for s in segs])))
-        return " ".join(s.text.strip() for s in segs).strip(), round(min(1.0, conf), 2)
+        text = " ".join(s.text.strip() for s in segs).strip()
+        # Plausibility guard: more words than anyone can say in this much audio = hallucination.
+        if len(text.split()) > MAX_WORDS_PER_S * audio.size / SR + 2:
+            print(f"[voice] ignored implausible transcript ({len(text.split())} words in "
+                  f"{audio.size / SR:.1f}s): {text[:60]!r}...")
+            return "", 0.0
+        return text, round(min(1.0, conf), 2)
 
 
 # ---------------------------------------------------------------------- sentence segmentation
