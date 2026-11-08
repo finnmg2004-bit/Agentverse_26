@@ -299,6 +299,10 @@ class NudgeSimulator:
         mission = status.get("mission") or {}
         self.mission_sound = mission.get("sound")
         say = str(mission.get("say") or "").strip() if mission.get("status") == "active" else ""
+        if not say:
+            # Proposed add-only field (overnight C1/C3): a reply to the owner outside a mission, e.g. a
+            # taught "just tell me" task or "Sorry, I can't do that yet...". Older brains don't send it.
+            say = str(status.get("say") or "").strip()
         if say != self.nudge_says:
             self.nudge_says = say
             if say:
