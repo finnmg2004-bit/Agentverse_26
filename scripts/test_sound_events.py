@@ -57,7 +57,7 @@ def main() -> int:
     ap.add_argument("--noise", nargs="*", default=NOISE_NAMES)
     ap.add_argument("--rings", type=int, default=2)
     ap.add_argument("--on-s", type=float, default=20.0)
-    ap.add_argument("--off-s", type=float, default=6.0)
+    ap.add_argument("--off-s", type=float, default=10.0)  # > the doorbell/knock stop hold (P8: pause + 2.5 s)
     ap.add_argument("--headings", type=int, default=len(HEADINGS))
     args = ap.parse_args()
 

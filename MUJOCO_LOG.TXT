@@ -1,0 +1,100 @@
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+
+WARNING Sat Nov  7 19:26:46 2026: Linesearch objective is not convex
+

@@ -451,7 +451,8 @@ class SoundEvents:
       start: a registry sound scores >= START_CONF in START_WINDOWS consecutive 0.5 s windows
              (tier 1 / danger: one window >= DANGER_START_CONF = 0.6, the safety pre-emption threshold)
       stop:  it then scores < STOP_CONF in STOP_WINDOWS consecutive windows
-      (per sound: registry field `event_stop_windows`, e.g. knock = 8 because knocking comes in bursts)
+      (per sound: registry field `event_stop_windows`, e.g. knock = 8 because knocking comes in bursts;
+       a sound with a `ring_pattern` (P8: visitor rings, pauses, rings again) holds through pause_s + 2.5 s)
     Event (contract C4 in overnight/README.md; taught tasks fire on phase == "start"):
         {"sound":        SOUND_SOURCES key ("kettle", "oven_timer", "doorbell", ...),
          "label":        human label from the registry ("Kettle"),
@@ -481,7 +482,12 @@ class SoundEvents:
     def stop_windows(cls, name: str) -> int:
         """Quiet windows before `stop`: registry `event_stop_windows` (bursty sounds such as knocking
         have gaps; without a longer hold one knocking spell gave several starts under fan noise)."""
-        return int(SOUND_SOURCES.get(name, {}).get("event_stop_windows", cls.STOP_WINDOWS))
+        spec = SOUND_SOURCES.get(name, {})
+        n = int(spec.get("event_stop_windows", cls.STOP_WINDOWS))
+        pattern = spec.get("ring_pattern")
+        if pattern:  # P8: a visitor who rings again after a pause is the same event (no second start)
+            n = max(n, int(math.ceil((float(pattern["pause_s"]) + 2.5) / 0.5)))
+        return n
 
     def __init__(self, maxlen: int = 50) -> None:
         from collections import deque
