@@ -1,32 +1,32 @@
-# 5-minute pitch: outline (draft, Eden)
+# 5-minute pitch: outline (Eden, draft 12:15 on 2026-11-08; [TBC] = confirm after the 12:45 freeze)
 
 Judging weights to hit: perception-driven action 25 %, adapting to scene changes 25 %, relevance & impact
 20 % (critical failure handled on screen), operational autonomy / 100 % local 15 %, ambition & engineering 15 %.
+**One line to repeat:** *rules for safety, local Gemma for the unknown.*
 
 | Time | Slide / moment | Say (key points) | Criterion |
 |---|---|---|---|
 | 0:00–0:30 | **The person** | A deafblind person can't hear the doorbell, the kettle or the smoke alarm, and can't see where to go. Guide dogs can't hear for you; hearing dogs can't guide. Nudge does both. | Relevance |
-| 0:30–1:30 | **Demo video (≤ 60 s)** | Let it play. One line before: "Everything you'll see runs on this laptop." | Perception, adapting |
-| 1:30–2:15 | **How it decides** (diagram: ears + camera + LiDAR → owner-location belief → reflex layer / Gemma thinking layer → robot) | Two layers: plain-code reflexes in milliseconds (danger first, obstacles, speed cap) that the LLM can never override; local Gemma for judgement, choosing one option from a menu built from live perception, with a reason on screen. | Engineering, perception |
-| 2:15–2:50 | **The safety moment** (screenshot: "LLM choice rejected by safety… terrace passes 1.6 m from the fire") | In rehearsal Gemma tried to lead the owner past the fire; the safety layer rejected it and the rules took the safe exit. That's the design: the LLM proposes, plain code disposes. | Critical failure handled |
-| 2:50–3:30 | **Teaching it** (carpet rule clip, voice) | The owner says "I've got a new carpet, don't step on it"; local Whisper + Gemma turn it into a rule the planner enforces. Danger sounds can't be overruled by any rule. | Adapting, relevance |
-| 3:30–4:05 | **Accessibility by design** | One event, every channel: vibration code by priority tier, light, screen, speech. Short, plain messages because for many BSL users English is a second language. Voice is one input, never the only one. | Relevance & impact |
-| 4:05–4:35 | **100 % local, measured** | YAMNet, YOLOv8n, Gemma 4 E2B, Whisper, Piper all on-device. Gemma picks the right option 97.8 % of the time, in ~0.5 s; 9/9 end-to-end scenario tests pass; sim at real time. | Autonomy, engineering |
-| 4:35–5:00 | **What's next + ask** | Real robot (SLAM instead of sim pose), learned gait, real household recordings, teachable new jobs ("every night at 10, take me to bed"). | Ambition |
+| 0:30–1:30 | **Demo video (≤ 60 s)** | "Everything you'll see runs on this laptop." Short sped-up clips, each a different situation (format decided after the freeze). | Perception, adapting |
+| 1:30–2:10 | **How it decides** (diagram: ears + camera + LiDAR → where things are → reflex layer / Gemma thinking layer → robot) | Plain-code reflexes in milliseconds that the LLM can never override; local Gemma for judgement, choosing from a menu built from live perception, with a reason on screen; **0.19 s** per decision on this laptop. | Engineering, perception |
+| 2:10–3:10 | **It adapts** (4 quick examples, 15 s each) | **Hears where you are:** the owner speaks from another room, Nudge goes straight there. **Is it real?** A doorbell on the TV vs the real door, told apart by direction ("That was the TV"). **Unknown sounds [TBC]:** glass breaking, a dog, a baby: Gemma reasons what to do. **A new home:** it explores a house it has never seen and builds its own map (99.8 % of the floor, finds the TV and the sofa itself). | Adapting (25 %) |
+| 3:10–3:45 | **When things go wrong** (screenshots: safety rejection + "999 CALLED") | In rehearsal Gemma tried to lead the owner past the fire; the safety layer rejected it and took the safe exit. If the owner doesn't respond, it alerts their emergency contact and stays; in a fire it asks "Shall I call 999?" while still leading them out. | Critical failure handled |
+| 3:45–4:15 | **Built for the person** | Deaf / Blind / Deafblind profiles choose the outputs (vibration code by priority, light, screen, speech; speech only when near). Teach it in one sentence ("every night at 10, take me to bed"); it refuses what it can't do. Short, plain messages: for many BSL users English is a second language. | Relevance & impact |
+| 4:15–4:40 | **100 % local, measured** | YAMNet, YOLOv8n, Gemma 4 E2B, Whisper, Piper, all on-device. Hearing: 96 % of household sounds alerted in 1,000 random trials, **smoke alarm never missed**, 0 % false alerts from noise. Owner seen in 97–98 % of camera views. [TBC] full test suite + adaptability benchmark pass rate. | Autonomy, engineering |
+| 4:40–5:00 | **What's next** | A real Go2: [TBC: LiDAR localisation already estimates the pose / else: SLAM instead of the sim pose], a learned gait, more homes, more sounds. | Ambition |
 
 ## Q&A prep (likely questions)
-- **"What if the LLM is wrong?"** It only chooses from options the safety layer already allows, the answer is schema-constrained, every choice is re-validated, and a 4 s watchdog hands over to rules. We show a real rejection.
-- **"Why not a cloud model?"** Privacy in the home, no internet dependency in an emergency, and latency; it's also a judging requirement.
-- **"Is the perception real or scripted?"** Sounds are classified from synthesized stereo audio by YAMNet + spectral rules with a bearing; the owner is found by YOLO on the rendered head camera; the robot's pose comes from the sim (honest: a real robot needs SLAM).
-- **"How would a deafblind person actually use it?"** Handle vibration codes (felt), nudges, guiding by the handle; the screen/voice help deaf or blind owners respectively.
-- **"What happens if the owner doesn't respond?"** It nudges again (up to 3), and in a fire leads them out anyway and can call emergency services.
+- **"What if the LLM is wrong?"** It only chooses from options the safety layer already allows; the answer is schema-constrained; every choice is re-validated; a 4 s watchdog hands over to rules. We show a real rejection.
+- **"Why not a cloud model?"** Privacy in the home, no internet dependency in an emergency, latency; it's also a judging criterion.
+- **"Is the perception real or scripted?"** Sounds are classified from simulated stereo audio by YAMNet + rules, with direction from the two ears; the owner is found by YOLO on the rendered head camera; we measured both (1,000 random hearing trials; 97–98 % owner detection). Honest: [TBC] the pose comes from the sim (a real robot needs localisation).
+- **"How would a deafblind person actually use it?"** Handle vibration codes (felt), nudges, guiding by the handle; screen / light for deaf owners, speech for blind owners; the profile chooses.
+- **"What if it hears something it doesn't know?"** [TBC] Gemma reasons about it (what, where, owner's state) and picks a safe action; anything danger-like is always top priority.
+- **"Does it work in a different house?"** A second home (apartment) runs with the same code; the robot can map a new house by itself.
+- **"What if the owner doesn't respond?"** After unanswered nudges: emergency contact + stays; in a fire: 999 + leads them out anyway; a fallen owner → "Are you OK?" → 999.
 
 ## Assets to prepare
-- [ ] Demo video (see `docs/DEMO_STORYBOARD.md`)
+- [ ] Demo video (montage tooling: `scripts/record_clips.py`, `scripts/make_montage.py`, `docs/VIDEO_HOWTO.md` [TBC])
 - [ ] Architecture diagram (one slide)
-- [ ] Screenshot: safety rejection in the GUI event log (from the rehearsal)
-- [ ] Short carpet-rule clip (voice → "Nudge says" → shaded no-go area)
-- [ ] Numbers slide (from `docs/TECHNICAL_SUMMARY.md`)
-
-## Pitch note: "Teaching it" slide, variant B (experimental)
-Replace the carpet clip (2:50-3:30) or add 20 s: the owner says "every night at 10, take me to bed"; Gemma turns it into a task program (trigger + steps from existing skills only), the Tasks tab shows it, the clock jumps to 21:59 and Nudge acts. Say: "New jobs are data, not code; the validator only allows known skills, and a smoke alarm beats every task." Unsupported requests get an honest "Sorry, I can't do that yet."
+- [ ] Screenshots: safety rejection; "999 CALLED (no answer)" banner (`ask_45.png`); night + dock; Deaf/Blind switch
+- [ ] Exploration clip (robot maps the house, sped up) — Teo
+- [ ] Numbers slide (from `docs/TECHNICAL_SUMMARY.md`); hearing chart `docs/img/hearing-eval.png` (Teo)
