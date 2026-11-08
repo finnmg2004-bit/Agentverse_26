@@ -27,6 +27,7 @@ import math
 import os
 import time
 from collections import deque
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from sim.house_layout import DOORWAYS, OUTSIDE, ROOM_GRAPH
@@ -93,8 +94,11 @@ class Navigator:
         # Option A (NUDGE_ROBOT_MAP=1, default off): plan on the robot's own explored map + live
         # changes (robot_map_nav.py). Off -> exactly the static floor plan, as before.
         self.robot_map = None
+        self.robot_map_info = None    # brain status `robot_map` (flag on only): source, file, loaded_at, known_frac
         if os.environ.get("NUDGE_ROBOT_MAP", "0") == "1":
             self.robot_map = _load_robot_map()
+            if self.robot_map is not None:
+                self.robot_map_info = _map_info(self.robot_map, "startup")
         if self.robot_map is not None:
             self.planner = GridPlanner(self.robot_map.navmap())
         else:
@@ -247,6 +251,32 @@ class Navigator:
         if self.goal is not None:
             self._plan((pose[0], pose[1]))
 
+    def swap_robot_map(self, path, pose=None, source: str = "rescan") -> Optional[dict]:
+        """NUDGE_ROBOT_MAP=1 only (flag off: None, nothing changes): switch to a freshly saved robot map
+        (scan_mode.py "Rescan house") without a restart. The new grid + objects + exits are fully loaded
+        first; only then are the planner (in place: the evacuation planner / fallen watch share it), object
+        places and scanned exits swapped, so a failed load keeps the old map. Objects carry over from the old
+        map when the new file has none (the rescan runs no YOLO). An active goal is re-planned on the new grid
+        from `pose`. Returns the new `robot_map_info`, or None if nothing was swapped."""
+        if os.environ.get("NUDGE_ROBOT_MAP", "0") != "1":
+            return None
+        rm = _load_robot_map(path, previous=self.robot_map, quiet=True)
+        if rm is None:
+            return None
+        self.robot_map = rm
+        self.planner.__dict__.update(GridPlanner(rm.navmap()).__dict__)
+        rm.last_rebuild = time.monotonic()
+        self._block_counts.clear()
+        self.robot_map_info = _map_info(rm, source)
+        replanned = self.goal is not None and pose is not None
+        if replanned:
+            self._plan((pose[0], pose[1]))
+        i = self.robot_map_info
+        print(f"[nav] ROBOT MAP: switched to the new scan ({i['file']}, {i['known_frac']:.0%} known, "
+              f"{len(i['objects'])} objects, exits {i['exits'] or 'none'})"
+              + (" -> re-planned route" if replanned else ""), flush=True)
+        return i
+
     # ------------------------------------------------------------------ control
     # ------------------------------------------------------------------ getting stuck (#19)
     def _remaining(self, x: float, y: float) -> float:
@@ -372,19 +402,54 @@ class Navigator:
         return vx, vy, wz, "moving"
 
 
-def _load_robot_map():
-    """NUDGE_ROBOT_MAP=1: the robot's own saved map, or None (falls back to the static floor plan)."""
+_LANDMARKS_ORIG: Optional[dict] = None   # house_layout LANDMARKS before any robot-map places / exits
+
+
+def _load_robot_map(path=None, previous=None, quiet: bool = False):
+    """NUDGE_ROBOT_MAP=1: the robot's own saved map, or None (falls back to the static floor plan / keeps
+    the current one). `previous` (a map swap): its places + scanned exits are taken out of LANDMARKS before
+    the new map's are registered, and its objects carry over if the new file has none."""
+    global _LANDMARKS_ORIG
     try:
-        from robot_map_nav import MAP_FILE, RobotMapNav
+        import robot_map_nav
+        from robot_map_nav import MAP_FILE, PLACES, RobotMapNav
         from sim.house_layout import LANDMARKS
-        rm = RobotMapNav(MAP_FILE)
+        path = Path(path) if path is not None else MAP_FILE
+        rm = RobotMapNav(path)                     # fully loaded before anything is swapped
         rm.pending = False
+        if previous is not None:
+            if not rm.omem.objects and previous.omem.objects:
+                rm.omem.load(previous.omem.objects)
+                rm.rooms = rm.rooms or previous.rooms
+                rm.meta = dict(rm.meta, objects_from="previous map (carried over at swap)")
+            rm.owner_seen = previous.owner_seen    # the owner is still not furniture
+        if _LANDMARKS_ORIG is None:
+            _LANDMARKS_ORIG = dict(LANDMARKS)
+        for k in set(PLACES) | {e["target"] for e in robot_map_nav.SCAN_EXITS.values()}:
+            if k in _LANDMARKS_ORIG:
+                LANDMARKS[k] = _LANDMARKS_ORIG[k]
+            else:
+                LANDMARKS.pop(k, None)
+        PLACES.clear()
         places = rm.register_places(LANDMARKS)
         exits = rm.register_exits(LANDMARKS)
-        print(f"[nav] NUDGE_ROBOT_MAP=1: planning on the robot's own map {MAP_FILE.name} "
-              f"({rm.grid.known_frac():.0%} of the grid known); places from objects: {places or 'none'}; "
-              f"exits from the scan: {[(e['name'], e['pos']) for e in exits] or 'none'}", flush=True)
+        if not quiet:
+            print(f"[nav] NUDGE_ROBOT_MAP=1: planning on the robot's own map {path.name} "
+                  f"({rm.grid.known_frac():.0%} of the grid known); places from objects: {places or 'none'}; "
+                  f"exits from the scan: {[(e['name'], e['pos']) for e in exits] or 'none'}", flush=True)
         return rm
     except Exception as e:  # missing / unreadable map: keep the demo path working
-        print(f"[nav] NUDGE_ROBOT_MAP=1 but no usable robot map ({e}); using the static floor plan", flush=True)
+        print(f"[nav] NUDGE_ROBOT_MAP=1 but no usable robot map ({e}); "
+              + ("keeping the current map" if previous is not None or quiet else "using the static floor plan"),
+              flush=True)
         return None
+
+
+def _map_info(rm, source: str) -> dict:
+    """`robot_map` field of the brain status (add-only)."""
+    import robot_map_nav
+    return {"source": source, "file": rm.path.name, "path": str(rm.path),
+            "loaded_at": time.strftime("%H:%M:%S"), "loaded_wall": round(time.time(), 2),
+            "known_frac": round(rm.grid.known_frac(), 4),
+            "objects": [o.get("cls") for o in rm.omem.confirmed()],
+            "exits": sorted(robot_map_nav.SCAN_EXITS)}

@@ -522,6 +522,21 @@ SCENARIOS: Dict[str, Dict] = {
         "forbid_log": ["SKILL look_around", "SOUND start", "Owner seen in living"],
         "min_timeout": 180.0,
     },
+    "owner_voice_apt": {
+        "desc": "owner_voice in the apartment: run with NUDGE_HOUSE=apt set for the whole test run (the judge's "
+                "rooms come from the same house_layout). [O] moves the owner living room -> dining (the apartment "
+                "has no guest room); 'take me to the kitchen' -> the robot hears the voice, heads for the dining "
+                "room -> owner in the kitchen",
+        "actions": [("at", 1.0, "O"), ("cmd", 3.0, "Nudge, please take me to the kitchen")],
+        "expect_complete": [],
+        "expect_owner_room": "kitchen",
+        "expect_log": ["OWNER VOICE: heard the owner", "probably dining", "SKILL go_to_room(dining)",
+                       "Owner seen in dining"],
+        "expect_alert": [],
+        "forbid_log": ["SKILL look_around", "SOUND start", "Owner seen in living"],
+        "min_timeout": 180.0,
+        "experimental": True,   # only with NUDGE_HOUSE=apt, so not in the default suite
+    },
 }
 
 
