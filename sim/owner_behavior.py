@@ -13,6 +13,14 @@ States
   alerted   Felt the robot's nudge: stop, turn toward the robot, and after a human reaction
             delay TAP THE HANDLE to acknowledge. They don't always notice the first nudge.
 
+Owner state (overnight S4; `state.owner_state_gt`, judge only, the brain must never read it)
+  awake     normal behaviour above (default; [R] reset returns to it)
+  asleep    in the guest bed: no wandering, no fidgeting. Only a nudge with alert mode `1_pulse`
+            or stronger (WAKE_ALERT_MODES) wakes them - speech alone doesn't; waking is slow
+            (WAKE_REACTION_S), then they are awake and react like above.
+  idle      awake but staying put (no wandering), e.g. to trigger a taught "idle" task.
+  Set by the `gui` action {"action": "owner_state", "state": "asleep"} (sim/run_sim.py).
+
 Sensors exposed to the brain (published in `state`):
   handle_tap  true while the owner taps the handle (a touch sensor on the handle)
 The owner's position itself is never given to the brain (only `owner_pos_gt` for debugging).
@@ -42,6 +50,9 @@ LET_GO_HOLD_S = (2.0, 3.5)         # stands still at least this long after letti
 LET_GO_COOLDOWN_S = 30.0
 REGRAB_REACH = 1.1                 # robot handle within this distance -> owner can regrab
 NUDGE_CONTACT = 0.60               # robot centre this close + alert on = nudge felt
+OWNER_STATES = ("awake", "asleep", "idle")
+WAKE_ALERT_MODES = ("1_pulse", "2_pulse", "continuous")  # what can wake a sleeping owner (vibration)
+WAKE_REACTION_S = (1.5, 3.0)       # asleep: nudge felt -> awake + handle tap
 
 
 def _wrap(a: float) -> float:
@@ -60,6 +71,7 @@ class OwnerBehavior:
     # ------------------------------------------------------------------ control
     def reset(self, t: float) -> None:
         self._now = t
+        self.owner_state = "awake"
         self._t_prev = t
         self.state = "idle"
         self.t_state = t
@@ -100,7 +112,19 @@ class OwnerBehavior:
         return self._now < self.tap_until
 
     def status(self) -> str:
+        """Activity: idle | walking | guided | alerted (published as `owner_activity_gt`)."""
         return self.state
+
+    def set_owner_state(self, state: str, t: float) -> bool:
+        """awake | asleep | idle (published as `owner_state_gt`). Returns False for an unknown state."""
+        if state not in OWNER_STATES:
+            return False
+        self.owner_state = state
+        if state != "awake":
+            self.state, self.path, self.target_yaw = "idle", [], None
+        else:
+            self.dwell_until = t + max(FIRST_WANDER_MIN_S, self.rng.uniform(*DWELL_S))
+        return True
 
     # ------------------------------------------------------------------ helpers
     def _planner_get(self):
@@ -165,6 +189,17 @@ class OwnerBehavior:
             self.alert_session = False
             self.nudges_felt = 0
             self.ack_at = None
+        if self.owner_state == "asleep":
+            # Only a real vibration nudge wakes them; anything else (speech, lights) does nothing.
+            if alert_mode in WAKE_ALERT_MODES and d_robot < NUDGE_CONTACT:
+                self.owner_state = "awake"
+                self.alert_session = True
+                self.nudges_felt += 1
+                self.state, self.t_state, self.path = "alerted", t, []
+                self.ack_at = t + self.rng.uniform(*WAKE_REACTION_S)
+                self.dwell_until = t + max(FIRST_WANDER_MIN_S, self.rng.uniform(*DWELL_S))
+                print(f"[sim] owner WAKES UP (nudge {alert_mode})", flush=True)
+            return
         if alert_on and d_robot < NUDGE_CONTACT:
             if not self.ignored_this_contact and self.ack_at is None and self.state != "alerted":
                 first = self.nudges_felt == 0 and not self.alert_session
@@ -229,7 +264,8 @@ class OwnerBehavior:
             self._turn_toward(self.target_yaw, dt, rate=0.8)
             if abs(_wrap(self.target_yaw - self.yaw)) < 0.02:
                 self.target_yaw = None
-        if self.wander and t >= self.dwell_until and d_robot > 1.5 and not alert_on:
+        if (self.wander and self.owner_state == "awake" and t >= self.dwell_until and d_robot > 1.5
+                and not alert_on):
             self._start_walk(t)
 
     def _step_guided(self, t: float, d_robot: float, robot_pose) -> None:

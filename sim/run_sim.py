@@ -412,6 +412,14 @@ class NudgeSimulator:
                       f"(day {self.clock.day(float(self.data.time))})")
             except ValueError:
                 print(f"[sim] GUI: bad clock time {payload.get('time')!r} (want HH:MM)")
+        elif action == "owner_state":  # overnight S4: {"action": "owner_state", "state": "asleep"}
+            st = str(payload.get("state", ""))
+            if st == "asleep":
+                self.set_owner_room("guest")  # in bed = guest bedroom
+            if self.owner.set_owner_state(st, float(self.data.time)):
+                print(f"[sim] GUI: owner is now {st.upper()}")
+            else:
+                print(f"[sim] GUI: unknown owner state {st!r} (awake|asleep|idle)")
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()
@@ -625,7 +633,8 @@ class NudgeSimulator:
                 "active_sounds": [s for s, on in self.active_sounds.items() if on],
                 # Touch sensor on the guide handle: the owner taps it to acknowledge an alert.
                 "handle_tap": self.owner.handle_tap,
-                "owner_state_gt": self.owner.status(),  # debug only, like owner_pos_gt
+                "owner_state_gt": self.owner.owner_state,  # awake|asleep|idle - judge only, like owner_pos_gt
+                "owner_activity_gt": self.owner.status(),  # idle|walking|guided|alerted - judge only
                 # Ground truth for avoid-area tests / GUI shading (rules themselves live in the brain).
                 "in_avoid_area": self.in_avoid_area,
                 "avoid_steps": self.avoid_steps,
