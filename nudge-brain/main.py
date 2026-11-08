@@ -23,6 +23,7 @@ for p in (str(HERE.parent), str(HERE)):
 
 import safety  # noqa: E402
 from agent import DEFAULT_SAY, NudgeAgent  # noqa: E402
+from run_log import RUN_LOG  # noqa: E402  (runs/*.jsonl decision log; NUDGE_RUN_LOG=0 = off)
 from alerts import HapticAlerts  # noqa: E402
 from bridge import BrainBridge  # noqa: E402
 from hearing import SoundEvents, StereoHearing  # noqa: E402
@@ -325,6 +326,11 @@ class Brain:
         instr, say = validate(parsed, w.is_emergency(), str(msg.get("text", "")))
         w.log(f"COMMAND parsed by {result['source']} in {result['latency']:.2f}s: {parsed.get('kind')}"
               + (f" -> {instr['type']}" if instr else " -> refused / not understood"))
+        RUN_LOG.record("command", t_sim=round(w.t_sim, 2), text=str(msg.get("text", "")),
+                       input=msg.get("source"), confidence=msg.get("confidence"), parser=result["source"],
+                       latency=result["latency"], parsed=parsed, llm_raw=result.get("raw"),
+                       model=self.agent.model, emergency=bool(w.is_emergency()),
+                       result=instr, say=say)  # instr None = refused ("can't do that" etc.)
         if instr is not None:
             kind = instr["type"]
             if kind in ("avoid_area", "sound_preference"):
@@ -464,6 +470,7 @@ class Brain:
                 self.episode = episode
             elif episode != self.episode:
                 self.reset(episode)
+            RUN_LOG.set_episode(self.episode, run=id(self))  # new file per brain run / episode, else no-op
             self.world.update_state(self.bridge.latest_state)
         if upd["audio"]:
             self.on_audio()

@@ -36,6 +36,7 @@ open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
 - `nudge-brain/evacuation.py` `fire_estimate` (installed alarm's room unless hearing clearly disagrees) + `nudge-brain/sound_localizer.py` `room_probs` (`d4aaa8c`, Ricktho)
 - (earlier, before this session) `nudge-brain/main.py`: `ALERT_SOUNDS` from the registry, kettle deferral, `SoundEvents` feed + status fields; `agent.py` / `world_model.py`: registry defaults (Ricktho)
 - `nudge-brain/agent.py` `build_menu`: exit options described as "NEAR the fire - dangerous" / "FAR from the fire - safest" + planner's pick tag (`fire_words`, Eden)
+- `nudge-brain/agent.py` + `main.py`: observe-only hooks for the run log (`run_log.py`, runs/*.jsonl; `NUDGE_RUN_LOG=0` = off): `_log_run` after each decision, `late_llm` lines, `command` lines, new file per episode. No decision logic changed (Teo)
 - (add a line here whenever you touch Finn's files this session)
 
 ## Sean (sim, outputs, tests)
@@ -49,6 +50,8 @@ open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
 - [x] Windows fix: Whisper + numpy crashed with "OMP Error #15"; win-64 now uses OpenBLAS (`pixi.toml`)
 - [ ] **→ Eden (covering Teo)** Measure Gemma latency on the recording laptop (accuracy is 97.8 %; on Eden's RTX 5050 laptop ~0.4–0.9 s, 0 watchdog fallbacks)
 - [ ] Fine-tune (paused): PARKED until Teo is back (add a Modal payment method, then follow AGENTS.md 6.1)
+- [x] Agent evals: every brain run saved to `runs/*.jsonl`; golden sets of real decisions + teach sentences; `pixi run llm-eval --gate` (scripts/llm_eval/README.md)
+- [ ] **→ everyone, ongoing** After ANY prompt / model / menu change run `pixi run llm-eval --gate`; when a run shows a wrong decision, `pixi run llm-harvest --add runs/<file>.jsonl:<line> --expect <letter> --note "why"`
 
 ## Eden (GUI, integration, story)
 - [x] GUI command/rule text box (sends `user_command`) + example sentences

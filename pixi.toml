@@ -43,6 +43,12 @@ start = { cmd = "python scripts/run_all.py", depends-on = ["fetch-world"] }
 # End-to-end scenario tests (doorbell, knock, smoke, owner_moved, chair, reset, demo); add --gui to watch
 test-scenarios = { cmd = "python scripts/test_scenarios.py", depends-on = ["fetch-world"] }
 
+# Agent evals (local Ollama only; scripts/llm_eval/README.md). After ANY prompt / model / menu change:
+# `pixi run llm-eval --gate` (exit 1 if a set < 90 %). Brain runs are saved to runs/*.jsonl (NUDGE_RUN_LOG=0 = off).
+llm-eval = "python scripts/llm_eval/run_eval.py"
+# Saved runs -> candidate eval cases; `--add runs/<file>.jsonl:<line>` appends one to the golden set
+llm-harvest = "python scripts/llm_eval/harvest_runs.py"
+
 [target.linux-64.tasks]
 # Simulator (forces X11/GLFW compatibility on Linux Wayland/X11)
 sim = { cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" }, depends-on = ["fetch-world"] }

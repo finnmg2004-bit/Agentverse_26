@@ -34,3 +34,6 @@ assets/models/
 # taught tasks (overnight C1), per machine
 assets/tasks.json
 assets/tasks.tmp
+
+# Brain decision logs (nudge-brain/run_log.py), one file per run/episode
+runs/
