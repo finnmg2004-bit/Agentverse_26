@@ -54,6 +54,17 @@ OVEN_LOCAL_GATE = 3.0  # oven peak (5.18-5.26 kHz) over the strongest bin at 5.1
 # 0 false knocks under every noise profile; knocks still heard from the entry / front door /
 # dining room under fan, TV, vacuum and party noise (only far rooms lose them under fan noise).
 KNOCK_BURST_GATE = 4.0
+# The owner talking (YAMNet speech classes) fired the spectral doorbell rule in every room (scores up to
+# 0.58, speech energy sits in the chime bands) and the knock rule (up to 0.73, plosives are bursty), i.e.
+# a false doorbell mission whenever the owner speaks (agent D, #10). While YAMNet hears speech >= 0.5,
+# spectral-only scores must clear a higher bar (real doorbell + talking: p5 0.63; oven: min 0.86), knock is
+# capped (it can't be told from speech; knock while the owner talks is missed). YAMNet's own score for a
+# sound (e.g. the real doorbell recording, 0.97) and the smoke alarm are never gated.
+SPEECH_CLASSES = ("Speech", "Male speech, man speaking", "Female speech, woman speaking",
+                  "Narration, monologue", "Conversation", "Speech synthesizer")
+SPEECH_GATE = 0.5 if os.environ.get("NUDGE_SPEECH_GATE", "1") != "0" else 9.9  # NUDGE_SPEECH_GATE=0 = off
+SPEECH_SPECTRAL_MIN = {"doorbell": 0.60, "oven_timer": 0.70, "knock": 1.01}
+SPEECH_CAP = 0.40
 # YAMNet hears a loud kettle whistle as "Alarm" / "Fire alarm" (up to 0.85 next to the stove). When the
 # spectral kettle rule fires and the spectral smoke rule does NOT confirm a 3.1 kHz alarm, YAMNet's
 # smoke score is capped below the 0.6 pre-emption threshold. A real smoke alarm (also with the kettle
@@ -113,6 +124,8 @@ class StereoHearing:
         self.yamnet_names: list = []
         self.yamnet_index: Dict[str, list] = {}
         self._buf = np.zeros(YAMNET_SAMPLES, dtype=np.float32)
+        self.speech_index: list = []
+        self._speech = 0.0  # YAMNet speech score of the last window (the owner talking)
         yamnet_path = MODEL_DIR / "yamnet.tflite"
         class_map = MODEL_DIR / "yamnet_class_map.csv"
         if yamnet_path.exists() and class_map.exists():
@@ -124,6 +137,7 @@ class StereoHearing:
                     self.yamnet_names = [row[2] for row in list(csv.reader(f))[1:]]
                 for sound, names in YAMNET_CLASSES.items():
                     self.yamnet_index[sound] = [self.yamnet_names.index(n) for n in names]
+                self.speech_index = [self.yamnet_names.index(n) for n in SPEECH_CLASSES if n in self.yamnet_names]
                 self.backend_name = "YAMNet-TFLite" + ("+spectral" if self.allow_spectral else "")
             except Exception as exc:
                 print(f"[hearing] YAMNet unavailable ({exc}); using spectral classifier")
@@ -139,6 +153,7 @@ class StereoHearing:
         self.tflite_interpreter.invoke()
         s = self.tflite_interpreter.get_tensor(self._out).reshape(-1)
         mapped = {sound: float(max(s[i] for i in idx)) for sound, idx in self.yamnet_index.items()}
+        self._speech = float(max((s[i] for i in self.speech_index), default=0.0))
         top = int(np.argmax(s))
         return mapped, self.yamnet_names[top], float(s[top])
 
@@ -248,6 +263,8 @@ class StereoHearing:
                 "estimated_room": None,
                 "rms": round(rms, 5),
                 "backend": self.backend_name,
+                "speech": 0.0,
+                "speech_gated": [],
             }
 
         # Compute Welch PSD / FFT spectrum on the 16 kHz mono signal
@@ -358,15 +375,20 @@ class StereoHearing:
             if (kettle_gate and spectral["smoke_alarm"] < 0.3 and alarm_tonal < ALARM_TONE_UNCAP
                     and "smoke_alarm" in yamnet_scores):
                 yamnet_scores["smoke_alarm"] = min(yamnet_scores["smoke_alarm"], YAMNET_SMOKE_CAP_WITH_KETTLE)
+            speech_gated = []
             for sound in SOUNDS:
                 y = yamnet_scores.get(sound, 0.0)
                 sp = spectral[sound] if self.allow_spectral else 0.0
+                if self._speech >= SPEECH_GATE and sp < SPEECH_SPECTRAL_MIN.get(sound, 0.0) and sp > SPEECH_CAP:
+                    sp = SPEECH_CAP
+                    speech_gated.append(sound)
                 scores[sound] = round(max(y, sp), 3)
                 sources[sound] = "yamnet" if y >= sp else "spectral"
             yamnet_scores = {k: round(v, 3) for k, v in yamnet_scores.items()}
         else:
             scores = dict(spectral)
             sources = {k: "spectral" for k in scores}
+            speech_gated = []
 
         # Emergency priority: if smoke_alarm >= 0.60, select smoke_alarm immediately
         if scores["smoke_alarm"] >= 0.60:
@@ -398,6 +420,10 @@ class StereoHearing:
             "estimated_room": estimated_room,
             "rms": round(rms, 4),
             "backend": self.backend_name,
+            # The owner talking (YAMNet speech classes, 0 without YAMNet): never a mission sound; agent D
+            # localises it to find the owner. speech_gated = spectral scores capped because of it.
+            "speech": round(self._speech, 3) if self.tflite_interpreter is not None else 0.0,
+            "speech_gated": speech_gated,
         }
         if DUMP_DIR is not None and scores.get(DUMP_SOUND, 0.0) >= DUMP_MIN:
             self._dump(stereo_pcm, robot_pose, result)
