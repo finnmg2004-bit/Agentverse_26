@@ -26,7 +26,9 @@ Geom groups (shared contract with the upstream scene, keep it):
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Tuple
@@ -215,14 +217,42 @@ def _xyaxes_quat(xaxis, yaxis) -> list:
 
 
 OWNER_MESH_DIR = Path(__file__).resolve().parent.parent / "assets" / "models" / "owner"
+OWNER_DEFAULT_PACK = "rp_posed_00178_29_OBJ"  # same default as scripts/prepare_owner.py
+
+
+def _ensure_scanned_owner() -> None:
+    """Run scripts/prepare_owner.py automatically when a downloaded Renderpeople pack
+    (assets/models/rp_*_OBJ/) has no converted owner yet, or the pack is newer than the conversion.
+
+    Nothing to do (no cost) when the owner is up to date or no pack was downloaded; a failed
+    conversion logs one line and the sim keeps the primitive owner. NUDGE_AUTO_OWNER=0 turns it off.
+    """
+    if os.environ.get("NUDGE_AUTO_OWNER", "1") == "0":
+        return
+    models = OWNER_MESH_DIR.parent
+    packs = [p for p in models.glob("rp_*_OBJ") if p.is_dir() and any(p.glob("*.obj"))]
+    if not packs:
+        return
+    pack = next((p for p in packs if p.name == OWNER_DEFAULT_PACK), max(packs, key=lambda p: p.stat().st_mtime))
+    obj, png = OWNER_MESH_DIR / "owner.obj", OWNER_MESH_DIR / "owner.png"
+    newest_src = max(f.stat().st_mtime for f in pack.rglob("*") if f.is_file())
+    if obj.exists() and png.exists() and min(obj.stat().st_mtime, png.stat().st_mtime) >= newest_src:
+        return
+    script = Path(__file__).resolve().parent.parent / "scripts" / "prepare_owner.py"
+    print(f"[world] converting the scanned owner from {pack.name} (first run only, a few seconds)...", flush=True)
+    r = subprocess.run([sys.executable, str(script), "--src", str(pack)], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[world] owner conversion failed, using the primitive owner: {(r.stderr or r.stdout).strip()[-200:]}")
 
 
 def _add_scanned_owner(spec: mujoco.MjSpec, owner) -> bool:
-    """Swap the primitive owner's looks for the scanned human mesh, if `pixi run prepare-owner` made one.
+    """Swap the primitive owner's looks for the scanned human mesh (converted by `pixi run prepare-owner`,
+    or automatically by _ensure_scanned_owner on sim start).
 
     The primitives become invisible proxies in group 4 (hidden house-collision group; rgba kept,
     since mj_ray skips alpha-0 geoms), so LiDAR and the nav map still see the owner's footprint.
     """
+    _ensure_scanned_owner()
     obj, png = OWNER_MESH_DIR / "owner.obj", OWNER_MESH_DIR / "owner.png"
     if not (obj.exists() and png.exists()):
         return False
