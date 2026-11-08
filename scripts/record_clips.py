@@ -84,8 +84,8 @@ CLIPS = [
          ready=False),  # P4 agent J (day/unknown-events): `play` gui action + NUDGE_UNKNOWN_EVENTS
     dict(name="smoke",
          sim=NO_WANDER, env={},
-         auto="R@1;cam=Whole house@2;M@4;E@20;" + ";".join(f"answer=yes@{t}" for t in range(8, 50, 3)),
-         duration=60, trim=(3.0, None), speed=5.0,
+         auto="R@1;cam=Whole house@2;M@4;E@40;" + ";".join(f"answer=yes@{t}" for t in range(30, 60, 3)),
+         duration=90, trim=(3.0, None), speed=6.0,
          card="Emergency",
          caption="SMOKE ALARM pre-empts everything - 'Shall I call 999?' - back exit blocked: re-routes outside",
          ready=True),
@@ -192,6 +192,7 @@ def _check(mp4: Path) -> bool:
         import cv2
         cap = cv2.VideoCapture(str(mp4))
         n, fps = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0), cap.get(cv2.CAP_PROP_FPS) or 0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, n // 2)  # the first frames are "Waiting for the sim" (dark)
         ok, img = cap.read()
         cap.release()
         mean = float(img.mean()) if ok else -1
@@ -200,7 +201,7 @@ def _check(mp4: Path) -> bool:
         return False
     good = n > 0 and ok and mean > 1
     print(f"[clips] {'OK' if good else 'FAILED'}: {mp4} {n} frames"
-          f"{f' = {n / fps:.1f} s' if fps else ''} (first-frame brightness {mean:.0f})")
+          f"{f' = {n / fps:.1f} s' if fps else ''} (middle-frame brightness {mean:.0f})")
     return good
 
 
