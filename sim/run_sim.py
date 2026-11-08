@@ -84,6 +84,7 @@ from sim.nav_map import load_or_build
 from sim.lightbar import ALERT_MODE_SOUND, SOUND_INFO
 from sim.robot_screen import RobotScreen
 from sim.robot_voice import RobotVoice
+from sim.owner_profile import DEFAULT_PROFILE, PROFILE_NAMES, channels, describe, is_emergency, normalize
 from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
 from sim.owner_behavior import OwnerBehavior
@@ -120,6 +121,7 @@ class NudgeSimulator:
         owner_seed=None,
         clock: str = "08:00",
         coco_objects: bool = False,
+        profile: str = DEFAULT_PROFILE,
     ) -> None:
         self.cutaway = cutaway
         if coco_objects:  # S7 (experimental): COCO-class stand-ins + state.objects_gt
@@ -233,6 +235,11 @@ class NudgeSimulator:
         self.voice = RobotVoice()
         self.nudge_says: str = ""
         self.mission_sound: str | None = None
+        # Owner profile (contract C10, sim/owner_profile.py): which of those outputs are on.
+        self.profile: str = normalize(profile) or DEFAULT_PROFILE
+        self.outputs = channels(self.profile)
+        self._outputs_emergency = False
+        print(f"[sim] PROFILE: {describe(self.profile, self.outputs)}")
 
     def _start_sound(self, name: str) -> None:
         if not self.active_sounds.get(name):
@@ -309,6 +316,7 @@ class NudgeSimulator:
             return  # stale status from before an [R] reset
         mission = status.get("mission") or {}
         self.mission_sound = mission.get("sound")
+        self._brain_mission_status = mission.get("status")  # owner profile: may arrive a tick before `cmd`
         say = str(mission.get("say") or "").strip() if mission.get("status") == "active" else ""
         if not say:
             # Proposed add-only field (overnight C1/C3): a reply to the owner outside a mission, e.g. a
@@ -318,7 +326,39 @@ class NudgeSimulator:
             self.nudge_says = say
             if say:
                 print(f"[sim] NUDGE SAYS: {say}")
-            self.voice.say_if_changed(say, urgent=self.mission_sound == "smoke_alarm")
+            self.refresh_outputs()  # owner profile (C10): may this message be spoken?
+            if self.outputs["speech"] or not say:
+                self.voice.say_if_changed(say, urgent=self.mission_sound == "smoke_alarm")
+            else:
+                print(f"[sim] SPEECH OFF (profile {self.profile}): {say}")
+
+    def set_profile(self, mode: str) -> None:
+        """Owner profile (contract C10): deaf | blind | deafblind -> enabled output channels."""
+        p = normalize(mode)
+        if p is None:
+            print(f"[sim] GUI: unknown profile {mode!r} ({'|'.join(PROFILE_NAMES)})")
+            return
+        self.profile = p
+        self.refresh_outputs()
+        print(f"[sim] PROFILE: {describe(p, self.outputs, self._outputs_emergency)}")
+
+    def refresh_outputs(self) -> None:
+        """Recompute the enabled output channels (profile + emergency override); log changes."""
+        active = "active" in (self.mission_status, getattr(self, "_brain_mission_status", None))
+        emergency = is_emergency(self.mission_sound if active else None, self.cmd_alert_mode)
+        new = channels(self.profile, emergency)
+        self._outputs_emergency = emergency
+        if new != self.outputs:
+            speech_was_on = self.outputs.get("speech")
+            self.outputs = new
+            print(f"[sim] OUTPUTS: {describe(self.profile, new, emergency)}")
+            if new["speech"] and not speech_was_on and self.nudge_says:  # e.g. switched to blind mid-message
+                self.voice.say_if_changed(self.nudge_says, urgent=emergency)
+
+    @property
+    def screen_text(self) -> str:
+        """The floating 'Nudge says' label above the robot is the robot's screen: hidden if the profile says so."""
+        return self.nudge_says if self.outputs["screen"] else ""
 
     def check_avoid_areas(self) -> None:
         """Print once on entering / leaving an avoid area (robot centre within the footprint margin)."""
@@ -411,6 +451,8 @@ class NudgeSimulator:
             self.handle_hotkey(str(payload.get("key", "")))
         elif action == "owner_room":
             self.set_owner_room(str(payload.get("room", "")))
+        elif action == "profile":  # contract C10: {"action": "profile", "mode": "deaf"|"blind"|"deafblind"}
+            self.set_profile(str(payload.get("mode", "")))
         elif action == "sound":  # any registry sound by name (GUI buttons for sounds without a hotkey)
             name = str(payload.get("name", ""))
             if name in SOUND_SOURCES:
@@ -659,6 +701,8 @@ class NudgeSimulator:
                 "avoid_steps": self.avoid_steps,
                 "avoid_areas": {k: list(v) for k, v in AVOID_AREAS.items()},
                 "nudge_says": self.nudge_says,  # what the robot screen shows / speaks
+                "profile": self.profile,  # C10 owner profile: deaf | blind | deafblind
+                "outputs": self.outputs,  # enabled output channels (profile + emergency override)
                 "sim_clock": self.clock.hhmm(float(self.data.time)),  # contract C2
                 "sim_day": self.clock.day(float(self.data.time)),
                 "objects_gt": self.objects_gt(),  # S7: COCO objects, judge only ([] without --coco-objects)
@@ -732,10 +776,15 @@ class NudgeSimulator:
         )
         self.check_scenario_end()
         self.check_avoid_areas()
+        # Owner profile (C10): a disabled light bar shows its idle look, a disabled screen stays dark.
+        self.refresh_outputs()
+        if not self.outputs["light"]:
+            self.locomotion.lightbar.update(self.model, float(self.data.time), "none")
         # Screen tier: the brain's mission sound if it sent one, else inferred from the alert mode.
+        screen_on = self.outputs["screen"]
         self.screen.update(self.model, float(self.data.time),
-                           self.mission_sound or ALERT_MODE_SOUND.get(self.cmd_alert_mode),
-                           self.mission_status)
+                           (self.mission_sound or ALERT_MODE_SOUND.get(self.cmd_alert_mode)) if screen_on else None,
+                           self.mission_status if screen_on else "idle")
         self.publish_telemetry(float(self.data.time))
         self.publish_view(float(self.data.time))
 
@@ -798,6 +847,9 @@ def main() -> None:
                         help="Sim clock start time HH:MM (state.sim_clock; [R] resets to it; GUI action 'clock' sets it)")
     parser.add_argument("--view", choices=VIEW_NAMES, default="top",
                         help="Viewer camera at start: top, follow (chase robot), dog (head camera); cycle with [V]")
+    parser.add_argument("--profile", choices=PROFILE_NAMES, default=DEFAULT_PROFILE,
+                        help="Owner profile (contract C10, sim/owner_profile.py): which robot outputs are on; "
+                             "the GUI action 'profile' changes it live")
     args = parser.parse_args()
 
     print("[sim] Building nerv-world house + Unitree Go2 + Owner + Chair + Sound Beacons...")
@@ -811,6 +863,7 @@ def main() -> None:
         owner_seed=args.owner_seed,
         clock=args.clock,
         coco_objects=args.coco_objects,
+        profile=args.profile,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
@@ -870,7 +923,7 @@ def main() -> None:
                             viewer.set_texts(texts)
                             shown_overlay = overlay
                         with viewer.lock():  # floating "Nudge says" label above the robot
-                            sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.nudge_says)
+                            sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.screen_text)
                         viewer.sync()
                         last_sync = now_wall
                     if args.duration > 0.0 and (now_wall - start_wall) >= args.duration:
