@@ -67,6 +67,13 @@ def _nav_step(world, nav: Navigator, speed: float, guiding: bool = False):
     return vx, vy, wz, status
 
 
+def _mark_unreachable(world, nav: Navigator, room: Optional[str]) -> None:
+    """Remember why we stopped: the only doorway to `room` is blocked (main.py takes it from here)."""
+    world.unreachable = {"door": nav.unreachable["door"], "room": room, "t": time.monotonic()}
+    nav.clear()
+    nav.unreachable = None
+
+
 @dataclass
 class SkillOutput:
     vx: float = 0.0
@@ -109,6 +116,9 @@ class GoToRoom(Skill):
         if status == "arrived":
             nav.clear()
             return SkillOutput(event="arrived_in_room", done=True)
+        if status == "stuck" and nav.unreachable and world.robot_room != self.room:
+            _mark_unreachable(world, nav, self.room)  # only door blocked and no way past it (#19)
+            return SkillOutput(event="unreachable", done=True)
         if status == "stuck":  # recovery failed: already in the room -> scan from here; else agent decides
             return SkillOutput(event="arrived_in_room" if world.robot_room == self.room else "timeout", done=True)
         return SkillOutput(vx, vy, wz)
@@ -224,6 +234,9 @@ class ApproachAndAlert(Skill):
             if self.goal_owner and math.hypot(ox - self.goal_owner[0], oy - self.goal_owner[1]) > 0.4:
                 self._replan(world, nav)
             vx, vy, wz, status = _nav_step(world, nav, CRUISE_SPEED)
+            if status == "stuck" and nav.unreachable and world.dist_to_owner() >= 1.6:
+                _mark_unreachable(world, nav, get_room_at(ox, oy))  # owner behind a blocked only door (#19)
+                return SkillOutput(event="unreachable", done=True)
             if status == "arrived" or world.dist_to_owner() < STANDOFF + 0.1:
                 nav.clear()
                 self._to("face")
@@ -390,6 +403,46 @@ class GuideOwner(Skill):
         bx, by = (ox - rx) * c + (oy - ry) * s, -(ox - rx) * s + (oy - ry) * c
         k = 0.3 / max(d, 1e-3)
         return SkillOutput(vx=bx * k, vy=by * k, guiding=True)
+
+
+class WaitAtBlockedDoor(Skill):
+    """#19 "only route": the only doorway to the room Nudge must reach is blocked. Stand in front of it
+    (facing it, alerting - main.py keeps the alert pattern on) and keep checking it with LiDAR; once it
+    has been clear for CLEAR_S the doorway is re-opened and the agent re-decides (event "timeout").
+    A deliberate wait, not a stalled move: labelled idle."""
+
+    name = "idle"
+    CLEAR_S = 2.0
+
+    def __init__(self, door: str) -> None:
+        super().__init__()
+        self.door = door
+        self.clear_since: Optional[float] = None
+
+    def label(self) -> str:
+        return f"idle (waiting at the blocked {self.door}, alerting)"
+
+    def step(self, world, nav, alerts) -> SkillOutput:
+        from sim.house_layout import DOORWAYS
+        dx, dy = DOORWAYS[self.door]
+        rx, ry, yaw = world.robot_pose
+        err = wrap(math.atan2(dy - ry, dx - rx) - yaw)
+        hit = False
+        for ang, r in zip(LIDAR_ANGLES, world.lidar_ranges or ()):
+            if r < 3.9:
+                hx, hy = rx + r * math.cos(yaw + ang), ry + r * math.sin(yaw + ang)
+                hit = hit or math.hypot(hx - dx, hy - dy) < 0.45
+        now = time.monotonic()
+        if abs(err) < 0.4 and not hit:  # facing the doorway and nothing in it
+            self.clear_since = self.clear_since or now
+            if now - self.clear_since >= self.CLEAR_S:
+                world.blocked_doors.pop(self.door, None)
+                world.unreachable = None
+                world.log(f"LiDAR: {self.door} is CLEAR again -> re-deciding")
+                return SkillOutput(event="timeout", done=True)
+        else:
+            self.clear_since = None
+        return SkillOutput(wz=max(-1.0, min(1.0, 1.5 * err)) if abs(err) > 0.15 else 0.0)
 
 
 class SkillExecutor:

@@ -116,6 +116,7 @@ class WorldModel:
         # {"reason": "fire"|"no_response", "contact": "999"|"emergency_contact", "asked": bool,
         #  "answer": "yes"|"no"|"timeout"|None, "called": bool, "by", "detail", "t"}
         self.escalation: Optional[Dict[str, Any]] = None
+        self.unreachable: Optional[Dict[str, Any]] = None  # #19: only doorway to the goal is blocked
         # Contract C7 (Teo's camera check, gemma_vision): {"state": "standing"|"sitting"|"lying_down"|
         # "not_visible", "confidence", "t", "source"} or None. Read by the no-response escalation.
         self.owner_check: Optional[Dict[str, Any]] = None
@@ -227,6 +228,7 @@ class WorldModel:
         self.nudge_attempts = 0
         self.escalated = False
         self.escalation = None
+        self.unreachable = None
         if sound != "smoke_alarm":
             self.fire = None
             self.evac = None

@@ -112,6 +112,9 @@ class Navigator:
         self._replan_after_recover = False
         self.temp_obstacles: List[Tuple[float, float, float, float, float]] = []  # x0, y0, x1, y1, expires
         self._news: List[str] = []    # log lines for the skill (it owns the world / log)
+        # Set by _plan when the goal can only be reached through a doorway believed blocked (#19,
+        # "only route"): the route then stops in front of that doorway instead of driving into it.
+        self.unreachable: Optional[Dict[str, object]] = None
 
     # ------------------------------------------------------------------ planning
     def set_goal(self, goal: Point, robot_xy: Point, blocked: Set[str], final_tol: float = 0.25,
@@ -170,6 +173,16 @@ class Navigator:
         elif avoid and wps is not None:
             self.rule_note = "route keeps off the owner's no-go area" if cost is None else \
                 "fire: no-go area allowed only if much shorter"
+        self.unreachable = None
+        if wps is None and self.blocked_doors:
+            # The only way there is through a doorway believed blocked (e.g. the chair in the laundry's
+            # only door). Still try it (there may be room to squeeze past), but flag it: if the stuck
+            # ladder gives up on this route, the skill reports "unreachable" instead of looping.
+            through = self.planner.plan(robot_xy, self.goal, ())
+            door = next((w[2] for w in (through or ()) if w[2] in self.blocked_doors), None)
+            if door:
+                self.unreachable = {"door": door, "goal": self.goal}
+                self._news.append(f"only route goes through blocked {door} - trying to squeeze past")
         if wps is None:
             # Every route is blocked: ignore blocks rather than freeze.
             wps = self.planner.plan(robot_xy, self.goal, ())

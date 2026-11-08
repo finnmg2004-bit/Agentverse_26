@@ -29,7 +29,7 @@ from alerts import HapticAlerts  # noqa: E402
 from bridge import BrainBridge  # noqa: E402
 from hearing import SoundEvents, StereoHearing  # noqa: E402
 from navigator import Navigator  # noqa: E402
-from skills import GoToRoom, Skill, SkillExecutor, SkillOutput, wrap  # noqa: E402
+from skills import GoToRoom, Skill, SkillExecutor, SkillOutput, WaitAtBlockedDoor, wrap  # noqa: E402
 from vision import OwnerDetector  # noqa: E402
 from gemma_vision import OwnerChecker  # noqa: E402  (Teo, C7 owner_check; NUDGE_OWNER_CHECK=1)
 from world_model import WorldModel  # noqa: E402
@@ -38,7 +38,7 @@ from sound_localizer import SoundLocalizer  # noqa: E402
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
 from tasks import OwnerActivity, TaskRunner, TaskStore, confirmation  # noqa: E402
 from ask import AnswerListener, AskOwner  # noqa: E402
-from sim.house_layout import ALERT_SOUNDS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
+from sim.house_layout import ALERT_SOUNDS, ROOMS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
 
 LOOP_HZ = 20.0
 STATUS_HZ = 10.0  # `brain` status for the control GUI (gui/nudge_control.py)
@@ -52,6 +52,7 @@ SAY_HOLD_S = 20.0  # top-level `say` in the brain status: how long a reply stays
 # Escalation (AGENTS.md 12: #13 999 call, #20 no response; contract C8)
 ASK_999_AFTER_S = 3.0      # owner on the handle this long in a fire -> "Shall I call 999?"
 ASK_999_TIMEOUT_S = 10.0   # no answer in a fire = call (the safe default)
+UNREACHABLE_ESCALATE_S = 30.0  # #19: owner's room still unreachable this long -> emergency contact
 NO_RESPONSE_NUDGES = safety.MAX_NUDGES  # unanswered nudges before the emergency contact is alerted
 FIRE_NO_RESPONSE_NUDGES = 2             # in a fire: 999 after this many
 LYING_DOWN_NUDGES = 1                   # owner lying down (C7 camera check): escalate after the first
@@ -570,6 +571,38 @@ class Brain:
         w.log(f'ASK {self.fire_ask_id}: "Shall I call 999?" (fire; no answer in {ASK_999_TIMEOUT_S:.0f} s = call)')
         self.tell(SAY_999_ASK)
 
+    def on_unreachable(self) -> None:
+        """#19 "only route": the only doorway to where Nudge must go is blocked and it could not get past.
+        Say so, keep alerting from the doorway (lights / handle / speech reach the owner through it),
+        wait there re-checking the doorway, and get help: 999 at once in a fire, else the emergency
+        contact after UNREACHABLE_ESCALATE_S (tick_unreachable)."""
+        w = self.world
+        u = w.unreachable or {}
+        door = u.get("door") or "the door"
+        room = ROOMS.get(u.get("room") or "", {}).get("label", "that room").lower()
+        w.log(f"UNREACHABLE: the only way into the {room} ({door}) is blocked - waiting there and alerting")
+        self.tell(f"I can't reach you. Something is blocking the {room} door.")
+        if w.mission is not None:
+            self.alerts.set_for_sound(w.mission["sound"])
+        self.nav.clear()
+        self.executor.skill = WaitAtBlockedDoor(door)
+        w.phase = "waiting"
+        w.log(f"SKILL {self.executor.skill.label()}")
+        if w.is_emergency():
+            self.escalate("unreachable", "999", by="rules", detail=f"fire, owner behind blocked {door}",
+                          say=f"I can't reach you. I have called 999. Something is blocking the {room} door.")
+
+    def tick_unreachable(self) -> None:
+        w = self.world
+        u = w.unreachable
+        if (u and w.mission is not None and isinstance(self.executor.skill, WaitAtBlockedDoor)
+                and time.monotonic() - u["t"] > UNREACHABLE_ESCALATE_S):
+            room = ROOMS.get(u.get("room") or "", {}).get("label", "that room").lower()
+            self.escalate("unreachable", "emergency_contact", by="rules",
+                          detail=f"{u['door']} blocked for {UNREACHABLE_ESCALATE_S:.0f} s",
+                          say=f"I still can't reach you. I have told your emergency contact. "
+                              f"Something is blocking the {room} door.")
+
     def on_no_response(self) -> None:
         """#20: the owner did not tap the handle after N nudges -> alert someone (plain code).
         In a fire: 999 (then lead them out anyway); otherwise: the emergency contact (then stay with them).
@@ -615,6 +648,7 @@ class Brain:
             self.apply_command(result)
         self.tick_ask()
         self.tick_fire_999()
+        self.tick_unreachable()
         self.tick_tasks()
 
         # LiDAR doorway check: re-plan around a blocked doorway (e.g. the chair).
@@ -650,6 +684,8 @@ class Brain:
                 self.task_adapter.finished(m)
                 self.world.finish_mission()
                 self.alerts.clear()
+            elif out.event == "unreachable" and self.world.mission is not None:
+                self.on_unreachable()
             elif self.world.mission is not None:
                 if out.event == "owner_no_response":
                     self.on_no_response()  # escalation first, so the agent's menu already knows
