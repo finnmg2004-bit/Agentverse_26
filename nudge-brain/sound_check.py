@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -51,6 +52,8 @@ TOO_LOUD = 2.0            # ...the sound must be this many times louder than the
 MIN_SNR_LOUD = 1.5        # (only measured when the sound is this many times above the noise floor)
 REAL_MARGIN = 0.0         # first window: "real" at once if the TV is not ahead at all
 MAX_WINDOWS = 2           # unclear first window -> one more (0.5 s), then decide
+SPEECH_MIN = 0.4          # hearing's YAMNet speech score: the owner is talking in this window
+SPEECH_HOLD_S = 8.0       # for this long after the owner spoke, a doorbell / knock is treated as real
 STALE_S = 2.0             # evidence older than this is from an earlier ring: start over
 INVESTIGATE_MIN_S = 2.0   # investigating: a "tv" verdict only after walking / looking this long
 INVESTIGATE_MAX_S = 3.0   # investigating: decide by then (real door delayed < 4 s incl. the window)
@@ -105,6 +108,7 @@ class SoundCheck:
         self.ref_rms = {name: _clip_rms(name) for name in CHECK_SOUNDS if name in SOUND_SOURCES}
         self.tv_xy = (float(TV_SOURCE["pos"][0]), float(TV_SOURCE["pos"][1]))
         self.ambient_rms: Optional[float] = None
+        self.last_speech_mono = -1e9  # when the owner was last heard talking (time.monotonic())
         self.pending: Dict[str, Dict[str, Any]] = {}
         self.last: Optional[Dict[str, Any]] = None  # C9 status
         self.history: list = []
@@ -117,6 +121,7 @@ class SoundCheck:
         self.last = None
         self.history.clear()
         self.ambient_rms = None
+        self.last_speech_mono = -1e9
         self.inv = None
 
     # ------------------------------------------------------------------ inputs
@@ -124,6 +129,12 @@ class SoundCheck:
         """Every hearing result: track the background-noise floor from windows with no sound."""
         rms = float(res.get("rms", 0.0) or 0.0)
         scores = res.get("scores", {}) or {}
+        if float(res.get("speech", 0.0) or 0.0) >= SPEECH_MIN:
+            # The owner talking is not background noise: counting it inflated the noise floor, so a real
+            # doorbell right after a spoken command looked too quiet for the door and was called "TV"
+            # (carpet_rule, owner next to the TV). Remember when they last spoke (see check()).
+            self.last_speech_mono = time.monotonic()
+            return
         if rms <= 0.0 or any(float(v) > QUIET_SCORE for v in scores.values()):
             return
         if self.ambient_rms is None:
@@ -177,6 +188,15 @@ class SoundCheck:
         "wait"ing while it moves, "tv" only after INVESTIGATE_MIN_S, everything decided by
         INVESTIGATE_MAX_S. A clearly real door is "real" at once either way."""
         if not self.applies(sound):
+            return "real"
+        if time.monotonic() - self.last_speech_mono < SPEECH_HOLD_S:
+            # The owner was just talking: their voice is in the same windows, so direction + loudness can't
+            # tell the TV from the door. A missed visitor is worse than a fetched owner -> treat it as real.
+            self.pending.pop(sound, None)
+            self.last = {"sound": sound, "verdict": "real", "t": round(t, 2), "margin": 0.0, "windows": 0,
+                         "waited_s": 0.0,
+                         "reason": "the owner was just speaking, so I can't tell the TV from the door: treating it as real"}
+            self.history = (self.history + [self.last])[-10:]
             return "real"
         p = self.pending.get(sound)
         if p is None or t - p["t_last"] > (INVESTIGATE_STALE_S if investigate else STALE_S):
