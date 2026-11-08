@@ -25,8 +25,9 @@
     | smoke + doorbell | 260 | 238 | **15** |
 
     0 / 15120 false windows (real + synthesized negatives). Scenarios with `NUDGE_REAL_AUDIO=1`: smoke, doorbell, kettle PASS.
+  - **R5 slice 3** (`8209cf4`): the real doorbell's 5.16 kHz bell partial no longer fires the oven timer. The rule now needs the 5.20 kHz peak to beat the bins just below it. With real audio, false oven starts during the doorbell went from 70 to 0. Oven detection is unchanged, including while the doorbell rings (0/240 missed). Caveat: this ties the rule to the installed timer's frequency.
 - Behind a flag / experimental: `NUDGE_EVAC_HYSTERESIS=0` turns R1 off, `NUDGE_EAR_AGC=0` turns the R2c AGC off (both default on). `NUDGE_SMOKE_TONAL` (the R5 real-alarm rule) defaults to the value of `NUDGE_REAL_AUDIO`, so it is off for the synthesized demo. **Team decision (safety):** keep it opt-in, or turn it on always (with the rule forced on, the synthesized clips gave no false positives either).
-- Not done: **R5 is not finished: real recordings are still poor.** Smoke is now fine with `NUDGE_REAL_AUDIO=1` (slice 2). The real doorbell fires false oven-timer starts. Knock is only heard in a quiet room. The demo must stay on synthesized clips. R6 is not done either. The brain side of C5 (publish `ask`, consume `user_answer`) isn't built by anyone yet.
+- Not done: **R5 is not finished: real recordings are still poor.** Smoke (slice 2) and the doorbell-as-oven false starts (slice 3) are fixed. The real doorbell is still missed far away under fan / tv (12/24) and vacuum / party (0/24), and knock is only heard in a quiet room. The demo must stay on synthesized clips. R6 is not done either. The brain side of C5 (publish `ask`, consume `user_answer`) isn't built by anyone yet.
 - Merge risks (files, contract assumptions): voice `text` is now time-normalised (an additive change in form; `raw` is unchanged). `sim/sensors.py` (+20 lines in `synthesize_stereo_audio`, audio only). `sim/house_layout.py` knock entry gained `event_stop_windows` (data only). `choose()` gained an optional `now=` kwarg and returns an extra `hysteresis` field. Callers are unchanged.
 - How to see it working: the EVAC decision dict has `hysteresis` = "kept (... only 1.0 m better)" / "switched (...)".
 
@@ -50,3 +51,4 @@
 - 03:05: R4 ask_owner by voice (C5 voice side), f3a4bb4, tested: test_ask_owner 4/4, voice --selftest PASS, test_voice_clips 5/5+3/3, carpet_rule_voice PASS
 - 03:51: R5 slice 1 (no kettle cap on a real alarm + harness float fix; R2c claim corrected), 27ceff2, tested: offline sweeps synth unchanged / real smoke+kettle 400->180 missed, smoke PASS, kettle PASS
 - 04:11: R5 slice 2 (opt-in tonal smoke rule for real alarms), 280a251, tested: offline real smoke 243->13/400 missed, 0/15120 false windows; real-audio scenarios smoke/doorbell/kettle PASS
+- 04:43: R5 slice 3 (real doorbell no longer fires the oven timer), 8209cf4, tested: test_sound_events real doorbell false oven starts 70->0, oven 120/120; real + synth doorbell/oven_timer scenarios PASS
