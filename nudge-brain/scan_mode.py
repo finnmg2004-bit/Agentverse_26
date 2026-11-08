@@ -80,6 +80,7 @@ class ScanMode:
         self.last_status_pub = 0.0
         self.explore_status = ""
         self.result: Dict[str, Any] = {"state": "idle", "text": ""}   # last outcome, for the GUI
+        self.saved_map: Optional[Path] = None   # set when a scan replaced the map; main.py swaps it in (agent M)
 
     # ------------------------------------------------------------------ status
     def elapsed(self) -> float:
@@ -168,6 +169,7 @@ class ScanMode:
         self.result = {"state": state, "text": text, "known_frac": round(kf, 4), "elapsed_s": round(el, 1)}
         brain.world.log(f"SCAN ended ({state}): {text}")
         if state == "saved":
+            self.saved_map = path
             brain.world.say("House scanned.", "info")
         elif state == "partial":
             brain.world.say("Scan stopped early. I kept my old map.", "info")
