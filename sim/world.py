@@ -256,15 +256,21 @@ def _owner_tools():
 
 
 def available_owners() -> list:
-    """Owner names for --owner: downloaded packs (converted on first use) + already converted owners."""
+    """Owner names for --owner: the owners in git (busy, visitor) + downloaded packs (converted on first
+    use) + already converted owners."""
+    names = set()
+    if (OWNER_OPEN_DIR / "owner.obj").exists():
+        names.add("busy")
+    if (OWNER_OPEN_DIR / "visitor" / "owner.obj").exists():
+        names.add("visitor")
     try:
         P = _owner_tools()
-        names = set(P.find_packs())
+        names |= set(P.find_packs())
         if P.OWNERS_DIR.is_dir():
             names |= {d.name for d in P.OWNERS_DIR.iterdir() if (d / "owner.obj").exists()}
-        return sorted(names)
     except Exception:  # noqa: BLE001 - listing is informational only
-        return []
+        pass
+    return sorted(names)
 
 
 def _chosen_owner_dir(default: Path) -> Path:
