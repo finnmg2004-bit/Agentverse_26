@@ -87,7 +87,7 @@ SOUND_KEYS: Dict[str, str] = {"doorbell": "B", "knock": "K", "smoke_alarm": "M",
 # Scene controls: (button label, sim hotkey). Add a line here when the sim gets a new hotkey.
 SCENE_CONTROLS: List[tuple] = [
     ("Next room", "O"), ("Chair in door", "C"), ("Block back exit", "E"),
-    ("Owner wander", "W"), ("Noise", "N"),
+    ("Owner wander", "W"), ("Noise", "N"), ("TV doorbell", "Y"),
 ]
 FIXED_KEYS = ("X", "R")  # Silence, Reset
 

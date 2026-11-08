@@ -32,6 +32,7 @@ from vision import OwnerDetector  # noqa: E402
 from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
+from sound_check import SoundCheck  # noqa: E402  ("Is the sound real?" TV vs front door, C9)
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
 from tasks import OwnerActivity, TaskRunner, TaskStore, confirmation  # noqa: E402
 from ask import AnswerListener, AskOwner  # noqa: E402
@@ -143,6 +144,7 @@ class Brain:
         self.executor = SkillExecutor(self.nav, self.alerts)
         self.agent = NudgeAgent()
         self.localizer = SoundLocalizer()
+        self.sound_check = SoundCheck()
         self.evac = EvacuationPlanner(self.nav.planner)
         # What the owner tells the robot (GUI text box / voice): rules.py
         self.cmd_listener = CommandListener()
@@ -188,6 +190,7 @@ class Brain:
         self.executor.skill = Skill()
         self.world = WorldModel()
         self.localizer.reset()
+        self.sound_check.reset()
         self.latched = {}
         self.deferred = set()
         self.sound_events.reset()
@@ -206,6 +209,7 @@ class Brain:
         meta, stereo = self.bridge.latest_audio
         res = self.hearing.process_audio(stereo, self.world.robot_pose)
         scores = res.get("scores", {})
+        self.sound_check.observe(res)  # background-noise floor for the TV check
 
         # Localise the sound from the ears (direction + loudness, accumulated as the robot moves).
         changed = self.localizer.update(res, self.world.robot_pose)
@@ -251,6 +255,9 @@ class Brain:
         label, conf = res.get("label"), float(res.get("confidence", 0.0))
         deferred_ready = label in self.deferred and self.world.mission is None
         if label in ALERT_SOUNDS and conf >= NEW_SOUND_CONF and (label not in self.latched or deferred_ready):
+            # "Is the sound real?" (sound_check.py): a doorbell / knock from the TV starts nothing.
+            if label not in self.latched and self.sound_check.gate(label, res, self.world, self.latched):
+                return
             self.latched[label] = 0
             self.deferred.discard(label)
             if self.world.is_emergency():
@@ -595,6 +602,8 @@ class Brain:
             "tasks": self.task_runner.status(),
             # brain-side owner activity for idle tasks (E1.6): minutes without a sign of activity
             "owner_activity": self.owner_activity.status(),
+            # C9: last "Is the sound real?" verdict {"sound", "verdict": "real"|"tv", "reason", "t"} or None
+            "sound_check": self.sound_check.status(),
         }
 
     def run(self, duration: float = 0.0) -> None:

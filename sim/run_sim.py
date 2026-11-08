@@ -90,6 +90,7 @@ from sim.owner_behavior import OwnerBehavior
 from sim.sim_clock import SimClock
 from sim.house_layout import CHAIR_EXIT_POS
 from sim.house_layout import OWNER_VOICE
+from sim.house_layout import TV_SOURCE
 
 VIEW_NAMES = ["top", "follow", "dog"]
 
@@ -125,6 +126,11 @@ class NudgeSimulator:
     ) -> None:
         self.cutaway = cutaway
         self.voice_until: float = -1.0  # sim time until which the owner is talking (owner voice in the ears)
+        # The living-room TV playing a doorbell / knock (hotkey [Y], gui action "tv"; AGENTS.md 6.2):
+        # mixed into the ears from TV_SOURCE until tv_until. Ground truth for the judge: state.tv_playing_gt.
+        self.tv_playing: Optional[str] = None
+        self.tv_until: float = -1.0
+        self.tv_cursor: int = 0
         if coco_objects:  # S7 (experimental): COCO-class stand-ins + state.objects_gt
             from sim.coco_standins import build_model_with_objects
             self.model, self.data = build_model_with_objects(verbose=True, cutaway=cutaway)
@@ -157,6 +163,7 @@ class NudgeSimulator:
             name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, f"beacon_{name}")
             for name in SOUND_SOURCES
         }
+        self.tv_beacon_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "beacon_tv")
 
         # Latest command from nudge-brain
         self.cmd_vx: float = 0.0
@@ -396,6 +403,9 @@ class NudgeSimulator:
         elif k in ("N", "6"):
             p = self.sensors.noise.cycle()
             print(f"[sim] HOTKEY [N]: Background noise -> {p['name']} ({p['label']})")
+        elif k == "Y":
+            # TV doorbell: toggles (a second [Y] while it plays turns the TV sound off)
+            self.tv_play(None if self.tv_playing else "doorbell", source="HOTKEY [Y]")
         elif k == "V":
             self.view_idx = (self.view_idx + 1) % len(VIEW_NAMES)
             self.view_changed = True
@@ -439,6 +449,9 @@ class NudgeSimulator:
                 print(f"[sim] GUI: owner is now {st.upper()}")
             else:
                 print(f"[sim] GUI: unknown owner state {st!r} (awake|asleep|idle)")
+        elif action == "tv":  # {"action": "tv", "play": "doorbell"|"knock"|"off"} (AGENTS.md 6.2, C9)
+            play = str(payload.get("play", "off"))
+            self.tv_play(None if play in ("off", "", "none") else play, source="GUI")
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()
@@ -498,10 +511,39 @@ class NudgeSimulator:
         ox, oy = self.locomotion.get_owner_pos()
         print(f"[sim] OWNER SPEAKS for {dur:.1f}s from {get_room_at(ox, oy)} ({ox:.1f}, {oy:.1f}): {text!r}")
 
+    def tv_play(self, sound: Optional[str], source: str = "GUI") -> None:
+        """The living-room TV plays `sound` (a registry clip, e.g. a doorbell in a programme) from
+        TV_SOURCE for TV_SOURCE["duration_s"]; None = TV sound off. Not an active sound: nothing to answer."""
+        if sound is not None and (sound not in TV_SOURCE["plays"] or sound not in self.sensors.audio_clips):
+            print(f"[sim] {source}: the TV can't play {sound!r} (plays {', '.join(TV_SOURCE['plays'])})")
+            return
+        if sound is None:
+            self.tv_playing, self.tv_until = None, -1.0
+            print(f"[sim] {source}: TV sound off")
+            return
+        self.tv_playing = sound
+        self.tv_until = float(self.data.time) + float(TV_SOURCE["duration_s"])
+        self.tv_cursor = 0
+        print(f"[sim] {source}: TV in the {TV_SOURCE['room']} plays a {sound} for "
+              f"{float(TV_SOURCE['duration_s']):.0f}s from {TV_SOURCE['pos'][:2]} (not the real door)")
+
+    def tv_window(self) -> list:
+        """`extra_sources` for this audio window: the TV's sound while it plays."""
+        if self.tv_playing is None:
+            return []
+        if float(self.data.time) >= self.tv_until:
+            print(f"[sim] TV {self.tv_playing} finished")
+            self.tv_playing, self.tv_until = None, -1.0
+            return []
+        mono = self.sensors.clip_window(self.tv_playing, self.tv_cursor)
+        self.tv_cursor += len(mono)
+        return [(mono, tuple(TV_SOURCE["pos"][:2]), float(TV_SOURCE["level"]))]
+
     def reset_scene(self) -> None:
         """Put robot, owner, chair and sounds back to the demo start state; start a new episode."""
         self.episode += 1
         self.voice_until = -1.0
+        self.tv_playing, self.tv_until = None, -1.0
         for s in list(self.active_sounds):
             self._stop_sound(s)
         self.owner_room_idx = 0
@@ -536,13 +578,13 @@ class NudgeSimulator:
             return (f"{now}  MISSION ACTIVE", self.mission_text)
         return (f"{now}  READY (episode {self.episode})",
                 "B/K/M = sound   O = move owner   W = owner wander   C/E = chair   X = silence   R = reset"
-                "   N = noise   V = view")
+                "   N = noise   V = view   Y = TV doorbell")
 
     def glfw_key_callback(self, keycode: int) -> None:
         """Callback invoked by `mujoco.viewer.launch_passive` on key press (viewer thread)."""
         if 32 <= keycode <= 126:
             ch = chr(keycode).upper()
-            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E", "N", "6", "V", "J", "7", "T", "8"):
+            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E", "N", "6", "V", "J", "7", "T", "8", "Y"):
                 self.pending_keys.append(ch)  # applied in step_once() on the main thread
 
     def apply_view(self, cam) -> None:
@@ -588,6 +630,11 @@ class NudgeSimulator:
                 r, g, b, a = spec["rgba_idle"]
                 self.model.geom_rgba[gid] = [r, g, b, a]
                 self.model.geom_size[gid][0] = 0.12
+        if self.tv_beacon_id >= 0:  # the TV: purple pulse while it plays a doorbell / knock
+            on = self.tv_playing is not None
+            pulse = 0.65 + 0.35 * np.sin(t * 14.0) if on else 0.0
+            self.model.geom_rgba[self.tv_beacon_id] = [0.75, 0.35, 1.0, 0.95 * pulse] if on else [0.45, 0.3, 0.6, 0.3]
+            self.model.geom_size[self.tv_beacon_id][0] = 0.14 + 0.04 * pulse if on else 0.10
 
     def poll_zmq_commands(self) -> None:
         """Read non-blocking velocity/guiding commands (`cmd`) or test events (`sim_event`)."""
@@ -686,6 +733,7 @@ class NudgeSimulator:
                 "sim_clock": self.clock.hhmm(float(self.data.time)),  # contract C2
                 "sim_day": self.clock.day(float(self.data.time)),
                 "objects_gt": self.objects_gt(),  # S7: COCO objects, judge only ([] without --coco-objects)
+                "tv_playing_gt": self.tv_playing,  # sound the TV is playing (or None) - judge only
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -718,8 +766,10 @@ class NudgeSimulator:
             self.last_audio_pub = now
             talking = float(self.data.time) < self.voice_until
             pcm_bytes, audio_meta = self.sensors.synthesize_stereo_audio(
-                pose, self.active_sounds, voice_pos=tuple(owner_pos[:2]) if talking else None
+                pose, self.active_sounds, voice_pos=tuple(owner_pos[:2]) if talking else None,
+                extra_sources=self.tv_window(),
             )
+            audio_meta["tv_gt"] = self.tv_playing  # judge/debug only, like active_gt
             audio_meta["t"] = round(float(self.data.time), 3)
             audio_meta["robot_pose"] = [round(rx, 4), round(ry, 4), round(ryaw, 4)]
             self.pub_sock.send_multipart(
