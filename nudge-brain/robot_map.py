@@ -44,6 +44,8 @@ class OccupancyGrid:
         self.w = int(round(size_m[0] / res))
         self.h = int(round(size_m[1] / res))
         self.logodds = np.zeros((self.h, self.w), dtype=np.float32)
+        self.changes: list[dict] = []     # E3.5: "something new appeared in known free space"
+        self._t0 = time.time()
 
     def _cell(self, x: float, y: float):
         return int(round((x - self.origin[0]) / self.res)), int(round((y - self.origin[1]) / self.res))
@@ -71,10 +73,39 @@ class OccupancyGrid:
             if 0 <= cx < self.w and 0 <= cy < self.h:
                 mask[cy, cx] = False
         self.logodds[mask] += L_FREE
+        new_cells = []
         for cx, cy in occ:
             if 0 <= cx < self.w and 0 <= cy < self.h:
+                if self._was_free(cx, cy):
+                    new_cells.append((cx, cy))
                 self.logodds[cy, cx] += L_OCC
+        if new_cells:
+            self._record_change(new_cells)
         np.clip(self.logodds, L_MIN, L_MAX, out=self.logodds)
+
+    def _was_free(self, cx: int, cy: int) -> bool:
+        """True if the cell was confidently free and nothing occupied was next to it before this hit
+        (so wall-edge pose jitter is not reported as a change)."""
+        y0, y1, x0, x1 = max(cy - 2, 0), cy + 3, max(cx - 2, 0), cx + 3
+        return bool(self.logodds[cy, cx] < -1.2 and np.all(self.logodds[y0:y1, x0:x1] < 0.3))
+
+    def _record_change(self, cells) -> None:
+        xs = [self.origin[0] + cx * self.res for cx, _ in cells]
+        ys = [self.origin[1] + cy * self.res for _, cy in cells]
+        x, y = float(np.mean(xs)), float(np.mean(ys))
+        t = time.time() - self._t0
+        for c in self.changes:                      # merge with a recent change nearby
+            if np.hypot(c["x"] - x, c["y"] - y) < 0.8 and t - c["t"] < 20.0:
+                c["cells"] += len(cells)
+                c["t"] = round(t, 1)
+                return
+        self.changes.append({"kind": "appeared", "x": round(x, 2), "y": round(y, 2),
+                             "cells": len(cells), "t": round(t, 1)})
+        print(f"[robot_map] CHANGE: new obstacle near ({x:.1f}, {y:.1f}) at t={t:.0f}s", flush=True)
+        del self.changes[:-20]
+
+    def confirmed_changes(self, min_cells: int = 3) -> list[dict]:
+        return [c for c in self.changes if c["cells"] >= min_cells]
 
     def to_image(self) -> np.ndarray:
         img = np.full(self.logodds.shape, 127, dtype=np.uint8)
@@ -149,6 +180,7 @@ def main() -> None:
                 ok, png = cv2.imencode(".png", grid.to_image())
                 if ok:
                     hdr = grid.header(pose)
+                    hdr["changes"] = grid.confirmed_changes()
                     if omem is not None:
                         hdr["objects"], hdr["rooms"] = omem.snapshot(), omem.name_rooms()
                     pub.send_multipart([b"robot_map", json.dumps(hdr).encode(), png.tobytes()])
