@@ -661,6 +661,26 @@ NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorb
 | 13:15–13:40 | Technical summary + pitch final (from the drafts); pick the best take |
 | **13:40–13:50** | **Submit** (hard deadline 14:00) |
 
+### 12.0 Last build round 11:30 → 12:40: focus = adaptability ("general intelligence")
+**Why:** "adapting when the scene changes" is 25 % of the score. Pitch line: *rules for safety, local Gemma for the unknown.* Everything stays local. Anything not on `main` and working by **12:40** stays behind its flag and goes in the pitch as "built, off by default". New features are **off by default unless they're in the demo story**.
+
+| # | Item (team notes) | Who | Done by |
+|---|---|---|---|
+| **P1** | **Human model** on Eden's laptop + the recording laptop: copy the Renderpeople folder `assets/models/rp_…` (not in git: licence) | Ricktho → Eden | 11:45 |
+| **P2** | **Demo story** built around adaptability + **recording setup** on the RTX 5060 laptop (screen recorder with sound, one test take) | Eden + Sean | 12:30 |
+| **P3** | **Summary + pitch drafts:** everyone sends Eden 2–3 lines; `docs/TECHNICAL_SUMMARY.md` + `docs/PITCH.md` updated with today's features + numbers | All → Eden | 12:30 |
+| **P4** | **Unknown events, reasoned by Gemma:** YAMNet hears something with no rule (glass breaking, dog, baby crying, crash…) → local Gemma gets what / where (ears) / owner state / time and picks a safe action: go and look · alert the owner with a description · ask the owner · log it. Danger-like sounds are always treated as tier 1. Scenarios from Teo's ESC-50 sounds | **Agent J** (Eden's laptop), Finn reviews | 12:30 |
+| **P5** | **Select a different house (#8):** the upstream **apartment** (`worlds/nerv-world/build/apt-go2.xml`) + its own layout, `--house apt` / `NUDGE_HOUSE=apt` (restart to switch), sounds / owner / exits placed, `doorbell` scenario in the apartment; Teo's exploration maps it ("new-house mode") | **Agent I** + Teo | 12:40 (partial is fine, flag) |
+| **P6** | **TV model + TV investigation (#1, #2 of the notes):** a visible wall TV (always loaded, screen glows while it plays); on a doorbell that might be the TV, Nudge goes to check (turns / walks toward the sound, looks with the camera) before saying "That was the TV" | **Agent G**, Finn reviews | 12:30 |
+| **P7** | **Adaptability benchmark:** randomised unseen runs (owner room / position, noise, chair, sound; apartment if ready) → a pass rate for the pitch | **Sean** (on his own PC, not Eden's lock) | 12:40 |
+| **P8** | **Intermittent doorbell / knock:** rings in bursts with pauses, gives up after a while (keep the hearing tests + `SoundEvents` start/stop green; no restarted missions) | Ricktho | 12:30 |
+| **P9** | **Speak only when near the owner:** speech only within a few metres; otherwise screen only and say it on arrival | Sean | 12:15 |
+| **P10** | **Charging station by the front door** (+ Sean's review fixes): the robot starts the demo on its dock | **Agent F** | 12:15 |
+| **P11** | **Localisation (the "pose from the sim" gap):** particle filter from LiDAR + odometry on the map, `NUDGE_LOCALIZE=1` (off by default), GUI shows estimate vs truth, error measured | **Agent H** — only if Eden's test lock has room, else pitch "next step" | 12:40 |
+| — | In flight: Finn (owner unreachable, fallen owner) · Teo (owner start-up options, exits from the scan) | Finn, Teo | 12:40 |
+
+Eden's laptop runs agents F, G, I, J (+ H if there is room) on one test lock: **nobody runs a GUI / sim session on Eden's laptop until 12:40** except under `scripts/locked_test.py`.
+
 ### 12.2 People (stay in your files; changes elsewhere: small, additive, tell the owner)
 | Person | Must do (demo) | Then, if time | Files |
 |---|---|---|---|
