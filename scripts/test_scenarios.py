@@ -283,6 +283,18 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["SAFETY PRE-EMPT", "Owner seen in guest"],
         "expect_alert": ["1_pulse", "continuous"],
     },
+    "owner_voice": {
+        "desc": "#10: owner moved to the guest room (out of sight), then says 'take me to the kitchen' -> "
+                "the robot HEARS where the voice comes from and searches the guest room first (never the "
+                "living room, the prior), no false household sound from the voice -> owner in the kitchen",
+        "actions": [("at", 1.0, "O"), ("cmd", 3.0, "Nudge, please take me to the kitchen")],
+        "expect_complete": [],
+        "expect_owner_room": "kitchen",
+        "expect_log": ["OWNER VOICE: heard the owner", "probably guest", "Owner seen in guest"],
+        "expect_alert": [],
+        "forbid_log": ["go_to_room(living_room)", "SOUND start"],
+        "min_timeout": 180.0,
+    },
 }
 
 

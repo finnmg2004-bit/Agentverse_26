@@ -838,6 +838,15 @@ class NudgeControl:
         if gt:
             p = w2p(*gt)
             dpg.draw_circle(p, 6, color=(220, 220, 220, 200), thickness=1.5, parent=L)
+        # #10 (C6 `owner_voice`): where the brain HEARD the owner's voice come from (fades after 30 s)
+        voice = br.get("owner_voice") or {}
+        if voice.get("xy") and float(br.get("t", 0.0) or 0.0) - float(voice.get("t", 0.0) or 0.0) <= 30.0:
+            p = w2p(*voice["xy"])
+            vcol = (255, 170, 230, 230)
+            for rr in (5, 9, 13):
+                dpg.draw_circle(p, rr, color=vcol, thickness=1.2, parent=L)
+            dpg.draw_text((p[0] + 14, p[1] - 6), f"heard owner: {voice.get('room', '?')} "
+                          f"(P {float(voice.get('p', 0.0)):.2f})", color=vcol, size=11, parent=L)
         owner = br.get("owner") or {}
         if owner.get("pos"):
             p = w2p(*owner["pos"])
