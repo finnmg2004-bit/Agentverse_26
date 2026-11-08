@@ -119,10 +119,21 @@ class NudgeSimulator:
         owner_wander: bool = True,
         owner_seed=None,
         clock: str = "08:00",
+        coco_objects: bool = False,
     ) -> None:
         self.cutaway = cutaway
-        self.model, self.data = build_nudge_model(verbose=True, cutaway=cutaway)
-        self.nav_map = load_or_build(self.model, self.data)
+        if coco_objects:  # S7 (experimental): COCO-class stand-ins + state.objects_gt
+            from sim.coco_standins import build_model_with_objects
+            self.model, self.data = build_model_with_objects(verbose=True, cutaway=cutaway)
+            # The static nav map stays the plain house: never cache a map with the stand-ins in it.
+            from sim.nav_map import MAP_PATH, NavMap, _scene_stamp
+            self.nav_map = NavMap.load(MAP_PATH, _scene_stamp()) or load_or_build(
+                *build_nudge_model(verbose=False, cutaway=cutaway))
+        else:
+            self.model, self.data = build_nudge_model(verbose=True, cutaway=cutaway)
+            self.nav_map = load_or_build(self.model, self.data)
+        self.coco_objects = coco_objects
+        self._objects_gt = None  # computed once (all static) on the first state publish
 
         self.locomotion = Go2Locomotion(self.model, self.data, self.nav_map)
         self.sensors = SimSensors(self.model, self.data, enable_camera=enable_camera)
@@ -611,6 +622,14 @@ class NudgeSimulator:
             self.cmd_vy = 0.0
             self.cmd_wz = 0.0
 
+    def objects_gt(self) -> list:
+        if not self.coco_objects:
+            return []
+        if self._objects_gt is None:
+            from sim.coco_standins import objects_gt
+            self._objects_gt = objects_gt(self.model, self.data)
+        return self._objects_gt
+
     def publish_telemetry(self, now: float) -> None:
         """Publish `state` (20 Hz), `camera` (10 Hz), and `audio` (2 Hz) over ZMQ."""
         pose = self.locomotion.get_pose()
@@ -642,6 +661,7 @@ class NudgeSimulator:
                 "nudge_says": self.nudge_says,  # what the robot screen shows / speaks
                 "sim_clock": self.clock.hhmm(float(self.data.time)),  # contract C2
                 "sim_day": self.clock.day(float(self.data.time)),
+                "objects_gt": self.objects_gt(),  # S7: COCO objects, judge only ([] without --coco-objects)
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -772,6 +792,8 @@ def main() -> None:
     parser.add_argument("--gui-sub", default="tcp://127.0.0.1:5557", help="Control GUI command address")
     parser.add_argument("--noise", choices=NOISE_NAMES, default="quiet",
                         help="Background noise profile at start (cycle live with [N])")
+    parser.add_argument("--coco-objects", action="store_true",
+                        help="Experimental: add COCO-class stand-ins (bed, couch, tv) + state.objects_gt")
     parser.add_argument("--clock", default="08:00",
                         help="Sim clock start time HH:MM (state.sim_clock; [R] resets to it; GUI action 'clock' sets it)")
     parser.add_argument("--view", choices=VIEW_NAMES, default="top",
@@ -788,6 +810,7 @@ def main() -> None:
         owner_wander=not args.owner_static,
         owner_seed=args.owner_seed,
         clock=args.clock,
+        coco_objects=args.coco_objects,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
