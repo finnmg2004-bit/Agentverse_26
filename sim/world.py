@@ -241,27 +241,57 @@ OWNER_MESH_DIR = Path(__file__).resolve().parent.parent / "assets" / "models" / 
 OWNER_DEFAULT_PACK = "rp_posed_00178_29_OBJ"  # same default as scripts/prepare_owner.py
 
 
+def _owner_tools():
+    """scripts/prepare_owner.py as a module (owner names, where the packs are, the converter)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent.parent / "scripts" / "prepare_owner.py"
+    spec = importlib.util.spec_from_file_location("nudge_prepare_owner", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def available_owners() -> list:
+    """Owner names for --owner: downloaded packs (converted on first use) + already converted owners."""
+    try:
+        P = _owner_tools()
+        names = set(P.find_packs())
+        if P.OWNERS_DIR.is_dir():
+            names |= {d.name for d in P.OWNERS_DIR.iterdir() if (d / "owner.obj").exists()}
+        return sorted(names)
+    except Exception:  # noqa: BLE001 - listing is informational only
+        return []
+
+
 def _chosen_owner_dir(default: Path) -> Path:
     """Start-up option `--owner <name>` / NUDGE_OWNER=<name>: which scanned person is the owner.
 
-    Unset / "default" = assets/models/owner/ as before. Otherwise assets/models/owners/<name>/,
-    converted on demand from the matching downloaded pack (assets/models/rp_<name>*_OBJ/) by
-    scripts/prepare_owner.py --name <name>. Never in git (Renderpeople licence; assets/ is ignored).
+    Unset / "default" = assets/models/owner/ as before. Otherwise <models>/owners/<name>/ (short names:
+    mei, dennis, posed_00178_29; see scripts/prepare_owner.py --list), converted on first use from the
+    downloaded pack. <models> = NUDGE_MODELS_DIR, assets/models/, or the main checkout's (git worktree).
+    Never in git (Renderpeople licence; assets/ is ignored).
     """
     name = os.environ.get("NUDGE_OWNER", "").strip()
     if not name or name.lower() == "default":
         return default
-    out = default.parent / "owners" / name
-    if os.environ.get("NUDGE_AUTO_OWNER", "1") != "0" and not (out / "owner.obj").exists():
-        script = Path(__file__).resolve().parent.parent / "scripts" / "prepare_owner.py"
-        print(f"[world] converting owner {name!r} (first run only, a few seconds)...", flush=True)
-        r = subprocess.run([sys.executable, str(script), "--name", name], capture_output=True, text=True)
-        if r.returncode != 0:
-            print(f"[world] owner {name!r} not available: {(r.stderr or r.stdout).strip()[-200:]}")
-    if (out / "owner.obj").exists() and (out / "owner.png").exists():
-        print(f"[world] owner: {name} ({out.relative_to(default.parent.parent.parent).as_posix()})")
+    try:
+        P = _owner_tools()
+        out = P.OWNERS_DIR / name
+        if not (out / "owner.obj").exists():
+            hit = P.resolve(name)
+            if hit is not None:
+                out = P.OWNERS_DIR / hit[0]
+                if not (out / "owner.obj").exists() and os.environ.get("NUDGE_AUTO_OWNER", "1") != "0":
+                    print(f"[world] converting owner {hit[0]!r} from {hit[1].name} (first run only)...", flush=True)
+                    P.convert(hit[1], out)
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 - a bad pack must not stop the sim
+        print(f"[world] owner {name!r} not available: {exc}")
+        out = default
+    if out != default and (out / "owner.obj").exists() and (out / "owner.png").exists():
+        print(f"[world] owner: {out.name} ({out.as_posix()})")
         return out
-    print(f"[world] owner {name!r} not found, using the default owner")
+    print(f"[world] owner {name!r} not found (have: {', '.join(available_owners()) or 'none'}), "
+          f"using the default owner")
     return default
 
 

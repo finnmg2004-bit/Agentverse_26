@@ -1000,6 +1000,10 @@ def _apply_start_option_args(sim: "NudgeSimulator", args) -> None:
           f"owner={os.environ.get('NUDGE_OWNER') or 'default'} "
           f"room={args.owner_room or ROOM_ORDER[0]} state={args.owner_state} profile={args.profile} "
           f"wander={'off' if args.owner_static else 'on'}")
+    from sim.world import available_owners
+    owners = available_owners()
+    if owners:
+        print(f"[sim] OWNERS available (--owner NAME): {', '.join(owners)}")
 
 
 def main() -> None:

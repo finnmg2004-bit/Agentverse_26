@@ -32,7 +32,14 @@ def _rooms():
 
 
 def _owners():
-    """'default' + converted owners (assets/models/owners/<name>/) + downloaded packs not converted yet."""
+    """'default' + the same short names as `--owner` (sim.world.available_owners: mei, dennis, ...)."""
+    try:
+        from sim.world import available_owners
+        names = available_owners()
+        if names:
+            return ["default"] + names
+    except Exception:  # noqa: BLE001 - fall back to a plain folder scan
+        pass
     names = set()
     if (MODELS / "owners").is_dir():
         names |= {p.name for p in (MODELS / "owners").iterdir() if (p / "owner.obj").exists()}

@@ -16,7 +16,7 @@ Owner + house start-up options (all default off = the normal demo; passed to sim
   --owner-state asleep_bed           awake | asleep_bed (guest bed) | asleep_sofa (living-room sofa)
   --profile deaf                     deaf | blind | deafblind (C10; which robot outputs are on)
   --owner-wander off                 owner never wanders on their own (= --owner-static)
-  --owner mei_posed_001              which scanned person (assets/models/owners/<name>/, see
+  --owner dennis                     which scanned person (assets/models/owners/<name>/, see
                                      `python scripts/prepare_owner.py --list`)
   --house apt                        EXPERIMENTAL second house (NUDGE_HOUSE), see sim/layouts/
   e.g. python scripts/run_all.py --owner-room guest --owner-state asleep_bed --profile deaf
