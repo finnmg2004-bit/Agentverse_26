@@ -51,4 +51,4 @@ assets/*
 runs/
 
 # Renderpeople scans (licence: never in git, wherever they are unzipped)
-rp_*_OBJ/
+

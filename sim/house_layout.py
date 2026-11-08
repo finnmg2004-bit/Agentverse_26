@@ -217,6 +217,9 @@ SOUND_SOURCES: Dict[str, Dict[str, object]] = {
         "file": "doorbell.wav",
         "yamnet": ("Doorbell", "Ding-dong"),
         "label": "Doorbell",
+        # P8: a real visitor rings, waits, rings again, then gives up. The sim plays this pattern only with
+        # NUDGE_INTERMITTENT=1; SoundEvents always holds a stop through the pause (one visitor = one event).
+        "ring_pattern": {"ring_s": 3.0, "pause_s": 6.0, "give_up_s": 60.0},
         "say": "Doorbell. Hold my handle. I will take you to the front door.",
         "rgba_active": (0.1, 0.85, 1.0, 0.95),
         "rgba_idle": (0.1, 0.4, 0.5, 0.35),
@@ -232,6 +235,7 @@ SOUND_SOURCES: Dict[str, Dict[str, object]] = {
         "yamnet": ("Knock",),
         "label": "Knock",
         "event_stop_windows": 8,            # SoundEvents: knocking comes in bursts -> 4 s quiet = stopped
+        "ring_pattern": {"ring_s": 2.0, "pause_s": 5.0, "give_up_s": 50.0},  # P8, see doorbell
         "say": "Someone is knocking. Hold my handle. I will take you to the front door.",
         "rgba_active": (1.0, 0.75, 0.1, 0.95),
         "rgba_idle": (0.5, 0.38, 0.1, 0.35),

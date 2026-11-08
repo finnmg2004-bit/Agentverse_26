@@ -40,6 +40,9 @@ AUDIO_DIR = PROJECT_ROOT / "assets" / "audio"
 # synthesized placeholders. Default off: the scenario tests are tuned on the synthesized clips.
 REAL_AUDIO_DIR = AUDIO_DIR / "real"
 USE_REAL_AUDIO = os.environ.get("NUDGE_REAL_AUDIO", "0") not in ("0", "", "false", "off")
+# P8: doorbell / knock ring in bursts (registry `ring_pattern`: ring_s on, pause_s off, silent after give_up_s,
+# the visitor left). Off by default: the sounds loop until answered, as before.
+INTERMITTENT = os.environ.get("NUDGE_INTERMITTENT", "0").lower() not in ("0", "", "false", "off")
 
 SAMPLE_RATE: int = 16000
 AUDIO_WINDOW_SEC: float = 0.5
@@ -422,6 +425,8 @@ class SimSensors:
         self.noise = AmbientNoise(self.rng)  # background-noise test profile ([N] hotkey / --noise)
         self.speaker = SpeakerOut(self.audio_clips)  # room sounds on the laptop speakers (#3)
         self._speaker_extra: List[str] = []  # clips the TV played this window (clip_window)
+        self._ring_window = 0                     # 0.5 s audio windows so far (P8 ring pattern clock)
+        self._ring_start: Dict[str, int] = {}     # sound -> window it was triggered in
 
         # LiDAR ray angles in body frame: [-90 deg, +90 deg]
         self.lidar_angles = np.linspace(
@@ -586,9 +591,19 @@ class SimSensors:
             sx, sy, _sz = SOUND_SOURCES[sound_name]["pos"]
             # Source loudness: a smoke alarm (~85 dB @ 3 m) is far louder than a doorbell chime.
             level = float(SOUND_SOURCES[sound_name].get("level", 1.0))
-            self._mix_source(clip[idx], (sx, sy), level, robot_pose, left_ch, right_ch)
+            mono = clip[idx]
+            env = self._ring_envelope(sound_name)
+            if env is not None:
+                mono = mono * env
+                if not env.any():
+                    active_list.pop()  # pausing / visitor gone: the speakers are quiet too
+            self._mix_source(mono, (sx, sy), level, robot_pose, left_ch, right_ch)
 
         self.audio_cursor = (self.audio_cursor + AUDIO_WINDOW_SAMPLES) % (SAMPLE_RATE * 2)
+        self._ring_window += 1
+        for name in list(self._ring_start):
+            if not active_sounds.get(name):
+                del self._ring_start[name]  # stopped / answered: the next trigger starts a new visitor
         # people in the room hear it too (no-op outside run_sim.py), incl. a doorbell on the TV (clip_window)
         speaker = getattr(self, "speaker", None)  # absent when built via SimSensors.__new__ (hearing-eval)
         if speaker is not None:
@@ -630,6 +645,21 @@ class SimSensors:
             "noise": self.noise.profile["name"],
         }
         return pcm_int16.tobytes(), meta
+
+    def _ring_envelope(self, name: str) -> Optional[np.ndarray]:
+        """P8 (NUDGE_INTERMITTENT=1): per-sample 0..1 gain for a sound with a registry `ring_pattern` (ring_s on,
+        pause_s off, silent after give_up_s; 20 ms fades). None = play continuously (flag off / no pattern)."""
+        pattern = SOUND_SOURCES[name].get("ring_pattern")
+        if not (INTERMITTENT and pattern) or not hasattr(self, "_ring_start"):
+            return None
+        start = self._ring_start.setdefault(name, self._ring_window)
+        t = (self._ring_window - start) * AUDIO_WINDOW_SEC + np.arange(AUDIO_WINDOW_SAMPLES) / SAMPLE_RATE
+        ring, period = float(pattern["ring_s"]), float(pattern["ring_s"]) + float(pattern["pause_s"])
+        phase = np.mod(t, period)
+        fade = 0.02
+        env = np.clip(np.minimum(phase / fade, (ring - phase) / fade), 0.0, 1.0)
+        env[t >= float(pattern["give_up_s"])] = 0.0
+        return env.astype(np.float32)
 
     def clip_window(self, name: str, cursor: int) -> np.ndarray:
         """AUDIO_WINDOW_SAMPLES of registry clip `name` starting at `cursor` (looped)."""
