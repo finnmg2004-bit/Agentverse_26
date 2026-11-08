@@ -24,6 +24,7 @@ Milestone 7b: Plain-code Navigator (`nudge-brain/navigator.py`).
 from __future__ import annotations
 
 import math
+import os
 import time
 from collections import deque
 from typing import Dict, List, Optional, Sequence, Set, Tuple
@@ -89,7 +90,15 @@ class Navigator:
 
     def __init__(self) -> None:
         self.static_map = load_or_build(verbose=True)
-        self.planner = GridPlanner(self.static_map)
+        # Option A (NUDGE_ROBOT_MAP=1, default off): plan on the robot's own explored map + live
+        # changes (robot_map_nav.py). Off -> exactly the static floor plan, as before.
+        self.robot_map = None
+        if os.environ.get("NUDGE_ROBOT_MAP", "0") == "1":
+            self.robot_map = _load_robot_map()
+        if self.robot_map is not None:
+            self.planner = GridPlanner(self.robot_map.navmap())
+        else:
+            self.planner = GridPlanner(self.static_map)
         self.goal: Optional[Point] = None
         self.final_tol: float = 0.25
         # Each waypoint: (x, y, door_name or None). door_name is set on the door-centre waypoint.
@@ -191,6 +200,8 @@ class Navigator:
         Project LiDAR hits into the world. If hits land in the gap of a doorway still ahead
         on the route for several scans, mark it blocked, re-plan, and return the door name.
         """
+        if self.robot_map is not None:
+            self._robot_map_update(pose, lidar, ignore)
         upcoming = [w[2] for w in self.waypoints if w[2] in DOORWAYS]
         if not upcoming:
             return None
@@ -216,6 +227,25 @@ class Navigator:
                 self._plan((x, y))
                 return door
         return None
+
+    def _robot_map_update(self, pose, lidar, owner_xy) -> None:
+        """NUDGE_ROBOT_MAP=1 only: keep the robot's map live; on a new / removed obstacle rebuild the
+        planner in place (the evacuation planner shares it) and re-plan the current route."""
+        rm = self.robot_map
+        if not rm.observe(pose, lidar, owner_xy) and not rm.pending:
+            return
+        rm.pending = True
+        if time.monotonic() - rm.last_rebuild < 2.0:
+            return
+        rm.pending = False
+        rm.last_rebuild = time.monotonic()
+        self.planner.__dict__.update(GridPlanner(rm.navmap()).__dict__)
+        desc = ", ".join(f"({c['x']:.1f}, {c['y']:.1f})" for c in rm.changes()) or "none"
+        print(f"[nav] ROBOT MAP: obstacles not in the saved map: {desc}" +
+              (" -> re-planned route" if self.goal is not None else ""), flush=True)
+        self.map_note = f"robot map changes: {desc}"
+        if self.goal is not None:
+            self._plan((pose[0], pose[1]))
 
     # ------------------------------------------------------------------ control
     # ------------------------------------------------------------------ getting stuck (#19)
@@ -340,3 +370,19 @@ class Navigator:
             vy = 0.22 if left >= right else -0.22
             vx = min(vx, max(0.0, front - 0.32))
         return vx, vy, wz, "moving"
+
+
+def _load_robot_map():
+    """NUDGE_ROBOT_MAP=1: the robot's own saved map, or None (falls back to the static floor plan)."""
+    try:
+        from robot_map_nav import MAP_FILE, RobotMapNav
+        from sim.house_layout import LANDMARKS
+        rm = RobotMapNav(MAP_FILE)
+        rm.pending = False
+        places = rm.register_places(LANDMARKS)
+        print(f"[nav] NUDGE_ROBOT_MAP=1: planning on the robot's own map {MAP_FILE.name} "
+              f"({rm.grid.known_frac():.0%} of the grid known); places from objects: {places or 'none'}", flush=True)
+        return rm
+    except Exception as e:  # missing / unreadable map: keep the demo path working
+        print(f"[nav] NUDGE_ROBOT_MAP=1 but no usable robot map ({e}); using the static floor plan", flush=True)
+        return None
