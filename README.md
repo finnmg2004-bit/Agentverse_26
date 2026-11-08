@@ -79,6 +79,16 @@ Press the hotkeys with the **MuJoCo window** focused (they also work in the dash
 | `X` | Silence all sounds |
 | `R` | Reset the scene (robot, owner, chair, sounds) and start a new episode; the brain resets too |
 
+### Control GUI (recommended for demos)
+One window with everything: three terminals, started in this order (give the sim ~10 s on its first run while it builds the navigation map):
+```bash
+pixi run sim --no-viewer        # terminal 1: the sim, without the MuJoCo window
+pixi run brain --no-dashboard   # terminal 2: the brain, without its OpenCV dashboard
+pixi run gui                    # terminal 3: Nudge Control GUI
+pixi run voice                  # terminal 4 (optional): voice commands, e.g. "Nudge, take me to the kitchen"
+```
+The GUI shows the live 3D view (drag = orbit, right-drag = pan, scroll = zoom), the mission banner, event buttons (doorbell, knock, smoke alarm, kettle, oven timer, silence, reset, move owner, chair), the agent's reasoning, the head camera, the house map, the hearing bars, a "Tell Nudge" text box and the mic indicator. Keyboard shortcuts `B K M O C X R` also work (not while typing in the text box). `--no-viewer` / `--no-dashboard` are optional: leave them out to get the MuJoCo window and the OpenCV dashboard as well. Close all of these before `pixi run test-scenarios` (same ports, 5555–5558).
+
 ### The demo story
 1. Press **B**. The robot hears the doorbell and heads for the living room, where it expects the owner.
 2. While it crosses the dining room, press **O**. The owner moves to the guest bedroom.
@@ -132,6 +142,9 @@ planner.plan(H.ROBOT_START_XY, H.LANDMARKS["back_exit_outside"])   # [(x, y, doo
 | Headless machine | `MUJOCO_GL=egl pixi run check-world` (the viewer itself needs a display) |
 | Robot walks into furniture / map looks stale | `pixi run build-map` (rebuilds `assets/maps/nerv_house_nav.npz`) |
 | Warning about the `project` field in pixi.toml | Harmless (pixi renamed it `workspace`) |
+| `pixi run brain` dashboard opens and closes at once (`KeyError: 'kettle'`) | `git pull` (fixed in `51dde78`) |
+| Dashboard / GUI window not visible | It may be behind other windows: Alt+Tab to "Nudge Brain" / "Nudge Control" |
+| `Address already in use` / two brains fighting | Another sim / brain / GUI / voice is still running: close it (`q` in the dashboard, Ctrl+C in its terminal) |
 | `[voice] WARNING: mic muted or silent?` | Unmute the mic (Linux: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`) |
 | `[voice] WARNING: mic is clipping` | Lower the mic boost (Linux: `amixer -c 1 sset 'Internal Mic Boost' 0`, check the card with `arecord -l`) |
 
