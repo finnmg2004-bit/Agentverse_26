@@ -52,7 +52,7 @@ DEFAULT_MIN_CONF = 0.5
 MIN_WEIGHT = 1.0               # summed confidence before an object is confirmed
 MIN_FWD_M = 0.9                # closer than this the object fills the view and YOLO guesses
 MIN_BOX_FRAC = 0.01            # box must cover >= 1 % of the image
-MAX_RANGE_M = 5.5              # depth beyond this is too noisy to place furniture
+MAX_RANGE_M = 6.5              # depth beyond this is too noisy to place furniture (size rules catch far windows)
 MIN_SIGHTINGS, MIN_SPAN_S = 3, 1.0
 MERGE_DIST = {"bed": 1.6, "couch": 1.5, "dining table": 1.6, "tv": 1.0, "refrigerator": 1.0}
 DEFAULT_MERGE = 1.0

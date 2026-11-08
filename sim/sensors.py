@@ -590,7 +590,9 @@ class SimSensors:
 
         self.audio_cursor = (self.audio_cursor + AUDIO_WINDOW_SAMPLES) % (SAMPLE_RATE * 2)
         # people in the room hear it too (no-op outside run_sim.py), incl. a doorbell on the TV (clip_window)
-        self.speaker.update(active_list + (self._speaker_extra if extra_sources else []))
+        speaker = getattr(self, "speaker", None)  # absent when built via SimSensors.__new__ (hearing-eval)
+        if speaker is not None:
+            speaker.update(active_list + (getattr(self, "_speaker_extra", []) if extra_sources else []))
         self._speaker_extra = []
 
         voice_on = voice_pos is not None and self.voice_clip is not None

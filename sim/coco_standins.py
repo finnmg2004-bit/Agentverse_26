@@ -32,17 +32,13 @@ from sim import house_layout as H  # noqa: E402
 STANDINS: Dict[str, Tuple[str, Tuple[float, float, float], Tuple[float, float, float], Tuple[float, ...]]] = {
     # guest bedroom, head against the north wall, west corner: wooden frame (anchor) + parts below
     "coco_bed":        ("bed",   (-14.05, -0.55, 0.15), (0.80, 1.00, 0.12), (0.36, 0.23, 0.13, 1.0)),
-    # living room, south-west corner, back to the south wall. Not the north-west corner: there it sat
-    # next to the owner spot (-11, 5.0) and broke the smoke evacuation (owner pushed past the couch).
-    # The back exit path is at y 2.6-4.6. Base (anchor) + parts below.
-    "coco_couch":      ("couch", (-13.6, 1.15, 0.22),   (1.00, 0.42, 0.12), (0.24, 0.29, 0.38, 1.0)),
     # living room, wall-mounted on the north wall, above LiDAR height
     "coco_tv":         ("tv",    (-9.0, 6.00, 1.35),    (0.60, 0.03, 0.36), (0.05, 0.05, 0.06, 1.0)),
 }
 # Shape parts so a COCO detector recognises the props from the robot's 0.39 m head camera (a plain box
 # was never detected as a bed / couch). name -> (geom type, centre, size (MuJoCo convention), rgba).
 _B, _E, _C = "box", "ellipsoid", "cylinder"
-_SOFA, _CUSH, _ACCENT = (0.24, 0.29, 0.38, 1.0), (0.30, 0.36, 0.47, 1.0), (0.86, 0.62, 0.25, 1.0)
+_SOFA, _CUSH, _ACCENT = (0.40, 0.25, 0.15, 1.0), (0.46, 0.29, 0.17, 1.0), (0.86, 0.62, 0.25, 1.0)
 _DUVET, _SHEET, _HEAD = (0.27, 0.43, 0.68, 1.0), (0.94, 0.94, 0.96, 1.0), (0.58, 0.53, 0.50, 1.0)
 PROP_PARTS: Dict[str, Tuple[str, Tuple[float, float, float], Tuple[float, ...], Tuple[float, ...]]] = {
     # bed: mattress, duvet (with drapes over the sides and the foot), two pillows, upholstered headboard
@@ -54,7 +50,19 @@ PROP_PARTS: Dict[str, Tuple[str, Tuple[float, float, float], Tuple[float, ...], 
     "coco_bed_pillow_w":   (_E, (-14.45, 0.15, 0.52), (0.30, 0.17, 0.08), _SHEET),
     "coco_bed_pillow_e":   (_E, (-13.65, 0.15, 0.52), (0.30, 0.17, 0.08), _SHEET),
     "coco_bed_head":       (_B, (-14.05, 0.47, 0.75), (0.86, 0.05, 0.50), _HEAD),
-    # couch: back, three seat + three back cushions, two armrests, two throw pillows, legs
+    # house fridge (furn_h2_fridge, front faces -x at x = 13.84): door gap + freezer gap + two handles
+    "coco_fridge_gap":     (_B, (13.835, 5.10, 1.25), (0.006, 0.43, 0.006), (0.15, 0.15, 0.16, 1.0)),
+    "coco_fridge_handle_t": (_B, (13.80, 4.80, 1.55), (0.02, 0.02, 0.22), (0.75, 0.76, 0.78, 1.0)),
+    "coco_fridge_handle_b": (_B, (13.80, 4.80, 0.85), (0.02, 0.02, 0.30), (0.75, 0.76, 0.78, 1.0)),
+}
+# Sofa, designed around (-13.6, 1.15) with the seat facing +y, then placed by _place_sofa(). It lives in the
+# garden family room, back to the north, facing the room: in the living-room corner (its first spot) YOLO never
+# saw it (behind the armchair, next to a wall pier; max 0.11 over 9 robot-height views); here a brown, 0.8x-height
+# sofa scores up to 0.76 (>= 0.15 in 5/9 views). This also clears the corner next to the back-exit path.
+SOFA_AT = (-8.0, 13.0)       # centre; seat faces -y (south, into the family room)
+SOFA_Z = 0.8                 # height scale (a lower sofa reads better from the 0.39 m head camera)
+_SOFA_DESIGN = {
+    "coco_couch":          (_B, (-13.6, 1.15, 0.22), (1.00, 0.42, 0.12), _SOFA),
     "coco_couch_back":     (_B, (-13.6, 0.80, 0.56), (1.00, 0.12, 0.34), _SOFA),
     "coco_couch_seat_w":   (_B, (-14.15, 1.22, 0.42), (0.27, 0.35, 0.08), _CUSH),
     "coco_couch_seat_c":   (_B, (-13.60, 1.22, 0.42), (0.27, 0.35, 0.08), _CUSH),
@@ -70,11 +78,25 @@ PROP_PARTS: Dict[str, Tuple[str, Tuple[float, float, float], Tuple[float, ...], 
     "coco_couch_leg_2":    (_C, (-12.68, 0.78, 0.05), (0.03, 0.05), (0.1, 0.07, 0.05, 1.0)),
     "coco_couch_leg_3":    (_C, (-14.52, 1.52, 0.05), (0.03, 0.05), (0.1, 0.07, 0.05, 1.0)),
     "coco_couch_leg_4":    (_C, (-12.68, 1.52, 0.05), (0.03, 0.05), (0.1, 0.07, 0.05, 1.0)),
-    # house fridge (furn_h2_fridge, front faces -x at x = 13.84): door gap + freezer gap + two handles
-    "coco_fridge_gap":     (_B, (13.835, 5.10, 1.25), (0.006, 0.43, 0.006), (0.15, 0.15, 0.16, 1.0)),
-    "coco_fridge_handle_t": (_B, (13.80, 4.80, 1.55), (0.02, 0.02, 0.22), (0.75, 0.76, 0.78, 1.0)),
-    "coco_fridge_handle_b": (_B, (13.80, 4.80, 0.85), (0.02, 0.02, 0.30), (0.75, 0.76, 0.78, 1.0)),
 }
+
+
+def _place_sofa():
+    """Rotate the design by 180 deg about its centre (seat -> south) to SOFA_AT, scale heights by SOFA_Z."""
+    out = {}
+    for name, (gt, (x, y, z), size, rgba) in _SOFA_DESIGN.items():
+        nx, ny = SOFA_AT[0] - (x - (-13.6)), SOFA_AT[1] - (y - 1.15)
+        if gt == _C:   # legs keep their size, stand on the floor
+            out[name] = (gt, (nx, ny, z), size, rgba)
+        else:
+            out[name] = (gt, (nx, ny, z * SOFA_Z), tuple(size[:2]) + (size[2] * SOFA_Z,), rgba)
+    return out
+
+
+_SOFA_PARTS = _place_sofa()
+_g, _pos, _size, _rgba = _SOFA_PARTS.pop("coco_couch")
+STANDINS["coco_couch"] = ("couch", _pos, _size, _rgba)
+PROP_PARTS.update(_SOFA_PARTS)
 _TYPES = {_B: mujoco.mjtGeom.mjGEOM_BOX, _E: mujoco.mjtGeom.mjGEOM_ELLIPSOID, _C: mujoco.mjtGeom.mjGEOM_CYLINDER}
 # COCO objects the house already has (visible group-0 geoms): class -> geom name
 HOUSE_OBJECTS: Dict[str, str] = {
@@ -162,7 +184,7 @@ if __name__ == "__main__":  # python sim/coco_standins.py : placement + load che
     objs = objects_gt(model, data)
     for o in objs:
         print(f"  {o['class']:13s} {o['room']:12s} {o['pos']}")
-    want = {"bed": "guest", "couch": "living_room", "tv": "living_room",
+    want = {"bed": "guest", "couch": "family_room", "tv": "living_room",
             "dining table": "dining", "refrigerator": "kitchen"}
     for cls, room in want.items():
         if not any(o["class"] == cls and o["room"] == room for o in objs):

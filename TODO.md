@@ -3,6 +3,19 @@
 Status: overnight run merged (`d2e2f00`, 14/14). **Final day: all 5 working, plan in AGENTS.md section 12.**
 Tick an item off when it lands on `main`. **Hard deadline 14:00.** Demo story by **12:30**, final feature pushes by **12:40**, freeze **12:45**, full suite + recording in parallel 12:45–13:15, submit 13:40–13:50.
 
+## Last build round 11:30 → 12:40 (AGENTS.md 12.0, focus: adaptability)
+- [ ] P1 Human model on Eden's + the recording laptop (Ricktho → Eden)
+- [ ] P2 Demo story (adaptability) + recording setup on the RTX 5060 (Eden + Sean) · by 12:30
+- [ ] P3 Summary + pitch drafts, 2–3 lines from everyone (all → Eden) · by 12:30
+- [ ] P4 Unknown events reasoned by local Gemma (agent J, Finn reviews)
+- [ ] P5 Select a different house: apartment, `--house apt` (agent I + Teo)
+- [ ] P6 TV model + Nudge investigates the TV doorbell (agent G, Finn reviews)
+- [ ] P7 Adaptability benchmark: randomised unseen runs → pass rate (Sean, own PC)
+- [ ] P8 Intermittent doorbell / knock (Ricktho)
+- [ ] P9 Speak only when near the owner (Sean)
+- [ ] P10 Charging station by the front door + review fixes (agent F)
+- [ ] P11 Localisation from LiDAR, off by default (agent H, only if the lock has room)
+
 ## Today (AGENTS.md 12; numbers = the team's ideas list)
 - [ ] **Eden:** merge + suites · demo, summary, pitch, submit
   - [x] #9 GUI mic button (`db8278e`) · GUI for Finn's C5/C8: "Nudge asks" row with Yes / No buttons (`user_answer` on :5557) + "999 CALLED / EMERGENCY CONTACT ALERTED" banner on the 3D view (live-checked: smoke → no answer → "999 CALLED (no answer)"); `--auto answer=yes|no`

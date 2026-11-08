@@ -597,11 +597,21 @@ NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorb
 4. **Exploration** (`explorer.py`, frontier-based, geofence = the ground-floor box only): **99.8 %** of the true floor known (561 s + a 166 s top-up for the back-door corner), wall precision **97.4 %**, recall **92.7 %**, stops by itself when coverage stops growing. Map = LiDAR log-odds + head-camera depth obstacles in the 0.10-0.55 m band (table tops). `ViewpointScan` then looks around from ~25 open-space viewpoints for objects.
 5. **Brain uses it** (`robot_map_nav.py`; small flagged hooks in `navigator.py` and `rules.py`): the navigator plans on the saved map + live changes (owner's recent spots ignored), rebuilt in place on a change (the evacuation planner shares it); unseen cells outside the ground-floor box count as garden, so exits stay reachable. "Take me to the TV / telly" resolves through object memory (`robot_map_target`); house_layout rooms/landmarks still work. Scenario results: see 10.8b.
 
-**Committed map:** `maps/robot_map.npz` (+ `.png`, 32 KB) = the explored house + the TV. `NUDGE_ROBOT_MAP=1` and the GUI tab use a PC's own `assets/maps/robot_map.npz` if present, else this one (`NUDGE_ROBOT_MAP_FILE` overrides) — no PC has to re-explore; regenerate with `--mode explore` any time.
+**Committed map:** `maps/robot_map.npz` (+ `.png`, ~32 KB) = the explored house + the **TV and the sofa** the robot found. `NUDGE_ROBOT_MAP=1` and the GUI tab use a PC's own `assets/maps/robot_map.npz` if present, else this one (`NUDGE_ROBOT_MAP_FILE` overrides) — no PC has to re-explore; regenerate with `--mode explore` (+ `--mode scan` + `--replay` for objects) any time.
 
-**Props (11:00):** `sim/coco_standins.py` (only with `--coco-objects`) now builds a shaped sofa, bed and fridge details. Offline head-camera renders: YOLOv8n recognises the fridge (0.47) and the guest room's own bed (0.56) from some angles, but a full viewpoint scan (24 viewpoints, 387 s) still confirmed only the TV; the sofa scores <= 0.20 (it sits in a corner behind the armchair; moving it touches the evacuation path = team call). Resolution (640x480) and a 0.8 m higher camera did not help.
+**Props + sofa (11:15):** `sim/coco_standins.py` (only with `--coco-objects`) builds a shaped bed, fridge details and a brown, lower **sofa, moved to the garden family room** (centre (-8.0, 13.0), facing south): in the living-room corner YOLO never saw it (max 0.11 over 9 robot-height views, behind the armchair), in the family room up to 0.76. One scan from the family room: the moved sofa first shows up as a *change*, then object memory confirms it **0.13 m** from the truth (object range raised 5.5 -> 6.5 m; re-scoring older recordings adds one "microwave" in the kitchen that the judge list doesn't have). Objects now: **TV + sofa = 2/5**, the bed/fridge/table are still not confirmed (bed 0.56 / fridge 0.47 only from rare angles). "Take me to the sofa" works (scenario `robot_map_sofa`). Resolution (640x480) and a 0.8 m higher camera did not help.
 
-**Not done / next:** objects beyond the TV (move the sofa into view / object-search viewpoints chosen per object); the brain does not yet run object detection live (it uses the saved objects); `robot_map.py` process + GUI panel not re-checked live in the GUI (panel shows the saved map + red "new" rings for `changes`); the default demo path is unchanged. Known quirk: before the owner is first seen, the owner standing where the saved map had floor shows up as a change (logged `ROBOT MAP: obstacles not in the saved map: (-10.6, 4.8)`); harmless (route goes around), filtered once the owner is seen.
+**Exits from the scan (`NUDGE_ROBOT_MAP=1` only):** `robot_map_nav.find_exits()` finds openings where known floor crosses the outer wall line (inside -> garden, >= 0.6 m wide): door point + target 1.5 m outside, named by side (`west_exit`, `south_exit`, `east_exit`, targets `<name>_outside`). `evacuation.exit_table()` (own function in Finn's file) gives these to the evacuation planner instead of house_layout's `EXITS` when the flag is on (flag off / nothing found: unchanged). Found on the committed map vs the real exits:
+
+| Found | Real exit | Door error | Target error | Width found / real |
+|---|---|---|---|---|
+| `south_exit` (-1.39, -4.5) | exit_front | 0.01 m | 0.01 m | 2.0 / 2.0 |
+| `west_exit` (-15.0, 3.54) | exit_back | 0.06 m | 0.12 m | 2.1 / 2.0 |
+| `east_exit` (15.0, 2.81) | exit_terrace | 0.21 m | 0.23 m | 2.6 / 2.2 |
+
+Kitchen fire: the kitchen (east) exit is excluded; guest room / dining -> south (front), living room -> west (back). Still from house_layout: each exit's *room* label (to know "is this exit in the fire's room?") and the fire room itself (installed alarm).
+
+**Not done / next:** bed / fridge / table as objects (need views from better angles or other props); the brain does not yet run object detection live (it uses the saved objects); `robot_map.py` process + GUI panel not re-checked live in the GUI (panel shows the saved map + red "new" rings for `changes`); the sofa approach point is the nearest free spot (may be behind it); the default demo path is unchanged. Known quirk: before the owner is first seen, the owner standing where the saved map had floor shows up as a change (logged `ROBOT MAP: obstacles not in the saved map: (-10.6, 4.8)`); harmless (route goes around), filtered once the owner is seen. **For a faster machine:** the flag-ON full suite + soak with the moved sofa and the scanned exits.
 
 #### 10.8b Scenario results (headless, one run each, 2026-11-08 ~10:30)
 | Scenario | `NUDGE_ROBOT_MAP=1 --coco-objects` | flag off (default) |
@@ -614,6 +624,8 @@ NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorb
 | chair | PASS 103.3 s (robot map saw the chair, re-planned) | PASS 64.2 s |
 | carpet_rule | PASS 101.2 s | PASS 73.2 s |
 | robot_map_tv ("take me to the TV") | PASS 90.1 s | n/a |
+| **after the sofa move + scanned exits (11:14-11:18):** smoke | PASS 45.2 s (owner out of the back door) | — |
+| robot_map_sofa ("take me to the sofa") | PASS 110 s (owner delivered to the sofa) | n/a |
 
 ## 11. Overnight run 2026-11-08, until 06:30 (agreed; Eden = merge captain)
 > **AI assistants: if a teammate asks you to pull and read the instructions before the overnight run,** run the setup for them. Don't just summarise it.
@@ -660,6 +672,26 @@ NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorb
 | 12:45–13:15 | **In parallel:** Eden's laptop runs the full suite (nobody else runs tests/sims there) **and** the recording laptop (RTX 5060) rehearses + **records** the ≤ 60 s take on the frozen code (fallback: overnight test videos A / B) |
 | 13:15–13:40 | Technical summary + pitch final (from the drafts); pick the best take |
 | **13:40–13:50** | **Submit** (hard deadline 14:00) |
+
+### 12.0 Last build round 11:30 → 12:40: focus = adaptability ("general intelligence")
+**Why:** "adapting when the scene changes" is 25 % of the score. Pitch line: *rules for safety, local Gemma for the unknown.* Everything stays local. Anything not on `main` and working by **12:40** stays behind its flag and goes in the pitch as "built, off by default". New features are **off by default unless they're in the demo story**.
+
+| # | Item (team notes) | Who | Done by |
+|---|---|---|---|
+| **P1** | **Human model** on Eden's laptop + the recording laptop: copy the Renderpeople folder `assets/models/rp_…` (not in git: licence) | Ricktho → Eden | 11:45 |
+| **P2** | **Demo story** built around adaptability + **recording setup** on the RTX 5060 laptop (screen recorder with sound, one test take) | Eden + Sean | 12:30 |
+| **P3** | **Summary + pitch drafts:** everyone sends Eden 2–3 lines; `docs/TECHNICAL_SUMMARY.md` + `docs/PITCH.md` updated with today's features + numbers | All → Eden | 12:30 |
+| **P4** | **Unknown events, reasoned by Gemma:** YAMNet hears something with no rule (glass breaking, dog, baby crying, crash…) → local Gemma gets what / where (ears) / owner state / time and picks a safe action: go and look · alert the owner with a description · ask the owner · log it. Danger-like sounds are always treated as tier 1. Scenarios from Teo's ESC-50 sounds | **Agent J** (Eden's laptop), Finn reviews | 12:30 |
+| **P5** | **Select a different house (#8):** the upstream **apartment** (`worlds/nerv-world/build/apt-go2.xml`) + its own layout, `--house apt` / `NUDGE_HOUSE=apt` (restart to switch), sounds / owner / exits placed, `doorbell` scenario in the apartment; Teo's exploration maps it ("new-house mode") | **Agent I** + Teo | 12:40 (partial is fine, flag) |
+| **P6** | **TV model + TV investigation (#1, #2 of the notes):** a visible wall TV (always loaded, screen glows while it plays); on a doorbell that might be the TV, Nudge goes to check (turns / walks toward the sound, looks with the camera) before saying "That was the TV" | **Agent G**, Finn reviews | 12:30 |
+| **P7** | **Adaptability benchmark:** randomised unseen runs (owner room / position, noise, chair, sound; apartment if ready) → a pass rate for the pitch | **Sean** (on his own PC, not Eden's lock) | 12:40 |
+| **P8** | **Intermittent doorbell / knock:** rings in bursts with pauses, gives up after a while (keep the hearing tests + `SoundEvents` start/stop green; no restarted missions) | Ricktho | 12:30 |
+| **P9** | **Speak only when near the owner:** speech only within a few metres; otherwise screen only and say it on arrival | Sean | 12:15 |
+| **P10** | **Charging station by the front door** (+ Sean's review fixes): the robot starts the demo on its dock | **Agent F** | 12:15 |
+| **P11** | **Localisation (the "pose from the sim" gap):** particle filter from LiDAR + odometry on the map, `NUDGE_LOCALIZE=1` (off by default), GUI shows estimate vs truth, error measured | **Agent H** — only if Eden's test lock has room, else pitch "next step" | 12:40 |
+| — | In flight: Finn (owner unreachable, fallen owner) · Teo (owner start-up options, exits from the scan) | Finn, Teo | 12:40 |
+
+Eden's laptop runs agents F, G, I, J (+ H if there is room) on one test lock: **nobody runs a GUI / sim session on Eden's laptop until 12:40** except under `scripts/locked_test.py`.
 
 ### 12.2 People (stay in your files; changes elsewhere: small, additive, tell the owner)
 | Person | Must do (demo) | Then, if time | Files |
@@ -712,6 +744,14 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   2. `NUDGE_REAL_AUDIO=1 pixi run python scripts/test_scenarios.py doorbell smoke`.
   Post the numbers here (detection per sound, smoke misses, false alerts, scenario PASS/FAIL). **If the real smoke alarm is still missed noticeably more than the synthesized one (which is never missed), or a scenario fails, the demo stays on the synthesized sounds** (the default) and real recordings are an after-hackathon item. Ricktho: if it's close, your call on a quick fix before 12:40.
   - Sean → Teo, Ricktho: Sean takes it on the RTX 5060 (queued right after a running night check; numbers here by ~12:00). Ricktho: no need to run it too.
+  - Sean → Ricktho: **`pixi run hearing-eval` crashes on main since `2ac4241`**: `AttributeError: 'SimSensors' object has no attribute 'speaker'` at `sim/sensors.py:593`, because `scripts/test_hearing_eval.py` `Ears.__init__` builds `SimSensors.__new__` without `speaker` / `_speaker_extra`. One-line fix either side: give `Ears.__init__` a no-op `self.s.speaker` and `self.s._speaker_extra = []`, or use `getattr(self, "speaker", None)` in `synthesize_stereo_audio`. Scenarios are fine. Sean is running the real-audio eval through a local wrapper that adds a silent speaker (ears unchanged). Real-audio `doorbell` + `smoke` (`NUDGE_REAL_AUDIO=1`): both PASS (59.1 s, 48.1 s).
+  - Sean → Teo, Ricktho: **real-audio results** (RTX 5060 laptop, `NUDGE_REAL_AUDIO=1`, `--n 1000 --seed 0 --no-esc50`, 73 s; report `docs/hearing-eval-real.md` + `docs/img/hearing-eval-real.png`; run via a silent-speaker wrapper, see the line above):
+    - detected, real vs synthesized: **smoke 96 % (97/101) vs 100 %**; doorbell 64 % vs 97 %; knock 51 % vs 51 %. Time to alert: smoke 0.5 s for both.
+    - real smoke misses: 4/101, all in loud noise (vacuum 22/23, party 19/22; quiet / fan / tv all detected). Real doorbell is weak under tv 6/18, vacuum 11/26, party 8/19.
+    - wrong-sound alerts on registry trials: 7.2 % (72/1000). False alerts from noise only / ESC-50: not measured (ESC-50 not downloaded here, so the (b) rows are empty).
+    - scenarios with real audio: `doorbell` PASS (59.1 s), `smoke` PASS (48.1 s).
+    - Sean's read of Teo's rule: real smoke is now close (96 %, was 47 %), but still misses 4 % in loud noise where the synthesized one never misses, and the real doorbell is far behind, so **the demo stays on the synthesized sounds**; real recordings are a strong after-hackathon item. Ricktho: your call if you want to try a quick fix before 12:40.
+  - Ricktho → Sean: thanks, fixed on main in `sim/sensors.py` (speaker looked up with `getattr`, skipped when absent); `pixi run hearing-eval` runs again without your wrapper. Real-audio doorbell + smoke PASS noted; waiting for your eval numbers for the real-vs-synthesized decision.
 - [ ] Teo → everyone: **what Teo's lane is doing until the 12:40 push** (all flagged / default off; the demo path doesn't change):
   - **Robot's own map is on main** (`8162128`): `maps/robot_map.npz` (the house as the robot explored it, 99.8 % of the floor) is in git, so no PC has to re-explore; with `NUDGE_ROBOT_MAP=1` the brain + GUI robot-map tab use it. "Take me to the TV" works; bed / sofa not yet (YOLO only confirms the TV). Better bed / sofa / fridge props in `sim/coco_standins.py` (only with `--coco-objects`; Sean: your file, only those props changed).
   - **In progress (by 12:20):** (1) move the sofa / use a better sofa model so YOLO sees it (`--coco-objects` only); (2) with `NUDGE_ROBOT_MAP=1`, find the exits from the robot's own scan instead of `house_layout.EXITS` (small flagged hook in `nudge-brain/evacuation.py`, a no-op with the flag off; Finn: heads-up, your file).
