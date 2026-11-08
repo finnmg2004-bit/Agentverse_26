@@ -32,8 +32,7 @@ from sim import house_layout as H  # noqa: E402
 STANDINS: Dict[str, Tuple[str, Tuple[float, float, float], Tuple[float, float, float], Tuple[float, ...]]] = {
     # guest bedroom, head against the north wall, west corner: wooden frame (anchor) + parts below
     "coco_bed":        ("bed",   (-14.05, -0.55, 0.15), (0.80, 1.00, 0.12), (0.36, 0.23, 0.13, 1.0)),
-    # living room, wall-mounted on the north wall, above LiDAR height
-    "coco_tv":         ("tv",    (-9.0, 6.00, 1.35),    (0.60, 0.03, 0.36), (0.05, 0.05, 0.06, 1.0)),
+    # (the TV is no longer a stand-in: sim/tv_model.py adds it always, see HOUSE_OBJECTS "tv")
 }
 # Shape parts so a COCO detector recognises the props from the robot's 0.39 m head camera (a plain box
 # was never detected as a bed / couch). name -> (geom type, centre, size (MuJoCo convention), rgba).
@@ -102,6 +101,7 @@ _TYPES = {_B: mujoco.mjtGeom.mjGEOM_BOX, _E: mujoco.mjtGeom.mjGEOM_ELLIPSOID, _C
 HOUSE_OBJECTS: Dict[str, str] = {
     "dining table": "furn_h2_dining_table_top_finish",
     "refrigerator": "furn_h2_fridge",
+    "tv": "tv_frame",  # sim/tv_model.py (always loaded, was the `coco_tv` stand-in)
 }
 CLEARANCE_M = 0.8  # min distance from any stand-in footprint to a spot / doorway
 

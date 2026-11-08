@@ -314,6 +314,43 @@ SCENARIOS: Dict[str, Dict] = {
         "forbid_log": ["MISSION ", "alert_owner(", "SOUND CHECK: doorbell is real"],
         "expect_alert": [],
     },
+    "tv_investigate": {
+        "desc": "TV doorbell [Y] while Nudge is free -> not sure from the first window -> Nudge walks toward "
+                "the TV and looks at it with the camera, listening as it goes -> THEN 'That was the TV' "
+                "(AGENTS.md 12.0 P6)",
+        "actions": [("at", 1.0, "Y")],
+        "expect_complete": [],
+        "run_for": 20.0,
+        "expect_log": ["SOUND CHECK: investigating doorbell", "SKILL investigate(doorbell",
+                       "moved toward the TV", "SOUND CHECK: doorbell came from the TV"],
+        "expect_says": ["That was the TV"],
+        "forbid_log": ["MISSION ", "alert_owner(", "SOUND CHECK: doorbell is real"],
+        "expect_alert": [],
+        "env": {"NUDGE_TV_INVESTIGATE": "1"},  # off by default (P6), on for the demo if chosen
+        "experimental": True,
+    },
+    "tv_investigate_stop": {
+        "desc": "P6: the TV doorbell stops while Nudge is still checking (no new window reaches the check) "
+                "-> decided from the evidence so far in the tick (sound_check.overdue), not left hanging",
+        "actions": [("at", 1.0, "Y"), ("on", "SOUND CHECK: investigating doorbell", 0.3, "Y")],
+        "expect_complete": [],
+        "run_for": 20.0,
+        "expect_log": ["SOUND CHECK: investigating doorbell", "the sound stopped while checking",
+                       "SOUND CHECK: doorbell came from the TV"],
+        "expect_says": ["That was the TV"],
+        "forbid_log": ["MISSION ", "alert_owner("],
+        "expect_alert": [],
+        "env": {"NUDGE_TV_INVESTIGATE": "1"},
+        "experimental": True,
+    },
+    "tv_family_owner": {
+        "desc": "Owner in the family room, doorbell -> the robot searches through the living-room archway "
+                "where the TV hangs (P6: the TV must not hide the owner) -> finds, alerts, guides",
+        "actions": [("gui", 0.5, {"action": "owner_room", "room": "family_room"}), ("at", 1.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["Owner seen in family_room"],
+        "expect_alert": ["1_pulse"],
+    },
     "tv_then_doorbell": {
         "desc": "TV doorbell [Y] -> ignored ('That was the TV'); after it ends the REAL doorbell [B] rings "
                 "-> sound check says real -> normal doorbell mission to the front door",
