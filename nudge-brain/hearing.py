@@ -24,7 +24,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 from scipy import signal
 
-from sim.house_layout import SOUND_SOURCES
+from sim.house_layout import OWNER_VOICE, SOUND_SOURCES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -113,6 +113,8 @@ class StereoHearing:
         self.yamnet_names: list = []
         self.yamnet_index: Dict[str, list] = {}
         self._buf = np.zeros(YAMNET_SAMPLES, dtype=np.float32)
+        self.speech_index: list = []
+        self._speech = 0.0
         yamnet_path = MODEL_DIR / "yamnet.tflite"
         class_map = MODEL_DIR / "yamnet_class_map.csv"
         if yamnet_path.exists() and class_map.exists():
@@ -124,6 +126,9 @@ class StereoHearing:
                     self.yamnet_names = [row[2] for row in list(csv.reader(f))[1:]]
                 for sound, names in YAMNET_CLASSES.items():
                     self.yamnet_index[sound] = [self.yamnet_names.index(n) for n in names]
+                # Human speech (the owner talking; not a registry sound, never starts a mission)
+                self.speech_index = [self.yamnet_names.index(n) for n in OWNER_VOICE["yamnet"]
+                                     if n in self.yamnet_names]
                 self.backend_name = "YAMNet-TFLite" + ("+spectral" if self.allow_spectral else "")
             except Exception as exc:
                 print(f"[hearing] YAMNet unavailable ({exc}); using spectral classifier")
@@ -139,6 +144,7 @@ class StereoHearing:
         self.tflite_interpreter.invoke()
         s = self.tflite_interpreter.get_tensor(self._out).reshape(-1)
         mapped = {sound: float(max(s[i] for i in idx)) for sound, idx in self.yamnet_index.items()}
+        self._speech = float(max((s[i] for i in self.speech_index), default=0.0))
         top = int(np.argmax(s))
         return mapped, self.yamnet_names[top], float(s[top])
 
@@ -248,6 +254,7 @@ class StereoHearing:
                 "estimated_room": None,
                 "rms": round(rms, 5),
                 "backend": self.backend_name,
+                "speech": 0.0,
             }
 
         # Compute Welch PSD / FFT spectrum on the 16 kHz mono signal
@@ -351,6 +358,7 @@ class StereoHearing:
         yamnet_scores: Dict[str, float] = {}
         yamnet_top: Tuple[str, float] = ("", 0.0)
         sources: Dict[str, str] = {}
+        self._speech = 0.0
         if self.tflite_interpreter is not None:
             yamnet_scores, top_name, top_score = self._yamnet()
             yamnet_top = (top_name, round(top_score, 3))
@@ -398,6 +406,9 @@ class StereoHearing:
             "estimated_room": estimated_room,
             "rms": round(rms, 4),
             "backend": self.backend_name,
+            # The owner talking (YAMNet speech classes; 0 without YAMNet). main.py localises it to work
+            # out where the owner is; it is never a mission sound.
+            "speech": round(self._speech, 3),
         }
         if DUMP_DIR is not None and scores.get(DUMP_SOUND, 0.0) >= DUMP_MIN:
             self._dump(stereo_pcm, robot_pose, result)
