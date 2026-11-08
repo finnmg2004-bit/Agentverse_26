@@ -28,7 +28,9 @@ b { color: #14143a; }
 .card { flex: 1; background: #eef4f7; padding: 0.8mm 1.6mm; }
 .card .n { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; font-weight: bold; color: #b3261e; line-height: 1.05; }
 .card .l { font-size: 6.4pt; color: #5b6470; line-height: 1.1; }
-h2 { color: #0b6e8a !important; }
+h2 { color: #0b6e8a !important; break-after: avoid; page-break-after: avoid; }
+h2 + p, h2 + ul, h2 + table { break-before: avoid; }
+li, p, tr { break-inside: avoid; }
 html { zoom: 1; }
 </style></head><body>
 
@@ -47,65 +49,61 @@ html { zoom: 1; }
 <div class="cap">Doorbell: Nudge hears it, checks it is the real door (not the TV), finds the owner with its head camera and leads them to the front door ("Nudge says"). Perception (camera, hearing, map) shown next to the actions.</div></div>
 
 <h2>The problem</h2>
-<p>Deafblindness is the hardest case: over 450,000 people in the UK, rising to over 610,000 by 2035. An assistance dog changes their life, but there are far too few: Guide Dogs UK has only around 3,500–4,800 working partnerships, people wait 16–18 months on average and some 2–4 years, and one guide dog is reported to cost £55,000 to over £100,000 from birth to retirement. A hearing dog costs about £40,000 over its life, takes about 1.5 years to train and has a waiting list of around two years. <b>A deaf person who can't hear the smoke alarm can't wait two years.</b></p>
+<p>Deafblindness is the hardest case: over 450,000 people in the UK, rising to 610,000 by 2035. An assistance dog changes their life, but there are far too few: Guide Dogs UK has only around 3,500–4,800 working partnerships, people wait 16–18 months on average (some 2–4 years), and a guide dog is reported to cost £55,000 to over £100,000 over its life. A hearing dog costs about £40,000, takes about 1.5 years to train and has a waiting list of around two years. <b>A deaf person who can't hear the smoke alarm can't wait two years.</b></p>
 
-<h2>Our user and what Nudge does</h2>
-<p>Nudge is a Unitree Go2 quadruped in a furnished house; it waits on its <b>charging dock</b> by the front door. It listens all the time with stereo ears, sorts household sounds by urgency (<b>emergency</b>: smoke alarm; <b>needs action</b>: kettle, oven timer; <b>someone wants you</b>: doorbell, knock) and works out <b>where each sound comes from</b> (direction and loudness at the two ears, combined over several robot positions). It finds the owner with its camera (and their voice when they speak), nudges them, waking them if they are asleep in bed or on the sofa, and alerts them the way their profile needs: haptic guide handle (deafblind), light bar and screen (deaf), speech only when close (blind). Like a real guide dog it walks on the owner's left, so its rigid <b>guide handle swings up on the owner's side</b> and telescopes to hand height, where a blind owner can find it and follow. The handle gives <b>one pattern per urgency</b> (1 pulse: doorbell; 2 pulses: needs action, e.g. kettle; continuous: emergency), shown as a glowing grip in the simulation, and the <b>light bar</b> shows which sound by colour + blink count; its red and blue ends flash only for danger. The owner <b>acknowledges by tapping the handle</b>; then Nudge guides them to the source, or out of the house in a fire. The owner can <b>talk to it</b>: "Nudge, take me to the kitchen" (wake word "Nudge", local Whisper), and answer its questions with a plain "yes" or "no", no wake word needed ("Shall I call 999?").</p>
+<h2>What Nudge does</h2>
+<p>Nudge is a Unitree Go2 that waits on its <b>charging dock</b> by the front door. Its stereo ears sort household sounds by urgency (<b>emergency</b>: smoke alarm; <b>needs action</b>: kettle, oven timer; <b>someone wants you</b>: doorbell, knock) and work out <b>where each sound comes from</b>. It finds the owner with its camera (or their voice), nudges them, waking them if asleep, and alerts them the way their profile needs: guide handle (deafblind), light bar and screen (deaf), speech when close (blind).</p>
+<p>Like a real guide dog it walks on the owner's left, so its rigid <b>guide handle swings up on the owner's side</b> at hand height, where a blind owner can find it and follow. The handle gives <b>one pattern per urgency</b> (1 pulse: doorbell; 2 pulses: needs action; continuous: emergency; a glowing grip in the simulation), and the <b>light bar</b> shows which sound by colour + blinks; its red and blue ends flash only for danger. The owner taps the handle to acknowledge, then Nudge leads them to the source, or out in a fire. The owner can <b>talk to it</b> ("Nudge, take me to the kitchen") and answer its questions with a plain "yes" or "no".</p>
 
 <h2>The main idea</h2>
-<p><b>Safety is always on; everything else is learned from the owner.</b> The safety features (smoke-alarm pre-emption, the LLM watchdog, the speed cap near the owner, calling for help) are plain code that can't be switched off, overridden by the AI or downgraded by anything the owner says. On top of that, Nudge <b>remembers what the owner tells it and keeps doing it in the future</b>: rules ("don't step on the new carpet") and tasks ("every night at 10, take me to bed"), turned into structured rules and saved task programs by local Gemma, then enforced and repeated by plain code. <b>Gemma is the brain in between:</b> it understands the owner and decides what to do; plain code makes sure it is always safe.</p>
+<p><b>Safety is always on; everything else is learned from the owner.</b> Smoke-alarm pre-emption, the LLM watchdog, the speed cap and calling for help are plain code that the AI or the owner can't switch off. On top, Nudge <b>remembers what the owner tells it</b>: rules ("don't step on the new carpet") and tasks ("every night at 10, take me to bed"), which Gemma turns into structured rules and code enforces and repeats.</p>
 
 <h2>System architecture</h2>
-<p>Two processes over ZeroMQ, so physics never waits for AI. <b>Simulator:</b> 500 Hz physics, head RGB-D camera (10 Hz), 36-ray 2D LiDAR, stereo 16 kHz ears with wall and distance effects. <b>Brain:</b> a <b>reflex layer</b> in plain code (smoke-alarm pre-emption, obstacle stops, speed cap near the owner, watchdogs; milliseconds) and a <b>thinking layer</b>, local Gemma (below), woken only on events.</p>
+<p>Two processes over ZeroMQ, so physics never waits for AI. <b>Simulator:</b> 500 Hz physics, head RGB-D camera (10 Hz), 36-ray 2D LiDAR, stereo 16 kHz ears. <b>Brain:</b> a <b>reflex layer</b> in plain code (pre-emption, obstacle stops, speed cap, watchdogs; milliseconds) and a <b>thinking layer</b>, local Gemma, woken only on events.</p>
 
 <h2>How we use Gemma 4 (the core)</h2>
-<p>Local <b>Gemma 4 E2B</b> runs in Ollama on the laptop GPU, with no cloud call. We use it in three ways:</p>
 <ul>
-<li><b>Deciding, from a menu.</b> Gemma only wakes on an event (new sound, owner seen or not found, path blocked, no response, timeout). Plain code then builds a lettered <b>menu of the legal options</b> from live perception, each with its facts: the chance the owner is in each room and how far it is, each exit's walk length and distance from the fire, how many nudges went unanswered. Gemma answers through a <b>JSON schema that only allows the menu's letters</b> plus a one-line reason, so it cannot invent an action; the reason is shown on screen. Safety decides what is on the menu, Gemma decides which option: which room to search first, re-nudge or lead the owner out, which exit, whether to call 999.</li>
-<li><b>Understanding the owner.</b> A sentence like "I've got a new carpet, please don't step on it" or "every night at 10, take me to bed" becomes a <b>structured rule or task program</b> (schema with only known rooms, objects and skills); plain code stores, enforces and repeats it. Things it can't do ("call my daughter") are refused, never promised. Gemma also writes the short message Nudge says.</li>
-<li><b>Checked every time.</b> A 4 s watchdog hands slow or offline answers to deterministic rules; a Gemma exit that passes closer to the fire than the planner's is rejected; every decision is logged with what the rules would have done, and an eval gate (90 % on real logged decisions) re-checks Gemma after any prompt change.</li>
+<li><b>Deciding from a menu.</b> On each event, code builds a lettered <b>menu of the legal options</b> from live perception, with facts (the chance the owner is in each room and how far, each exit's walk length and distance from the fire, unanswered nudges). Gemma answers through a <b>JSON schema that only allows those letters</b> plus a one-line reason shown on screen, so it can't invent an action. Safety decides what is on the menu; Gemma picks: which room first, re-nudge or lead out, which exit, whether to call 999.</li>
+<li><b>Understanding the owner.</b> A sentence becomes a <b>structured rule or task</b> (only known rooms, objects and skills); code stores and enforces it. What it can't do ("call my daughter") is refused, never promised. Gemma also writes what Nudge says.</li>
+<li><b>Checked every time.</b> A 4 s watchdog hands slow answers to rules; an exit closer to the fire than the planner's is rejected; every decision is logged, and an eval gate (90 %) re-checks Gemma after prompt changes.</li>
 </ul>
-<p>Measured on the recording laptop: <b>0.19 s</b> median per decision (0.26 s p95), <b>93 %</b> right on real logged decisions, 100 % inside the watchdog, so no fine-tuning was needed.</p>
+<p>On the recording laptop: <b>0.19 s</b> median per decision, <b>93 %</b> right on real logged decisions, 100 % inside the watchdog; no fine-tuning needed.</p>
 
-<h2>Where each model runs: all local models, on one laptop with an RTX 5060, no cloud calls</h2>
+<h2>Where each model runs: all local, on one laptop with an RTX 5060, no cloud calls</h2>
 <table>
 <tr><th>Model</th><th>Job</th><th>Runs on</th><th>Latency</th></tr>
-<tr><td><b>Gemma 4 E2B (Ollama)</b></td><td><b>all decisions + explanations; owner's words → rules / tasks</b></td><td>laptop GPU</td><td>0.19 s median (0.26 s p95) per decision; ~0.6 s per sentence</td></tr>
-<tr><td>YAMNet + spectral rules</td><td>household sounds</td><td>CPU</td><td>alert 0.5 s after a sound starts (median)</td></tr>
+<tr><td><b>Gemma 4 E2B (Ollama)</b></td><td><b>decisions + explanations; owner's words → rules / tasks</b></td><td>laptop GPU</td><td>0.19 s per decision (0.26 s p95); ~0.6 s per sentence</td></tr>
+<tr><td>YAMNet + spectral rules</td><td>household sounds</td><td>CPU</td><td>alert 0.5 s after a sound starts</td></tr>
 <tr><td>YOLOv8n (ONNX)</td><td>owner + objects</td><td>CPU</td><td>real time at the camera's 10 Hz</td></tr>
 <tr><td>Whisper base.en</td><td>owner's voice</td><td>CPU</td><td>under a second per sentence</td></tr>
 <tr><td>Piper TTS</td><td>Nudge speaks</td><td>CPU</td><td>local, offline</td></tr>
 </table>
-<p><b>All five models are local:</b> they run on the laptop, offline, downloaded once and SHA-256 pinned; nothing in the runtime loop calls a cloud API.</p>
 
 <h2>Adapting when the scene changes</h2>
 <ul>
-<li>The owner moves mid-run; a chair blocks a doorway, or the back exit in a fire, the <b>LiDAR</b> sees it and the robot re-plans. It notices when it's stuck, backs off, remembers the obstacle and re-routes.</li>
-<li>Visitors behave like real ones: they ring or knock in bursts, pause and may give up, and Nudge treats it as one visit. A doorbell from the TV is recognised as the TV (0 of 243 real door sounds mistaken for the TV); a kettle during a doorbell mission is deferred, then handled; it never re-scans a room its camera already cleared.</li>
-<li><b>Built and measured, off in the recorded take:</b> it maps a house by itself from <b>LiDAR</b> + depth camera (a "Rescan house" button re-maps it live, no restart; 99.8 % of the floor, walls 97 % precise, exits found within 0.01–0.21 m); it estimates its own position from LiDAR (~8 cm error vs 9.4 m drift from odometry alone; passes the demo story with it on); a second home (an apartment) runs with the same code.</li>
+<li>The owner moves mid-run; a chair blocks a doorway or the back exit in a fire: the <b>LiDAR</b> sees it and the robot re-plans. When stuck it backs off, remembers the obstacle and re-routes.</li>
+<li>Visitors ring or knock in bursts and may give up: one visit. A doorbell from the TV is recognised as the TV (0 of 243 real doors mistaken). A kettle during a doorbell mission waits its turn. A room the camera already cleared is never re-scanned.</li>
+<li><b>Built, off in the recorded take:</b> it maps a house by itself from LiDAR + depth camera (99.8 % of the floor, walls 97 % precise, exits within 0.01–0.21 m; a "Rescan house" button re-maps live); it finds its own position from LiDAR (~8 cm error vs 9.4 m drift from odometry alone); a second home (an apartment) runs with the same code.</li>
 </ul>
 
 <h2>Measured</h2>
 <ul>
-<li><b>Sounds:</b> 96 % of demo sounds detected in 1,000 random trials over 5 noise profiles; the smoke alarm was never missed; 0 % false alerts from background noise.</li>
-<li><b>Owner detection:</b> seen in 97–98 % of head-camera views.</li>
-<li><b>Adaptability benchmark:</b> 9 of 12 randomised, never-seen situations passed (75 %). <b>Teaching by sentence:</b> 19/19 test sentences turned into the right rule or task, or refused.</li>
-<li><b>Scenario tests (ground-truth judge):</b> default suite 14/14 PASS; robot-map mode 22/24 + 9/9 soak; apartment doorbell, smoke, kettle PASS.</li>
+<li><b>Sounds:</b> 96 % of demo sounds detected in 1,000 random trials (5 noise profiles); smoke alarm never missed; 0 % false alerts from background noise. <b>Owner detection:</b> 97–98 % of head-camera views.</li>
+<li><b>Adaptability:</b> 9 of 12 randomised, never-seen situations passed. <b>Teaching:</b> 19/19 sentences understood or refused. <b>Scenario tests:</b> default suite 14/14; robot-map mode 22/24 + 9/9 soak; apartment doorbell, smoke, kettle PASS.</li>
 </ul>
 
 <h2>Critical failure mode and how it's handled</h2>
-<p>The critical failure is <b>a missed or late smoke alarm, or not getting the owner out</b>. The alarm is checked first, in plain code, and never gated by other rules: it pre-empts any task in <b>0.6 s</b> with a continuous haptic alert. The exit choice is fire-aware (walk length vs distance from the fire, never through the fire room, exits the LiDAR sees blocked are dropped), and a Gemma exit choice that passes closer to the fire than the planner's is rejected. Nudge asks "Shall I call 999?" while still leading the owner out and calls on "yes" or no answer; if the owner isn't found within 40 s it calls anyway.</p>
+<p>The critical failure is <b>a missed or late smoke alarm, or not getting the owner out</b>. The alarm is checked first, in plain code, never gated: it pre-empts any task in <b>0.6 s</b> with a continuous alert. The exit is fire-aware (walk length vs distance from the fire, never through the fire room, LiDAR-blocked exits dropped), and a Gemma exit closer to the fire is rejected. Nudge asks "Shall I call 999?" while leading the owner out and calls on "yes" or no answer; if the owner isn't found within 40 s it calls anyway.</p>
 
 <h2>Safety</h2>
-<p>Always on, in plain code: the LLM only chooses from legal options; a 4 s watchdog hands slow or offline answers to rules; speed capped at 0.4 m/s within 1 m of the owner; nothing the owner says can downgrade a smoke alarm; no response to repeated nudges → emergency contact, and Nudge stays with them.</p>
+<p>Always on, in plain code: Gemma only picks legal options; a 4 s watchdog falls back to rules; speed is capped at 0.4 m/s within 1 m of the owner; nothing the owner says can downgrade a smoke alarm; no response to repeated nudges → emergency contact, and Nudge stays.</p>
 
 <h2>Limits (what it cannot do yet)</h2>
 <ul>
-<li><b>Sound:</b> the demo uses synthesized clips; real recordings are weaker (smoke 96 %, doorbell 64 %, worst under loud noise).</li>
-<li><b>Knowing the house:</b> room names, doors and alarm locations come from a hand-written floor plan (the robot's own map gives walls and exits, not names); it only recognises furniture a standard detector knows.</li>
-<li><b>Body:</b> walking is kinematic and the handle, lights and screen are simulated; self-localisation needs a known start.</li>
-<li><b>Owner unreachable:</b> if the only way to the owner is blocked, it re-routes but doesn't yet escalate.</li>
-<li><b>Next steps to a real Go2:</b> localisation on real sensors, real-room hearing, building the handle hardware.</li>
+<li><b>Sound:</b> the demo uses synthesized clips; real recordings are weaker (smoke 96 %, doorbell 64 %).</li>
+<li><b>The house:</b> room names, doors and alarm locations come from a hand-written floor plan; it only recognises furniture a standard detector knows.</li>
+<li><b>Body:</b> walking is kinematic and the handle, lights and screen are simulated; self-localisation needs a known start. If the only way to the owner is blocked, it re-routes but doesn't yet escalate.</li>
+<li><b>Next steps to a real Go2:</b> localisation on real sensors, real-room hearing, the handle hardware.</li>
 </ul>
 
 <div class="src">Sources: RNID (prevalence of deafness and hearing loss); Guide Dogs UK / Royal Canin (sight loss, partnerships); Sense (deafblindness statistics, 2023); Hearing Dogs for Deaf People; BBC, Guardian, ITV and Kent Online reporting on guide-dog waiting times and costs.</div>
