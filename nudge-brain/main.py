@@ -33,7 +33,7 @@ from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
-from tasks import TaskRunner, TaskStore, confirmation  # noqa: E402
+from tasks import OwnerActivity, TaskRunner, TaskStore, confirmation  # noqa: E402
 from ask import AnswerListener, AskOwner  # noqa: E402
 from sim.house_layout import ALERT_SOUNDS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
 
@@ -154,6 +154,9 @@ class Brain:
         self.task_runner = TaskRunner(self.task_store, self.task_adapter,
                                       log=lambda text: self.world.log(text))
         self.new_sound_events: list = []  # SoundEvents since the last task tick (sound triggers)
+        self.owner_activity = OwnerActivity()  # idle / owner_entered_room triggers (E1.6)
+        self.owner_spoke = False  # a sentence from the owner since the last task tick (= activity)
+        self.seen_wall = self.tap_wall = 0.0  # last owner sighting / handle tap fed to owner_activity
         # The owner's no-go areas; read self.world at call time (reset() replaces the world).
         self.nav.avoid_provider = lambda: self.world.avoid_for_planning()
         self.last_tick = time.monotonic()
@@ -187,6 +190,8 @@ class Brain:
         self.new_sound_events = []
         self.task_runner.reset()
         self.task_adapter.reset()
+        self.owner_activity.reset()
+        self.owner_spoke = False
         self.ask.clear()
         self.last_owner_seen_event = 0.0
         self.episode = episode
@@ -296,6 +301,7 @@ class Brain:
         if not text:
             return
         conf = float(msg.get("confidence", 1.0) or 0.0)
+        self.owner_spoke = True  # they spoke / typed: awake and OK (idle trigger, E1.6)
         # echo for the control GUI's "Heard:" line (also when the robot was too unsure to act on it)
         self.last_heard = {"text": text, "source": source, "confidence": conf, "t": round(self.world.t_sim, 1)}
         if source == "voice" and conf < MIN_VOICE_CONFIDENCE:
@@ -395,9 +401,22 @@ class Brain:
         """Trigger watcher + runner (tasks.py). Runs a task only when no other mission is active."""
         st = self.bridge.latest_state or {}
         events, self.new_sound_events = self.new_sound_events, []
-        # idle / owner_entered_room triggers: no brain-side owner tracking for them yet (E1.6)
-        self.task_runner.tick(self.world.t_sim, clock=st.get("sim_clock"), day=st.get("sim_day"),
-                              sound_events=events)
+        # idle / owner_entered_room: from brain-side evidence only (sightings, handle, speech)
+        w = self.world
+        seen_xy = seen_room = None
+        if w.owner_pos is not None and w.owner_last_seen_wall > self.seen_wall:
+            self.seen_wall = w.owner_last_seen_wall
+            seen_xy, seen_room = w.owner_pos, w.owner_room
+        active = self.owner_spoke or w.guiding_active or w.last_tap_wall > self.tap_wall
+        self.owner_spoke, self.tap_wall = False, w.last_tap_wall
+        now = OwnerActivity.now_s(st.get("sim_clock"), st.get("sim_day"), w.t_sim)
+        idle_s, owner_events = self.owner_activity.update(now, seen_xy, seen_room, active)
+        for ev in owner_events:
+            if any(t["trigger"].get("event") == ev["event"] and t["trigger"].get("room") == ev["room"]
+                   for t in self.task_store.tasks.values()):
+                w.log(f"Owner went into {ev['room']} (from {ev['from']})")
+        self.task_runner.tick(w.t_sim, clock=st.get("sim_clock"), day=st.get("sim_day"),
+                              sound_events=events, owner_idle_s=idle_s, events=owner_events)
 
     # ------------------------------------------------------------------ emergency
     def plan_evacuation(self, why: str) -> bool:
@@ -567,6 +586,8 @@ class Brain:
             "heard_sounds": self.sound_events.what_did_i_hear(since_t=w.t_sim - 300.0),
             # taught tasks (contract C3, + "summary" / "queued")
             "tasks": self.task_runner.status(),
+            # brain-side owner activity for idle tasks (E1.6): minutes without a sign of activity
+            "owner_activity": self.owner_activity.status(),
         }
 
     def run(self, duration: float = 0.0) -> None:

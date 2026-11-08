@@ -424,6 +424,64 @@ class TriggerWatcher:
         return trig["at"] if at > now_m else f"day {day + 1} {trig['at']}"
 
 
+# ---------------------------------------------------------------------------- owner activity (E1.6)
+class OwnerActivity:
+    """Brain-side evidence of what the owner is doing, for `idle` and `owner_entered_room` triggers.
+
+    No ground truth. The owner counts as ACTIVE when the robot sees them more than MOVE_M away from
+    where they were last still, when they speak/type a command, tap or hold the handle. Being seen
+    in the same spot is NOT activity (they might be lying on the floor). Idle time runs on the sim
+    clock (C2, minutes since day 0), so "two hours" can be shown with a clock jump; a clock that goes
+    back (R reset) restarts it. `owner_entered_room` fires when a sighting puts the owner in another
+    room than the previous sighting (once per room per ENTER_COOLDOWN_S, against doorway flicker).
+    """
+
+    MOVE_M = 0.5
+    ENTER_COOLDOWN_S = 30.0
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.anchor: Optional[Tuple[float, float]] = None  # where the owner was last still
+        self.last_active: Optional[float] = None  # sim-clock seconds since day 0
+        self.prev_now: Optional[float] = None
+        self.room: Optional[str] = None  # room of the last sighting
+        self.entered_at: Dict[str, float] = {}
+
+    @staticmethod
+    def now_s(clock: Optional[str], day: Optional[int], t_sim: float) -> float:
+        m = parse_hhmm(clock)
+        return float(t_sim) if m is None else (int(day or 0) * 1440 + m) * 60.0
+
+    def update(self, now: float, seen_xy: Optional[Tuple[float, float]] = None, seen_room: Optional[str] = None,
+               active: bool = False) -> Tuple[float, List[Dict[str, Any]]]:
+        """One brain tick. seen_xy/seen_room: a fresh sighting (camera or handle) or None.
+        Returns (owner_idle_s, events)."""
+        if self.last_active is None or (self.prev_now is not None and now < self.prev_now):
+            self.last_active = now  # first tick / clock went back
+        self.prev_now = now
+        events: List[Dict[str, Any]] = []
+        if seen_xy is not None:
+            if self.anchor is None:
+                self.anchor = seen_xy
+            elif (seen_xy[0] - self.anchor[0]) ** 2 + (seen_xy[1] - self.anchor[1]) ** 2 > self.MOVE_M ** 2:
+                self.anchor, active = seen_xy, True
+            if seen_room and seen_room in ROOMS and seen_room != self.room:
+                if self.room is not None and now - self.entered_at.get(seen_room, -1e18) >= self.ENTER_COOLDOWN_S:
+                    events.append({"event": "owner_entered_room", "room": seen_room, "from": self.room})
+                    self.entered_at[seen_room] = now
+                self.room = seen_room
+        if active:
+            self.last_active = now
+        return now - self.last_active, events
+
+    def status(self, now: Optional[float] = None) -> Dict[str, Any]:
+        now = self.prev_now if now is None else now
+        idle = None if (now is None or self.last_active is None) else round((now - self.last_active) / 60.0, 1)
+        return {"idle_min": idle, "room": self.room}
+
+
 # ---------------------------------------------------------------------------- runner
 class TaskRunner:
     """Runs taught tasks, one at a time, as jobs through an adapter (main.py, E1.3):

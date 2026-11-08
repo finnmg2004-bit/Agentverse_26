@@ -321,6 +321,45 @@ def test_ask():
     check(len(got) == n and a.status() is None, "clear() drops silently (reset / fire)")
 
 
+def test_owner_activity():
+    """E1.6: idle time from brain-side evidence, owner_entered_room from sightings."""
+    a = T.OwnerActivity()
+    now = T.OwnerActivity.now_s("08:00", 0, 0.0)
+    check(now == 8 * 3600.0, "now_s from the sim clock")
+    check(T.OwnerActivity.now_s(None, None, 12.5) == 12.5, "now_s falls back to sim time")
+    idle, ev = a.update(now, (-11.0, 5.0), "living_room")
+    check(idle == 0 and ev == [], "first sighting: no idle, no event")
+    idle, _ = a.update(now + 600, (-11.1, 5.1), "living_room")
+    check(idle == 600, "seen in the same spot is not activity")
+    idle, _ = a.update(now + 700, (-10.0, 5.0), "living_room")
+    check(idle == 0, "seen > 0.5 m away = moved")
+    idle, _ = a.update(now + 800, active=True)
+    check(idle == 0, "spoke / handle = active")
+    idle, _ = a.update(now + 800 + 7200)
+    check(idle == 7200, "clock jump 2 h -> 2 h idle")
+    idle, _ = a.update(now)
+    check(idle == 0, "clock back (reset) restarts idle")
+    idle, ev = a.update(now + 10, (-10.0, -2.6), "guest")
+    check(ev == [{"event": "owner_entered_room", "room": "guest", "from": "living_room"}], "entered guest")
+    _, ev = a.update(now + 12, (-10.0, 5.0), "living_room")
+    _, ev2 = a.update(now + 14, (-10.0, -2.6), "guest")
+    check(ev2 == [], "doorway flicker: no second guest event within the cooldown")
+    _, ev = a.update(now + 100, (-12.0, -2.6), "outside")
+    check(ev == [] and a.room == "guest", "sighting outside the rooms ignored for room events")
+    # idle task fires once per still stretch through the watcher
+    w = T.TriggerWatcher()
+    tasks = [{"name": "check_on", "state": "idle", "trigger": {"kind": "idle", "minutes": 120}}]
+    check(w.update(tasks, owner_idle_s=7199) == [], "idle 119.98 min: no fire")
+    check(w.update(tasks, owner_idle_s=7200) == ["check_on"], "idle 120 min: fire")
+    check(w.update(tasks, owner_idle_s=7300) == [], "still idle: no second fire")
+    w.update(tasks, owner_idle_s=0)
+    check(w.update(tasks, owner_idle_s=7200) == ["check_on"], "re-armed after activity")
+    ev_task = [{"name": "kitchen", "state": "idle",
+                "trigger": {"kind": "event", "event": "owner_entered_room", "room": "kitchen"}}]
+    check(w.update(ev_task, events=[{"event": "owner_entered_room", "room": "kitchen"}]) == ["kitchen"],
+          "owner_entered_room fires the event task")
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         test_teach_parsing()
@@ -329,6 +368,7 @@ def main():
         test_watcher()
         test_store_and_runner(tmp)
         test_ask()
+        test_owner_activity()
     if FAILS:
         print(f"\n{len(FAILS)} FAILED")
         sys.exit(1)
