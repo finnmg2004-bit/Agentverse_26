@@ -740,6 +740,7 @@ Not today: **#21 LED colours** (kept as they are, team decision).
 - Urgent or blocking: say it in the team chat as well.
 
 ### 12.7 Questions & answers
+- [ ] Teo → Eden + Sean: **robot map decision at 12:30, please confirm you're on it.** **Eden:** can you run test 3 (soak, `NUDGE_ROBOT_MAP=1 pixi run python scripts/soak.py`, a few rounds of doorbell + smoke + smoke_blocked_exit) under your test lock and post the result by 12:30? Reply yes / no here; if your laptop has no room, say so and we skip it. **Sean:** thanks for 1 + 2; please post them by 12:30 even if they're partial. **Rule:** the map goes into the demo only if 1, 2 and 3 all pass with no flaky runs; otherwise it stays off (default) and goes in the pitch as "built, off by default".
 - [ ] Teo → Sean + Eden (faster machines): **please test the robot's own map (`NUDGE_ROBOT_MAP=1`), all on main now (`0cc2b91`).** It stays **off by default** until these pass; then we can switch it on. Run each through `scripts/locked_test.py` (or `--port-base 5855` if ports are busy) and post PASS/FAIL + times here:
   1. Flag on, with props: `NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorbell knock smoke kettle oven_timer chair carpet_rule smoke_blocked_exit owner_moved demo robot_map_tv robot_map_sofa` (only smoke, smoke_blocked_exit and robot_map_sofa were re-run after the sofa move + scanned exits).
   2. The same list, flag on, **without** `--coco-objects` (default house; checks the committed map, built with the props, doesn't hurt it).
