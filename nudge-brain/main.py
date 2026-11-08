@@ -33,7 +33,8 @@ from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
-from tasks import TaskRunner, TaskStore  # noqa: E402
+from tasks import OwnerActivity, TaskRunner, TaskStore, confirmation  # noqa: E402
+from ask import AnswerListener, AskOwner  # noqa: E402
 from sim.house_layout import ALERT_SOUNDS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
 
 LOOP_HZ = 20.0
@@ -42,6 +43,8 @@ NEW_SOUND_CONF = 0.5
 SILENCE_WINDOWS_TO_UNLATCH = 3  # 1.5 s of silence before the same sound can start a new mission
 UNLATCH_BELOW = 0.25
 OWNER_SEEN_COOLDOWN = 3.0
+# E1.5: after teaching, ask "... OK?" (C5 `ask`); yes keeps the task, no drops it, no answer keeps it
+ASK_CONFIRM = os.environ.get("NUDGE_ASK_CONFIRM", "0") == "1"
 SAY_HOLD_S = 20.0  # top-level `say` in the brain status: how long a reply stays on the robot screen
 
 
@@ -146,9 +149,14 @@ class Brain:
         if os.environ.get("NUDGE_TASKS_KEEP", "0") != "1" and len(self.task_store):
             self.task_store.clear()
         self.task_adapter = TaskAdapter(self)
+        self.ask = AskOwner()  # one open question to the owner (C5), answered by voice / GUI
+        self.answer_listener = AnswerListener() if ASK_CONFIRM else None
         self.task_runner = TaskRunner(self.task_store, self.task_adapter,
                                       log=lambda text: self.world.log(text))
         self.new_sound_events: list = []  # SoundEvents since the last task tick (sound triggers)
+        self.owner_activity = OwnerActivity()  # idle / owner_entered_room triggers (E1.6)
+        self.owner_spoke = False  # a sentence from the owner since the last task tick (= activity)
+        self.seen_wall = self.tap_wall = 0.0  # last owner sighting / handle tap fed to owner_activity
         # The owner's no-go areas; read self.world at call time (reset() replaces the world).
         self.nav.avoid_provider = lambda: self.world.avoid_for_planning()
         self.last_tick = time.monotonic()
@@ -182,6 +190,9 @@ class Brain:
         self.new_sound_events = []
         self.task_runner.reset()
         self.task_adapter.reset()
+        self.owner_activity.reset()
+        self.owner_spoke = False
+        self.ask.clear()
         self.last_owner_seen_event = 0.0
         self.episode = episode
         self.world.log(f"RESET by sim (episode {episode}) - ready")
@@ -290,11 +301,15 @@ class Brain:
         if not text:
             return
         conf = float(msg.get("confidence", 1.0) or 0.0)
+        self.owner_spoke = True  # they spoke / typed: awake and OK (idle trigger, E1.6)
         # echo for the control GUI's "Heard:" line (also when the robot was too unsure to act on it)
         self.last_heard = {"text": text, "source": source, "confidence": conf, "t": round(self.world.t_sim, 1)}
         if source == "voice" and conf < MIN_VOICE_CONFIDENCE:
             self.world.log(f'OWNER SAID ({source}, {conf:.2f}, too unsure): "{text}"')
             self.world.say("Sorry, I did not catch that. Please say it again.", "confirm")
+            return
+        if self.ask.answer(msg, plain_command=True):  # "yes" / "no" to the open question
+            self.world.log(f'OWNER ANSWERED ({source}): "{text}"')
             return
         self.world.log(f'OWNER SAID ({source}): "{text}"')
         self.cmd_parser.submit(dict(msg, text=text, source=source))
@@ -326,6 +341,8 @@ class Brain:
             elif kind == "teach":
                 task = self.task_runner.store.add(dict(instr["task"], source=msg.get("source", "")))
                 w.log(f"TASK taught: {task['name']} {task['trigger']} -> {[st['skill'] for st in task['steps']]}")
+                if ASK_CONFIRM and not w.is_emergency():
+                    say = self.ask_to_keep(task)
             elif kind == "forget_task":
                 removed = self.task_runner.remove(instr["name"])
                 say = forget_reply(removed, instr["name"])
@@ -345,14 +362,61 @@ class Brain:
                     w.phase = "idle"
         w.say(say, "confirm")
 
+    # ------------------------------------------------------------------ ask the owner (C5)
+    def ask_to_keep(self, task: dict) -> str:
+        """Taught task: ask "Every day at 10 pm I'll take you to bed. OK?". The task is stored already,
+        so it also works if nobody answers; "no" forgets it again. Returns the question."""
+        summary = confirmation(task)[4:]  # without the leading "OK. "
+        name = task["name"]
+
+        def on_answer(choice):
+            w = self.world
+            if choice == "no":
+                removed = self.task_runner.remove(name)
+                w.log(f"ASK answered no -> task {name} " + ("dropped" if removed else "was already gone"))
+                w.say("OK. I won't do that.", "confirm")
+            elif choice == "yes":
+                w.log(f"ASK answered yes -> task {name} kept")
+                w.say(f"OK. {summary}", "confirm")
+            else:
+                w.log(f"ASK not answered -> task {name} kept")
+                w.say(f"No answer, so I kept it. {summary}", "confirm")
+
+        question = f"{summary} OK?"
+        qid = self.ask.ask(question, self.world.t_sim, on_answer)
+        self.world.log(f'ASK {qid}: "{question}"')
+        return question
+
+    def tick_ask(self) -> None:
+        if self.answer_listener is not None:
+            for msg in self.answer_listener.poll():
+                if self.ask.answer(msg):
+                    self.world.log(f'OWNER ANSWERED ({msg.get("source", "?")}): "{msg.get("text", "")}"')
+        if self.ask.current is not None and self.world.is_emergency():
+            self.ask.clear()  # a fire: no questions now (the task stays, as if unanswered)
+        self.ask.tick(self.world.t_sim)
+
     # ------------------------------------------------------------------ taught tasks
     def tick_tasks(self) -> None:
         """Trigger watcher + runner (tasks.py). Runs a task only when no other mission is active."""
         st = self.bridge.latest_state or {}
         events, self.new_sound_events = self.new_sound_events, []
-        # idle / owner_entered_room triggers: no brain-side owner tracking for them yet (E1.6)
-        self.task_runner.tick(self.world.t_sim, clock=st.get("sim_clock"), day=st.get("sim_day"),
-                              sound_events=events)
+        # idle / owner_entered_room: from brain-side evidence only (sightings, handle, speech)
+        w = self.world
+        seen_xy = seen_room = None
+        if w.owner_pos is not None and w.owner_last_seen_wall > self.seen_wall:
+            self.seen_wall = w.owner_last_seen_wall
+            seen_xy, seen_room = w.owner_pos, w.owner_room
+        active = self.owner_spoke or w.guiding_active or w.last_tap_wall > self.tap_wall
+        self.owner_spoke, self.tap_wall = False, w.last_tap_wall
+        now = OwnerActivity.now_s(st.get("sim_clock"), st.get("sim_day"), w.t_sim)
+        idle_s, owner_events = self.owner_activity.update(now, seen_xy, seen_room, active)
+        for ev in owner_events:
+            if any(t["trigger"].get("event") == ev["event"] and t["trigger"].get("room") == ev["room"]
+                   for t in self.task_store.tasks.values()):
+                w.log(f"Owner went into {ev['room']} (from {ev['from']})")
+        self.task_runner.tick(w.t_sim, clock=st.get("sim_clock"), day=st.get("sim_day"),
+                              sound_events=events, owner_idle_s=idle_s, events=owner_events)
 
     # ------------------------------------------------------------------ emergency
     def plan_evacuation(self, why: str) -> bool:
@@ -405,6 +469,7 @@ class Brain:
             self.on_user_command(msg)
         for result in self.cmd_parser.poll():
             self.apply_command(result)
+        self.tick_ask()
         self.tick_tasks()
 
         # LiDAR doorway check: re-plan around a blocked doorway (e.g. the chair).
@@ -492,6 +557,7 @@ class Brain:
             # What the owner told the robot, as enforced (rules.py), and the latest message for the owner
             "rules": w.rules.status(),
             "nudge_says": w.nudge_says,
+            "ask": self.ask.status(),  # C5: open question to the owner, or None
             # the same reply as plain text for the robot screen / speaker outside a mission (sim reads
             # `say` when no mission message is active: "Sorry, I can't do that yet...", task reminders,
             # rule confirmations); cleared after SAY_HOLD_S so the screen doesn't show it forever
@@ -520,6 +586,8 @@ class Brain:
             "heard_sounds": self.sound_events.what_did_i_hear(since_t=w.t_sim - 300.0),
             # taught tasks (contract C3, + "summary" / "queued")
             "tasks": self.task_runner.status(),
+            # brain-side owner activity for idle tasks (E1.6): minutes without a sign of activity
+            "owner_activity": self.owner_activity.status(),
         }
 
     def run(self, duration: float = 0.0) -> None:
@@ -539,6 +607,8 @@ class Brain:
             self.bridge.send_cmd(0.0, 0.0, 0.0)
             self.bridge.close()
             self.cmd_listener.close()
+            if self.answer_listener is not None:
+                self.answer_listener.close()
             if self.dashboard is not None:
                 self.dashboard.close()
 

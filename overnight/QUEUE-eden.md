@@ -15,8 +15,8 @@ Each tick:
 - [x] **E1.2** Teaching: add a `teach` kind to the command parser in `rules.py` (Gemma schema + `validate` + keyword fallback for "every night at 10 pm take me to bed"); unsupported → "Sorry, I can't do that yet. I can find you, remind you, or take you somewhere."; confirmation sentence spoken + on screen ("OK. Every day at 10 pm I'll take you to bed."). "Forget the <name> task" deletes it.
 - [x] **E1.3** Wire into `main.py`: tick the watcher, run tasks only when no higher-tier mission is active (smoke pre-empts a running task), publish `tasks` (contract C3). Test: `carpet_rule`, `doorbell`, `smoke` still PASS; Sean's `teach_bedtime` / `cant_do_that` when they exist on integration (E0 runs them).
 - [x] **E1.4** Sound-trigger tasks: "When the kettle boils, just tell me" replaces the built-in tier-2/3 response for that sound (tier 1 never). Scenario `teach_kettle` (Sean) on integration.
-- [ ] **E1.5 (stretch)** Brain side of `ask_owner` (C5): ask "Every night at 10 I'll take you to bed. OK?" after teaching; yes → store, no → drop; timeout → store and say so.
-- [ ] **E1.6 (stretch)** `idle` trigger: "If I haven't moved for two hours, come and check on me" (needs the owner tracking in `world_model`).
+- [x] **E1.5 (stretch)** Brain side of `ask_owner` (C5): ask "Every night at 10 I'll take you to bed. OK?" after teaching; yes → store, no → drop; timeout → store and say so.
+- [x] **E1.6 (stretch)** `idle` trigger: "If I haven't moved for two hours, come and check on me" (needs the owner tracking in `world_model`).
 
 ## E2. GUI + test videos + docs (worktree `../AV26-gui`, branch `overnight/eden-gui`, Sonnet is fine)
 - [x] **E2.1** `gui/panels/tasks.py`: taught-task list from brain `tasks` (name, trigger in words, next run, state), "Forget" button (sends the "forget the <name> task" sentence), example teach sentences as one-click buttons.
