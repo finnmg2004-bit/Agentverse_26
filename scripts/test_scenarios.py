@@ -87,6 +87,18 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_alert": ["continuous"],
         "expect_sim": ["NUDGE SAYS:"],
     },
+    "smoke_blocked_exit": {
+        "desc": "Chair blocks the back (garden) exit [E] + smoke alarm -> exit guard picks another safe exit "
+                "-> owner gets OUTSIDE; the robot never comes within 3 m of the kitchen fire",
+        "actions": [("at", 0.8, "E"), ("at", 1.5, "M")],
+        "expect_complete": ["smoke_alarm"],
+        "expect_log": ["SAFETY PRE-EMPT"],
+        "expect_alert": ["continuous"],
+        # sim judge: with [E] only OUTSIDE counts; FIRE PROXIMITY = robot < 3 m from the smoke alarm
+        "expect_sim": ["owner EVACUATED (OUTSIDE via"],
+        "forbid_sim": ["FIRE PROXIMITY", "via exit_back", "via exit_terrace"],
+        "min_timeout": 180.0,
+    },
     "owner_moved": {
         "desc": "Doorbell, owner moved (living room -> guest room) while robot is en route -> search -> find",
         "actions": [("at", 1.0, "B"), ("at", 3.0, "O")],

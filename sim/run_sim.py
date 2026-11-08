@@ -70,6 +70,7 @@ from sim.house_layout import (
     CHAIR_DOORWAY_POS,
     CHAIR_STOWED_POS,
     LANDMARKS,
+    EXITS,
     OUTSIDE,
     ROBOT_START_POSE,
     ROOMS,
@@ -102,6 +103,7 @@ VIEW_NAMES = ["top", "follow", "dog"]
 GOAL_RADIUS_M = 1.4
 GOAL_DWELL_S = 1.0    # must stay inside the radius this long, so walking past/through doesn't count
 SCENARIO_TIMEOUT_S = 120.0
+FIRE_TOO_CLOSE_M = 3.0  # judge only: the robot should never route this close to the fire (smoke alarm)
 
 
 class NudgeSimulator:
@@ -201,6 +203,9 @@ class NudgeSimulator:
 
         # Scenario tracking: sound -> sim time it started (cleared when resolved/silenced)
         self.sound_started: Dict[str, float] = {}
+        # Judge-only fire check: closest the robot came to the smoke alarm (the fire) while it rang.
+        self.fire_min_dist: float = float("inf")
+        self.fire_too_close_logged: bool = False
         self.sound_timed_out: Dict[str, bool] = {}
         self.goal_since: Dict[str, float] = {}  # sound -> sim time the owner entered the goal radius
         self.last_scenario_check: float = 0.0
@@ -222,6 +227,9 @@ class NudgeSimulator:
         if not self.active_sounds.get(name):
             self.sound_started[name] = float(self.data.time)
             self.sound_timed_out[name] = False
+            if name == "smoke_alarm":
+                self.fire_min_dist = float("inf")
+                self.fire_too_close_logged = False
         self.active_sounds[name] = True
 
     def _stop_sound(self, name: str) -> None:
@@ -237,6 +245,15 @@ class NudgeSimulator:
             return
         self.last_scenario_check = t
         ox, oy = self.locomotion.get_owner_pos()
+        if "smoke_alarm" in self.sound_started:
+            rx, ry, _ = self.locomotion.get_pose()
+            fx, fy = SOUND_SOURCES["smoke_alarm"]["pos"][:2]
+            fd = float(np.hypot(rx - fx, ry - fy))
+            self.fire_min_dist = min(self.fire_min_dist, fd)
+            if fd < FIRE_TOO_CLOSE_M and not self.fire_too_close_logged:
+                self.fire_too_close_logged = True
+                print(f"[sim] FIRE PROXIMITY: robot {fd:.1f} m from the fire at ({fx}, {fy}) "
+                      f"(limit {FIRE_TOO_CLOSE_M} m), robot at ({rx:.2f}, {ry:.2f})")
         for name, started in list(self.sound_started.items()):
             target = str(SOUND_SOURCES[name]["target_landmark"])
             evac = name == "smoke_alarm"
@@ -245,7 +262,9 @@ class NudgeSimulator:
             tx, ty = LANDMARKS["back_door"] if evac else LANDMARKS[target]
             dist = float(np.hypot(ox - tx, oy - ty))
             outside = evac and get_room_at(ox, oy) == OUTSIDE
-            if dist <= GOAL_RADIUS_M or outside:
+            # Back exit blocked by the chair ([E]): standing at it is not an evacuation, only OUTSIDE counts.
+            at_goal = dist <= GOAL_RADIUS_M and not (evac and self.chair_at_exit)
+            if at_goal or outside:
                 self.goal_since.setdefault(name, t)
             else:
                 self.goal_since.pop(name, None)
@@ -254,9 +273,15 @@ class NudgeSimulator:
                 if evac:
                     for s in list(self.sound_started):
                         self._stop_sound(s)  # owner is leaving the house: nothing left to alert to
-                    where = "OUTSIDE" if outside else "at the back door exit"
+                    if outside:
+                        via = min(EXITS, key=lambda n: float(np.hypot(ox - EXITS[n]["outside"][0],
+                                                                      oy - EXITS[n]["outside"][1])))
+                        where = f"OUTSIDE via {via}"
+                    else:
+                        where = "at the back door exit"
                     print(f"[sim] SCENARIO COMPLETE: smoke_alarm -> owner EVACUATED ({where}) "
-                          f"after {elapsed:.1f}s (owner at {ox:.2f}, {oy:.2f}). Alarm cleared.")
+                          f"after {elapsed:.1f}s (owner at {ox:.2f}, {oy:.2f}; robot came within "
+                          f"{self.fire_min_dist:.1f} m of the fire). Alarm cleared.")
                 else:
                     self._stop_sound(name)
                     print(f"[sim] SCENARIO COMPLETE: {name} -> owner reached the {target} after {elapsed:.1f}s "
