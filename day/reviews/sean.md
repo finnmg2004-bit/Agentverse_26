@@ -3,6 +3,41 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Gemma eval on the RTX 5060 recording laptop (for Teo / Matteo, technical summary)
+
+`claude/agent-evals-7798e9` @ 0b71843, `run_eval.py --gate --sets golden teach`, 2026-11-08 10:22,
+sim/GUI closed, NVIDIA GeForce RTX 5060 Laptop GPU (8 GB), Ollama `gemma4:e2b`, all local.
+Results file (local only): `scripts/llm_eval/results/gemma4_e2b_2026-11-08_1022_gate.json`.
+
+| set | correct | p50 | p95 | within 4 s watchdog | gate |
+|---|---|---|---|---|---|
+| golden (real logged decisions) | 14/15 (93.3 %) | 0.19 s | 0.26 s | 100 % | PASS |
+| teach (owner sentence -> task) | 14/19 (73.7 %) | 0.58 s | 0.67 s | 100 % | FAIL |
+
+Line for the summary: "On the recording laptop (RTX 5060 Laptop, 8 GB) Gemma 4 E2B decides in 0.19 s
+median / 0.26 s p95 (93 % on 15 real logged decisions) and parses a taught task in 0.58 s / 0.67 s; every
+answer is far inside the 4 s watchdog." (GTX 1650 shared: p50 2.9 s / p95 5.7 s.)
+
+The 5 teach misses (Matteo / Teo, please look before using the teach number):
+- 2 look like a grader mismatch, not model errors: `teach_oven_guide` and `para_kettle_bring` produce
+  `['find_owner', 'say', 'guide_owner_to']` with the right trigger and target, but the expected skills
+  have no `say` (`teach_golden.jsonl` lines 8, 17). With those fixed: 16/19 (84 %).
+- Real misses: `teach_tonight_once` ("Tonight at 11 ...") -> `repeat: daily` instead of `once`;
+  `cant_call` ("Every Sunday at 10 call my daughter") -> taught as a reminder instead of refused (it
+  would silently promise a call it can't make); `para_oven_let_know` ("Let me know if the oven timer
+  beeps") -> `sound_preference` instead of a taught sound task.
+- golden miss: `doorbell_arrived_living_empty` wants look_around() / go_to_room(guest), got
+  go_to_room(entry).
+
+Owner camera check (`NUDGE_OWNER_CHECK=1 scripts/test_owner_check.py`, main 5ad46c2, same laptop):
+- Latency: image call median **0.22 s** (0.22-0.25), decision call 0.18 s; warm-up 7.9 s.
+- Accuracy 3/10 here, **not representative**: this PC has no scanned Renderpeople owner, so the test renders
+  the primitive box owner. YOLO finds it (0.95), but Gemma says "No person is visible" on the YOLO crop
+  (standing 0/4, lying 0/3, empty rooms 3/3). Sanity probe: the same frame sent whole gets "A person is
+  visible in the center", so Ollama vision works; it's the crop of the box figure. Use Teo's 9/10 (scanned
+  owner) for accuracy and 0.22 s for the RTX 5060 latency. Teo: if the demo laptop could ever run without
+  the scanned owner, consider falling back to the whole frame when the crop says not_visible but YOLO >= 0.8.
+
 ## Agent F `day/night-dock` (71756f9, #1 night + #2 charging station) - approve with small fixes
 
 Head camera is protected (`NightScene.protect_head_camera` renders it in daylight, then restores; the

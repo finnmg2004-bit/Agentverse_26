@@ -680,3 +680,35 @@ Not today: **#21 LED colours** (kept as they are, team decision).
 - [x] Teo → Finn: **`owner_check` (C7) is on main** (`ffd19f7`, `nudge-brain/gemma_vision.py`, off unless `NUDGE_OWNER_CHECK=1`) for your #20 (no response → emergency contact). Please review the flagged hooks: `main.py` (import, `__init__`, `reset`, `on_camera`, after `executor.step`, `status`) and one block in `agent._situation`; all are no-ops with the flag off. Use it like this: `brain.owner_check.request("owner_no_response")` asks Gemma for a fresh look (it already fires on `owner_no_response`); read the latest result from `world.owner_check` / brain status `owner_check` = `{state: standing|sitting|lying_down|not_visible, confidence, description, age, ...}`. **Don't wait for it**: image checks take 1.6–2.5 s warm on a GTX 1650 (up to ~8 s under load), so use the latest look if it is fresh (`age` ≤ 10 s) and go ahead without it otherwise. Worth knowing: YOLO does not detect the owner lying on the floor at all; Gemma does (test 9/10).
   - Finn → Teo: reviewed, hooks OK (all no-ops with the flag off). #20 already uses it: `world.owner_lying_down()` = latest look, `lying_down`, confidence ≥ 0.5, **`age` ≤ 10 s** (now reads your `age`), never waits; then it escalates after the first unanswered nudge, and Gemma's situation text mentions it. Noted the gap: YOLO misses an owner lying on the floor, so the search can't find them to nudge. In a fire the 40 s not-found call still covers it, outside a fire it doesn't yet (not for today).
 - [ ] Ricktho → Eden (for agent D, `day/owner-voice`): review done. **Blocker fixed on main (`9bc974f`)**: the owner's voice fired the spectral doorbell / knock rules in every room (your `test_owner_voice.py`: 24/24 problems); `hearing.py` on main now has a speech gate + `result["speech"]` (details in 9.5b). Agent D: rebase on main; in `nudge-brain/hearing.py` **take main's version** and drop your `speech_index` / `_speech` lines (main's `"speech"` key means the same); in `sim/sensors.py` keep main's `SpeakerOut` lines (`self.speaker = ...` in `__init__`, `self.speaker.update(active_list)` after the `audio_cursor` line) next to your `_mix_source` refactor (maths unchanged, fine) and don't play the owner voice on the speakers; then re-run `test_owner_voice.py` (expect no FALSE SOUND in quiet / fan / tv) and `doorbell smoke`.
+- [ ] Finn → everyone (incl. agents A–F): **what changed in the brain today (all on main, core suite green on `58bc0d9`).** If your branch touches `main.py` / `agent.py` / `world_model.py` / `skills.py` / `navigator.py`, rebase on main and keep your hooks in their own functions.
+  - **#13 999 call:** in a fire, once the owner holds the handle, the brain sets `ask` (C5) "Shall I call 999?". Answer yes, or a 10 s timeout, means call; no means don't call. The evacuation never pauses. Every call for help (yes / timeout / 40 s not found / Gemma's `call_emergency_services`) goes through one `Brain.escalate()`, never twice, reset on `R`. **C8 `escalation`** in the brain status: `{"reason": "fire"|"no_response", "contact": "999"|"emergency_contact", "asked", "answer": "yes"|"no"|"timeout"|null, "called", "by", "detail", "t"}` (null when nothing happened). `user_answer` is now always subscribed.
+  - **#20 no response:**
+    - outside a fire, after 3 unanswered nudges it alerts the emergency contact and stays with the owner (new tool `stay_with_owner`); a handle tap resumes the mission;
+    - in a fire, after 2 unanswered nudges it calls 999 and leads them out anyway;
+    - Teo's C7 `lying_down` (fresh, `age` ≤ 10 s) escalates after the first unanswered nudge.
+  - **#19 stuck:** no progress for 4 s (7 s while guiding) → back off + turn → remember the obstacle 60 s + re-plan → third time hands back to the agent (`timeout` / `path_blocked`). Logged as `NAV STUCK ...`; the owner is told "Something is in the way. I am finding another route." The owner is never treated as an obstacle.
+  - **#11 search:**
+    - rooms the camera already cleared on the way in aren't rescanned, also in a fire;
+    - `look_around` turns towards where the owner probably is;
+    - Teo's four rules quirks are fixed;
+    - result: owner_moved 64 → 57 s, demo 69 → 63 s.
+  - **Scenarios added:** `smoke_999`, `smoke_999_timeout`, `no_response`, `stuck_chair`. **Eden:** please add them to the checkpoint run.
+  - **In progress (push by 11:30):**
+    - owner unreachable (Sean's `stuck_only_route`): "I can't reach you" + escalate after ~30 s;
+    - owner **fallen on the floor**: Gemma whole-frame look when YOLO sees nobody + depth to locate them → "Are you OK?" → 999 on no / timeout. Only active with `NUDGE_OWNER_CHECK=1`.
+- [ ] Finn → Eden: **GUI, please:**
+  - show `escalation` ("999 CALLED (owner said yes / no answer)", "EMERGENCY CONTACT ALERTED");
+  - show the open `ask` with **Yes / No buttons** that publish `user_answer` `{"id": ask.id, "text": "yes", "choice": "yes", "confidence": 1.0}` on :5557 (typing "yes" in the Tell Nudge box also works).
+  - Our pitch lines: "Nudge knows when to call for help: in a fire it asks 'Shall I call 999?' while still leading the owner out; if the owner doesn't respond it alerts their emergency contact and stays with them." · "It remembers what its camera has already seen, so it never re-scans an empty room." · "When something that isn't on its map blocks the way, it notices, backs off, remembers it and re-routes."
+- [ ] Finn → Sean:
+  - new scenarios in your file: `smoke_999`, `smoke_999_timeout`, `no_response`, `stuck_chair`;
+  - new harness action `("cmd_on", "<log substring>", delay, text)`;
+  - new owner state `unresponsive` (gui `owner_state`; `run_sim`'s help text still lists only awake / asleep / idle);
+  - new gui hook `{"action": "chair", "pos": [x, y]}`;
+  - `stuck_owner_corner` passes on main, and `stuck_only_route` is being fixed now;
+  - coming next: owner state `fallen` (lying on the floor, from Teo's lying pose). It's small and additive in `owner_behavior.py` / `run_sim.py`.
+  - Sean → Finn: thanks, all fine. Help text fixed: `run_sim` now lists `OWNER_STATES` (so `fallen` shows up automatically once you add it). The `chair` gui action accepts your `pos` plus `x`/`y` and `ahead`. `fallen` in `owner_behavior.py` / `run_sim.py` is OK with me; `sim/robot_nudge.py` leans an asleep owner back, so give `fallen` no reaction there (like `unresponsive`) or tell me and I'll add it.
+- [ ] Finn → Ricktho:
+  - the 999 question is a C5 `ask`, so voice should take a yes / no without the wake word while `ask` is set and publish `user_answer` on :5558. Does `voice.py` do that already?
+  - (from the agent D review) the sim plays the owner's voice only for `user_command`, so a spoken "yes" (`user_answer`) is silent in the recording.
+- [ ] Finn → Teo: `owner_check` is consumed as you suggested (see above). The fallen-owner work calls your whole-frame check during searches when YOLO sees nobody. If it adds a coarse image-position field to your schema, it'll be additive and I'll tell you here.

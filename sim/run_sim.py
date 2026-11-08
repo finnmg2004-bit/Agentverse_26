@@ -86,7 +86,7 @@ from sim.robot_screen import RobotScreen
 from sim.robot_voice import RobotVoice
 from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
-from sim.owner_behavior import OwnerBehavior
+from sim.owner_behavior import OWNER_STATES, OwnerBehavior
 from sim.robot_nudge import NudgeFX
 from sim.sim_clock import SimClock
 from sim.house_layout import CHAIR_EXIT_POS
@@ -433,7 +433,7 @@ class NudgeSimulator:
             if self.owner.set_owner_state(st, float(self.data.time)):
                 print(f"[sim] GUI: owner is now {st.upper()}")
             else:
-                print(f"[sim] GUI: unknown owner state {st!r} (awake|asleep|idle)")
+                print(f"[sim] GUI: unknown owner state {st!r} ({'|'.join(OWNER_STATES)})")
         elif action == "chair":  # #19 repro: {"pos": [x, y]} / {"x": .., "y": ..} / {"ahead": m} (in front of the robot)
             try:
                 if "ahead" in payload:  # e.g. dropped mid-guide right in front of the robot
@@ -678,7 +678,7 @@ class NudgeSimulator:
                 "active_sounds": [s for s, on in self.active_sounds.items() if on],
                 # Touch sensor on the guide handle: the owner taps it to acknowledge an alert.
                 "handle_tap": self.owner.handle_tap,
-                "owner_state_gt": self.owner.owner_state,  # awake|asleep|idle - judge only, like owner_pos_gt
+                "owner_state_gt": self.owner.owner_state,  # OWNER_STATES (awake|asleep|idle|unresponsive) - judge only, like owner_pos_gt
                 "owner_activity_gt": self.owner.status(),  # idle|walking|guided|alerted - judge only
                 # Ground truth for avoid-area tests / GUI shading (rules themselves live in the brain).
                 "in_avoid_area": self.in_avoid_area,
