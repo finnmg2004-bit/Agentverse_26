@@ -3,6 +3,7 @@
 Start the simulator AND the brain from one terminal (`pixi run start`, or `python scripts/run_all.py`).
 
 Output of both processes goes to this terminal (lines are already prefixed [sim] / [brain]).
+The robot speaks its "Nudge says" messages aloud (local Piper TTS); NUDGE_SPEECH=0 mutes it.
 Closing either window (MuJoCo viewer, or Q/Esc in the dashboard) or pressing Ctrl+C stops both.
 
   python scripts/run_all.py                          # viewer + dashboard
