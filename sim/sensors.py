@@ -38,6 +38,15 @@ USE_REAL_AUDIO = os.environ.get("NUDGE_REAL_AUDIO", "0") not in ("0", "", "false
 SAMPLE_RATE: int = 16000
 AUDIO_WINDOW_SEC: float = 0.5
 AUDIO_WINDOW_SAMPLES: int = int(SAMPLE_RATE * AUDIO_WINDOW_SEC)  # 8000 samples
+# Ear front end: a peak-limiting automatic gain control (like a real robot's mic preamp) instead of
+# hard clipping. A smoke alarm (level 4) 1-3 m away reaches ~2.6x full scale; hard-clipping 40-50 %
+# of the samples turned the 3.15 kHz tone into a square wave, smeared its energy into the hearing
+# rule's neighbour bands, and the robot in the kitchen scored smoke 0.11 (also YAMNet 0.0).
+# One gain for both ears (keeps ILD), instant attack, release <= EAR_AGC_RELEASE x per window.
+# NUDGE_EAR_AGC=0 = the old hard clip.
+EAR_AGC = os.environ.get("NUDGE_EAR_AGC", "1") != "0"
+EAR_AGC_PEAK = 0.95
+EAR_AGC_RELEASE = 1.5
 
 LIDAR_NUM_RAYS: int = 36
 LIDAR_FOV_RAD: float = math.pi  # [-90 deg, +90 deg]
@@ -264,6 +273,7 @@ class SimSensors:
         self.data = data
         self.audio_clips = ensure_audio_assets()
         self.audio_cursor: int = 0
+        self.ear_gain: float = 1.0  # AGC gain carried across windows (EAR_AGC)
         self.rng = np.random.default_rng(123)
         self.noise = AmbientNoise(self.rng)  # background-noise test profile ([N] hotkey / --noise)
 
@@ -473,6 +483,16 @@ class SimSensors:
         self.audio_cursor = (self.audio_cursor + AUDIO_WINDOW_SAMPLES) % (SAMPLE_RATE * 2)
 
         stereo = np.stack([left_ch, right_ch], axis=-1)
+        if EAR_AGC:
+            peak = float(np.max(np.abs(stereo))) + 1e-9
+            target = min(1.0, EAR_AGC_PEAK / peak)
+            if target < self.ear_gain:          # attack: whole window at the lower gain
+                gain = np.full(len(stereo), target)
+            else:                               # release: ramp up smoothly, rate-limited
+                end = min(target, self.ear_gain * EAR_AGC_RELEASE)
+                gain = np.linspace(self.ear_gain, end, len(stereo))
+            self.ear_gain = float(gain[-1])
+            stereo = stereo * gain[:, None]
         stereo = np.clip(stereo, -0.99, 0.99)
         pcm_int16 = (stereo * 32767.0).astype(np.int16)
 
