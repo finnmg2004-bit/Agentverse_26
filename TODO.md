@@ -40,6 +40,7 @@ open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
 - (add a line here whenever you touch Finn's files this session)
 
 ## Sean (sim, outputs, tests)
+- [ ] **→ Sean (from Teo)** On an RTX 5060 recording laptop, with the sim/GUI closed: check out `claude/agent-evals-7798e9`, run `pixi run llm-eval --gate --sets golden teach` (~3 min) and put the accuracy + p50/p95 latency lines in the technical summary ("where each model runs, hardware and latency"). The GTX 1650 numbers (golden 14/15, p50 2.9 s / p95 5.7 s; teach 17/19) were measured with the GPU shared.
 - [x] On-robot screen shows the "Nudge says" text (`77bbc21`)
 - [x] LED colour by tier (`77bbc21`; kettle now has its own amber on the light bar + screens, from the brain's mission sound)
 - [x] Speech through Teo's `speak(text)` (`sim/robot_voice.py` -> `speech.tts.speak`, `NUDGE_SPEECH=1`; spoken as "Nudge says: ..." so the mic ignores it; smoke uses `interrupt=True`)
