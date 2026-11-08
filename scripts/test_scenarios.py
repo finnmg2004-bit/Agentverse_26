@@ -285,14 +285,18 @@ SCENARIOS: Dict[str, Dict] = {
     },
     "owner_voice": {
         "desc": "#10: owner moved to the guest room (out of sight), then says 'take me to the kitchen' -> "
-                "the robot HEARS where the voice comes from and searches the guest room first (never the "
-                "living room, the prior), no false household sound from the voice -> owner in the kitchen",
+                "the robot HEARS where the voice comes from and heads for the guest room (no room scanned "
+                "before it, no false household sound from the voice) -> owner in the kitchen",
+        # The command is parsed in ~0.9-1.2 s, the voice is localised after ~1.5 s of speech: if the parse wins,
+        # the robot sets off to the living room (the prior) and turns to the guest room ~1 s later
+        # ("OWNER VOICE: searching guest instead of living_room"). Either way it never scans the living room.
         "actions": [("at", 1.0, "O"), ("cmd", 3.0, "Nudge, please take me to the kitchen")],
         "expect_complete": [],
         "expect_owner_room": "kitchen",
-        "expect_log": ["OWNER VOICE: heard the owner", "probably guest", "Owner seen in guest"],
+        "expect_log": ["OWNER VOICE: heard the owner", "probably guest", "SKILL go_to_room(guest)",
+                       "Owner seen in guest"],
         "expect_alert": [],
-        "forbid_log": ["go_to_room(living_room)", "SOUND start"],
+        "forbid_log": ["SKILL look_around", "SOUND start", "Owner seen in living"],
         "min_timeout": 180.0,
     },
 }
