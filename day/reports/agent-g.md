@@ -78,7 +78,15 @@ All via `scripts/locked_test.py` on Eden's laptop, noise quiet, Gemma online.
   sounds called TV**.
 - `overdue()` / `cancel()` unit check (scratch script, fake world): no verdict at 3.0 s, "real" +
   the mission sound returned at 3.6 s, investigation cleared; cancel clears skill + evidence.
-- **Run 2, commit `a259e0b` (review fixes, investigation OFF by default)**: RUN2_PLACEHOLDER
+- **Run 2, commit `a259e0b` (review fixes, investigation OFF by default)**: **not run**: queued at 11:52 with
+  `tv_investigate tv_investigate_stop tv_family_owner tv_doorbell tv_then_doorbell doorbell owner_moved
+  smoke demo`, but the per-PC test lock was held by other agents from 11:52 until past 12:16, so I
+  stopped it to meet the 12:25 deadline. **Untested end to end: `tv_investigate_stop`, `tv_family_owner`,
+  and the review-fix commit itself.** What changed since run 1: with the flag off (new default) the
+  brain runs main's static check; `start_alert_sound()` is the old block moved out unchanged
+  (`py_compile` OK); the sim only lost the dead `beacon_tv` block and writes the TV material less
+  often. **Before merging, please run:** `pixi run python scripts/locked_test.py tv_investigate
+  tv_investigate_stop tv_family_owner tv_doorbell doorbell smoke demo` (~6 min).
 - TV and the owner in the family room: geometry from the living-room scan point (-8.5, 4.6): the
   camera (0.39 m) -> owner spot (-8.0, 9.5) sight line crosses the TV plane (y 6.0) at z 0.56 (torso)
   / 0.70 (head), below the soundbar (0.88 m), so the TV does not hide the owner there;
