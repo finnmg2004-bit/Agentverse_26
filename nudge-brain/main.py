@@ -347,7 +347,7 @@ class Brain:
     def hear_owner_voice(self, res: dict) -> None:
         """#10: the owner spoke -> owner belief from where the voice came from (owner_voice.py). If the robot
         is walking to search a room and the voice now points elsewhere, it heads for the new best room."""
-        if self.owner_voice.update(res, self.world, self.localizer) is None:
+        if self.owner_voice.update(res, self.world, self.localizer, heard=self.last_heard) is None:
             return
         w = self.world
         sk = self.executor.skill

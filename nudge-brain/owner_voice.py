@@ -25,6 +25,9 @@ from sim.house_layout import SOUND_SOURCES
 SPEECH_MIN = 0.5
 OTHER_SOUND_MAX = 0.35    # a household sound in the same window = mixed cues, don't use the window
 VOICE_GAP_S = 3.0         # this long without speech ends the utterance
+COMMAND_WINDOW_S = 8.0    # speech only counts this soon after a received user_command (TV / party babble
+                          # is speech-like too; Finn's review, AGENTS.md 12.7)
+CAMERA_WINS_S = 3.0       # a camera sighting this recent beats the voice (and never while guiding)
 LOG_AFTER_N = 3           # windows of speech before the (one) log line of an utterance
 LABEL = "owner_voice"
 COMPASS = ("east", "north-east", "north", "north-west", "west", "south-west", "south", "south-east")
@@ -47,11 +50,19 @@ class OwnerVoice:
         self.last_t = -1e9
         self.logged_room: Optional[str] = None
 
-    def update(self, res: Dict[str, Any], world, localizer) -> Optional[Dict[str, Any]]:
-        """Feed one hearing result. Returns the C6 status when this window changed the owner belief."""
+    def update(self, res: Dict[str, Any], world, localizer,
+               heard: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Feed one hearing result. Returns the C6 status when this window changed the owner belief.
+        `heard` = the last received user_command ({"t": sim time, ...}); speech outside COMMAND_WINDOW_S
+        after it is ignored, so speech-like noise (TV, party) never moves the owner belief."""
         t = float(world.t_sim)
         if self.active and t - self.last_t > VOICE_GAP_S:
             self.end(world, localizer)
+        cmd_t = (heard or {}).get("t")
+        if cmd_t is None or not (-1.0 <= t - float(cmd_t) <= COMMAND_WINDOW_S):
+            return None
+        if getattr(world, "guiding_active", False) or world.owner_recently_seen(CAMERA_WINS_S):
+            return None  # the camera / the handle already say where the owner is
         speech = float(res.get("speech", 0.0) or 0.0)
         # hearing.py's speech gate caps spectral scores the voice itself causes at 0.40 and lists them in
         # `speech_gated`: those are the voice, not another sound, so they don't make the window "mixed".
