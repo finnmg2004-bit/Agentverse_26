@@ -303,12 +303,63 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_alert": ["1_pulse"],
         "forbid_sim": ["AVOID AREA: robot stepped ON"],
     },
+    "tv_doorbell": {
+        "desc": "Doorbell on the living-room TV [Y] (not the front door) -> the ears' direction + loudness "
+                "say TV -> no mission, Nudge says 'That was the TV, not the door.' (AGENTS.md 6.2, C9)",
+        "actions": [("at", 1.0, "Y")],
+        "expect_complete": [],
+        "run_for": 20.0,
+        "expect_log": ["SOUND CHECK: doorbell came from the TV"],
+        "expect_says": ["That was the TV"],
+        "forbid_log": ["MISSION ", "alert_owner(", "SOUND CHECK: doorbell is real"],
+        "expect_alert": [],
+    },
+    "tv_then_doorbell": {
+        "desc": "TV doorbell [Y] -> ignored ('That was the TV'); after it ends the REAL doorbell [B] rings "
+                "-> sound check says real -> normal doorbell mission to the front door",
+        "actions": [("at", 1.0, "Y"), ("on", "SOUND CHECK: doorbell came from the TV", 9.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["SOUND CHECK: doorbell came from the TV", "SOUND CHECK: doorbell is real",
+                       "alert_owner(doorbell", "guide_owner_to(front_door)"],
+        "expect_says": ["That was the TV"],
+        "expect_alert": ["1_pulse"],
+        "min_timeout": 170.0,
+    },
+    "robot_map_tv": {
+        "desc": "Option A (NUDGE_ROBOT_MAP=1 --coco-objects, saved explored map with objects): 'take me to the "
+                "TV' resolves through the robot's own object memory -> owner guided to the TV",
+        "actions": [("cmd", 0.5, "Nudge, take me to the TV")],
+        "expect_complete": [],
+        "run_for": 90.0,
+        "expect_log": ["guide_owner_to(tv", "Owner delivered to tv"],
+        "expect_alert": [],
+        "experimental": True,
+    },
     "demo": {
         "desc": "AGENTS.md demo story: doorbell, owner moved, then smoke alarm pre-empts while guiding",
         "actions": [("at", 1.0, "B"), ("at", 3.0, "O"), ("on", "guide_owner_to(front_door)", 2.0, "M")],
         "expect_complete": ["smoke_alarm"],
         "expect_log": ["SAFETY PRE-EMPT", "Owner seen in guest"],
         "expect_alert": ["1_pulse", "continuous"],
+    },
+    # ---- Owner profile (contract C10, sim/owner_profile.py; agent E). Unit check of the materials /
+    # speech per profile: scripts/test_profiles.py. These two prove the gui action end to end.
+    "profile_deaf": {
+        "desc": "Profile DEAF (gui action) -> doorbell: screen + light bar, NO speech; guiding unchanged",
+        "actions": [("gui", 0.3, {"action": "profile", "mode": "deaf"}), ("at", 1.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["alert_owner(doorbell", "guide_owner_to(front_door)"],
+        "expect_alert": ["1_pulse"],
+        "expect_sim": ["PROFILE: deaf: screen ON, light ON, speech off", "NUDGE SAYS:", "SPEECH OFF (profile deaf)"],
+    },
+    "profile_blind": {
+        "desc": "Profile BLIND (gui action) -> doorbell: speech, screen + light bar off; guiding unchanged",
+        "actions": [("gui", 0.3, {"action": "profile", "mode": "blind"}), ("at", 1.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["alert_owner(doorbell", "guide_owner_to(front_door)"],
+        "expect_alert": ["1_pulse"],
+        "expect_sim": ["PROFILE: blind: screen off, light off, speech ON", "NUDGE SAYS:"],
+        "forbid_sim": ["SPEECH OFF (profile"],
     },
     # ---- #19 "getting stuck" repros (Sean -> Finn). Experimental: run by name. A FAIL here is the
     # repro; each desc says what "stuck" looks like and what good behaviour would be.
@@ -365,6 +416,22 @@ SCENARIOS: Dict[str, Dict] = {
         "stuck_s": 15.0,
         "min_timeout": 180.0,
         "experimental": True,
+    },
+    "owner_voice": {
+        "desc": "#10: owner moved to the guest room (out of sight), then says 'take me to the kitchen' -> "
+                "the robot HEARS where the voice comes from and heads for the guest room (no room scanned "
+                "before it, no false household sound from the voice) -> owner in the kitchen",
+        # The command is parsed in ~0.9-1.2 s, the voice is localised after ~1.5 s of speech: if the parse wins,
+        # the robot sets off to the living room (the prior) and turns to the guest room ~1 s later
+        # ("OWNER VOICE: searching guest instead of living_room"). Either way it never scans the living room.
+        "actions": [("at", 1.0, "O"), ("cmd", 3.0, "Nudge, please take me to the kitchen")],
+        "expect_complete": [],
+        "expect_owner_room": "kitchen",
+        "expect_log": ["OWNER VOICE: heard the owner", "probably guest", "SKILL go_to_room(guest)",
+                       "Owner seen in guest"],
+        "expect_alert": [],
+        "forbid_log": ["SKILL look_around", "SOUND start", "Owner seen in living"],
+        "min_timeout": 180.0,
     },
 }
 
@@ -686,9 +753,21 @@ def main() -> int:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--coco-objects", action="store_true",
                     help="experimental: sim with COCO-class stand-ins (bed, couch, tv) + state.objects_gt")
+    ap.add_argument("--port-base", type=int, default=5555,
+                    help="run on other ZMQ ports (sim state = base, cmd = +1, gui = +2, voice = +3), so a test "
+                         "can run next to another test / GUI on the default 5555-5558 (default: 5555 = unchanged)")
     args = ap.parse_args()
     if args.coco_objects:
         SIM_EXTRA_ARGS.append("--coco-objects")
+    if args.port_base != 5555:
+        global USER_COMMAND_PUB, SIM_STATE_SUB
+        pb = args.port_base
+        ep = [f"tcp://127.0.0.1:{pb + i}" for i in range(4)]
+        SIM_STATE_SUB, USER_COMMAND_PUB = ep[0], ep[2]
+        SIM_EXTRA_ARGS.extend(["--pub", ep[0], "--sub", ep[1], "--gui-sub", ep[2]])
+        os.environ["NUDGE_GUI_PUB"], os.environ["NUDGE_VOICE_PUB"] = ep[2], ep[3]   # read by rules.py at import
+        import bridge
+        bridge.BrainBridge.__init__.__defaults__ = (ep[0], ep[1])
     if args.list:
         for n, s in SCENARIOS.items():
             tag = " (experimental: run by name)" if s.get("experimental") else ""

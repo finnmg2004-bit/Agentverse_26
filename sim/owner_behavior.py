@@ -41,6 +41,7 @@ import math
 import random
 from typing import List, Optional, Tuple
 
+from sim import owner_pose
 from sim.house_layout import DOORWAYS, OWNER_SPOTS, get_room_at
 
 WALK_SPEED = (0.38, 0.52)          # m/s, chosen per walk
@@ -131,9 +132,15 @@ class OwnerBehavior:
         was_fallen = self.owner_state == "fallen"
         self.owner_state = state
         self.loco.owner_grip = state not in ("unresponsive", "fallen")  # neither ever takes the handle
-        if state == "fallen":
+        in_bed = owner_pose.OWNER_IN_BED and state == "asleep"
+        if owner_pose.OWNER_IN_BED:  # #8 (Ricktho, sim/owner_pose.py): asleep = lying in the guest bed
+            if in_bed:
+                owner_pose.lie_in_bed(self.loco)
+            elif state != "fallen":
+                self._get_up()
+        if state == "fallen":  # lying on the floor where they are (fallen-owner check)
             self._lie_down(self.yaw if yaw is None else float(yaw))
-        elif was_fallen:
+        elif was_fallen and not in_bed:
             ox, oy = self.loco.get_owner_pos()
             self._set_pose(ox, oy, self.yaw)  # stand up again
         if state != "awake":
@@ -143,6 +150,14 @@ class OwnerBehavior:
         return True
 
     # ------------------------------------------------------------------ helpers
+    def _get_up(self) -> None:
+        """#8: an owner lying in bed (NUDGE_OWNER_IN_BED=1) stands up beside it."""
+        if owner_pose.OWNER_IN_BED and owner_pose.is_lying(self.loco):
+            spot = owner_pose.bedside_xy_yaw(self.loco.model, self.loco.data)
+            if spot is not None:
+                self._set_pose(*spot)
+                print("[sim] owner gets out of bed", flush=True)
+
     def _planner_get(self):
         if self._planner is None:
             self._planner = self._planner_factory()
@@ -197,6 +212,8 @@ class OwnerBehavior:
         rx, ry, ryaw = robot_pose
         ox, oy = self.loco.get_owner_pos()
         d_robot = math.hypot(rx - ox, ry - oy)
+        if owner_pose.OWNER_IN_BED and owner_pose.is_lying(self.loco):  # #8: a nudge anywhere along the body
+            d_robot = owner_pose.body_distance(self.loco, rx, ry)
         if self.owner_state in ("unresponsive", "fallen"):  # #20 / fallen test hooks: feel, tap, hold nothing
             self.loco.owner_grip = False
             return
@@ -223,6 +240,7 @@ class OwnerBehavior:
         if self.owner_state == "asleep":
             # Only a real vibration nudge wakes them; anything else (speech, lights) does nothing.
             if alert_mode in WAKE_ALERT_MODES and d_robot < NUDGE_CONTACT:
+                self._get_up()
                 self.owner_state = "awake"
                 self.alert_session = True
                 self.nudges_felt += 1

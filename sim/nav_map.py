@@ -49,6 +49,8 @@ def _scene_stamp() -> str:
     h = hashlib.sha1(SCENE_XML.read_bytes())
     decor = (SCENE_XML.parent.parent / "decor" / "assets").exists()
     h.update(f"v{MAP_VERSION}|res{MAP_RES}|{MAP_BOUNDS}|{Z_BAND}|decor{decor}|{sorted(PROXY_SIZES)}".encode())
+    from sim.charging_dock import stamp as dock_stamp  # the charging dock is part of the static map
+    h.update(dock_stamp().encode())
     return h.hexdigest()
 
 

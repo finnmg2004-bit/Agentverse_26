@@ -44,6 +44,8 @@ from sim import house_layout as H  # noqa: E402
 from sim.guide_handle import add_guide_handle  # noqa: E402
 from sim.lightbar import add_lightbar  # noqa: E402
 from sim.robot_screen import add_robot_screen  # noqa: E402
+from sim.charging_dock import add_charging_dock  # noqa: E402
+from sim.night import add_night_lamps  # noqa: E402
 
 SCENE_XML = PROJECT_ROOT / H.WORLD_SCENE_XML
 
@@ -144,6 +146,7 @@ def load_spec(verbose: bool = True) -> mujoco.MjSpec:
         )
     spec = mujoco.MjSpec.from_file(str(SCENE_XML))
     _strip_missing_assets(spec, verbose)
+    add_charging_dock(spec)  # sim/charging_dock.py: furniture at robot_dock (nav map, LiDAR, camera see it)
     return spec
 
 
@@ -286,6 +289,9 @@ def add_nudge_entities(spec: mujoco.MjSpec) -> None:
     for name, src in H.SOUND_SOURCES.items():
         wb.add_geom(name=f"{BEACON_PREFIX}{name}", type=G.mjGEOM_SPHERE, pos=list(src["pos"]), size=[0.14, 0, 0],
                     rgba=list(src["rgba_idle"]), contype=0, conaffinity=0, group=0)
+    # The living-room TV as a sound source (AGENTS.md 6.2): a beacon on the screen, lit while it plays
+    wb.add_geom(name=f"{BEACON_PREFIX}tv", type=G.mjGEOM_SPHERE, pos=list(H.TV_SOURCE["pos"]), size=[0.10, 0, 0],
+                rgba=[0.45, 0.3, 0.6, 0.3], contype=0, conaffinity=0, group=0)
 
     # Owner: humanoid mocap body (teal jacket for the HSV detector; legs/hips at LiDAR height)
     ox, oy = H.ROOMS[H.OWNER_START_ROOM]["owner_spot"]
@@ -301,6 +307,7 @@ def add_nudge_entities(spec: mujoco.MjSpec) -> None:
     _add_scanned_owner(spec, owner)
     add_lightbar(spec, "base")
     add_robot_screen(spec, "base")  # "Nudge says" flank screens (sim/robot_screen.py)
+    add_night_lamps(spec)  # warm ceiling lamps, off by day (sim/night.py)
 
     # Avoid-area rugs (house_layout.AVOID_AREAS): flat, visual only (contype/conaffinity 0 ->
     # the static nav map, LiDAR rays at 0.32 m and physics all ignore them). A dark-red field

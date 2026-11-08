@@ -49,6 +49,12 @@ fetch-esc50 = "python scripts/fetch_datasets.py"
 # Hearing eval: random registry + ESC-50 sounds through the sim's ears -> docs/hearing-eval.md + chart
 hearing-eval = "python scripts/test_hearing_eval.py"
 
+# Agent evals (local Ollama only; scripts/llm_eval/README.md). After ANY prompt / model / menu change:
+# `pixi run llm-eval --gate` (exit 1 if a set < 90 %). Brain runs are saved to runs/*.jsonl (NUDGE_RUN_LOG=0 = off).
+llm-eval = "python scripts/llm_eval/run_eval.py"
+# Saved runs -> candidate eval cases; `--add runs/<file>.jsonl:<line>` appends one to the golden set
+llm-harvest = "python scripts/llm_eval/harvest_runs.py"
+
 [target.linux-64.tasks]
 # Simulator (forces X11/GLFW compatibility on Linux Wayland/X11)
 sim = { cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" }, depends-on = ["fetch-world"] }

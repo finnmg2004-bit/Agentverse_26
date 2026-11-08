@@ -84,12 +84,17 @@ from sim.nav_map import load_or_build
 from sim.lightbar import ALERT_MODE_SOUND, SOUND_INFO
 from sim.robot_screen import RobotScreen
 from sim.robot_voice import RobotVoice
+from sim.owner_profile import DEFAULT_PROFILE, PROFILE_NAMES, channels, describe, is_emergency, normalize
 from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
-from sim.owner_behavior import OwnerBehavior
+from sim.owner_behavior import OWNER_STATES, OwnerBehavior
 from sim.robot_nudge import NudgeFX
 from sim.sim_clock import SimClock
+from sim.night import NightScene  # agent F: night lighting (viewer / GUI view only)
+from sim.charging_dock import DockStatus  # agent F: charging-dock status light
 from sim.house_layout import CHAIR_EXIT_POS
+from sim.house_layout import OWNER_VOICE
+from sim.house_layout import TV_SOURCE
 
 VIEW_NAMES = ["top", "follow", "dog"]
 
@@ -121,8 +126,16 @@ class NudgeSimulator:
         owner_seed=None,
         clock: str = "08:00",
         coco_objects: bool = False,
+        profile: str = DEFAULT_PROFILE,
+        voice_endpoint: str = "tcp://127.0.0.1:5558",
     ) -> None:
         self.cutaway = cutaway
+        self.voice_until: float = -1.0  # sim time until which the owner is talking (owner voice in the ears)
+        # The living-room TV playing a doorbell / knock (hotkey [Y], gui action "tv"; AGENTS.md 6.2):
+        # mixed into the ears from TV_SOURCE until tv_until. Ground truth for the judge: state.tv_playing_gt.
+        self.tv_playing: Optional[str] = None
+        self.tv_until: float = -1.0
+        self.tv_cursor: int = 0
         if coco_objects:  # S7 (experimental): COCO-class stand-ins + state.objects_gt
             from sim.coco_standins import build_model_with_objects
             self.model, self.data = build_model_with_objects(verbose=True, cutaway=cutaway)
@@ -138,6 +151,9 @@ class NudgeSimulator:
 
         self.locomotion = Go2Locomotion(self.model, self.data, self.nav_map)
         self.sensors = SimSensors(self.model, self.data, enable_camera=enable_camera)
+        # Night (sim/night.py): dims the scene by the sim clock; the head camera keeps daylight (YOLO).
+        self.night = NightScene(self.model, self.sensors)
+        self.dock = DockStatus(self.model)  # sim/charging_dock.py: blue standby / green charging
 
         # The owner behaves like a person: wanders, reacts to nudges, taps the handle, may let go.
         from sim.nav_map import GridPlanner
@@ -155,6 +171,7 @@ class NudgeSimulator:
             name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, f"beacon_{name}")
             for name in SOUND_SOURCES
         }
+        self.tv_beacon_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "beacon_tv")
 
         # Latest command from nudge-brain
         self.cmd_vx: float = 0.0
@@ -191,6 +208,11 @@ class NudgeSimulator:
         # "move owner to room", and 3D-view camera requests. Connecting before it exists is fine.
         self.sub_sock.connect(gui_endpoint)
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "gui")
+        # The owner talking to Nudge (`user_command` from the GUI box / tests on :5557 and the voice mic
+        # on :5558): the sim plays the owner's voice from where they stand, so the robot can hear WHERE
+        # they are. Only the sound reaches the brain through the ears; the text goes to the brain directly.
+        self.sub_sock.connect(voice_endpoint)
+        self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "user_command")
 
         # Publication timers
         self.last_state_pub: float = 0.0
@@ -236,6 +258,11 @@ class NudgeSimulator:
         self.nudge_fx = NudgeFX(self.model)
         self.nudge_says: str = ""
         self.mission_sound: str | None = None
+        # Owner profile (contract C10, sim/owner_profile.py): which of those outputs are on.
+        self.profile: str = normalize(profile) or DEFAULT_PROFILE
+        self.outputs = channels(self.profile)
+        self._outputs_emergency = False
+        print(f"[sim] PROFILE: {describe(self.profile, self.outputs)}")
 
     def _start_sound(self, name: str) -> None:
         if not self.active_sounds.get(name):
@@ -312,6 +339,7 @@ class NudgeSimulator:
             return  # stale status from before an [R] reset
         mission = status.get("mission") or {}
         self.mission_sound = mission.get("sound")
+        self._brain_mission_status = mission.get("status")  # owner profile: may arrive a tick before `cmd`
         say = str(mission.get("say") or "").strip() if mission.get("status") == "active" else ""
         if not say:
             # Proposed add-only field (overnight C1/C3): a reply to the owner outside a mission, e.g. a
@@ -321,7 +349,42 @@ class NudgeSimulator:
             self.nudge_says = say
             if say:
                 print(f"[sim] NUDGE SAYS: {say}")
-            self.voice.say_if_changed(say, urgent=self.mission_sound == "smoke_alarm")
+            self.refresh_outputs()  # owner profile (C10): may this message be spoken?
+            if self.outputs["speech"] or not say:
+                self.voice.say_if_changed(say, urgent=self.mission_sound == "smoke_alarm")
+            else:
+                print(f"[sim] SPEECH OFF (profile {self.profile}): {say}")
+
+    def set_profile(self, mode: str) -> None:
+        """Owner profile (contract C10): deaf | blind | deafblind -> enabled output channels."""
+        p = normalize(mode)
+        if p is None:
+            print(f"[sim] GUI: unknown profile {mode!r} ({'|'.join(PROFILE_NAMES)})")
+            return
+        speech_was_on = self.outputs.get("speech")
+        self.profile = p
+        self.refresh_outputs()
+        print(f"[sim] PROFILE: {describe(p, self.outputs, self._outputs_emergency)}")
+        # Switched to a speech profile mid-message (e.g. deaf -> blind): say the current message once.
+        # Only here, never when the emergency override turns speech on (that would say the stale
+        # previous message before the fire text arrives).
+        if self.outputs["speech"] and not speech_was_on and self.nudge_says:
+            self.voice.say_if_changed(self.nudge_says, urgent=self._outputs_emergency)
+
+    def refresh_outputs(self) -> None:
+        """Recompute the enabled output channels (profile + emergency override); log changes."""
+        active = "active" in (self.mission_status, getattr(self, "_brain_mission_status", None))
+        emergency = is_emergency(self.mission_sound if active else None, self.cmd_alert_mode)
+        new = channels(self.profile, emergency)
+        self._outputs_emergency = emergency
+        if new != self.outputs:
+            self.outputs = new
+            print(f"[sim] OUTPUTS: {describe(self.profile, new, emergency)}")
+
+    @property
+    def screen_text(self) -> str:
+        """The floating 'Nudge says' label above the robot is the robot's screen: hidden if the profile says so."""
+        return self.nudge_says if self.outputs["screen"] else ""
 
     def check_avoid_areas(self) -> None:
         """Print once on entering / leaving an avoid area (robot centre within the footprint margin)."""
@@ -391,6 +454,9 @@ class NudgeSimulator:
         elif k in ("N", "6"):
             p = self.sensors.noise.cycle()
             print(f"[sim] HOTKEY [N]: Background noise -> {p['name']} ({p['label']})")
+        elif k == "Y":
+            # TV doorbell: toggles (a second [Y] while it plays turns the TV sound off)
+            self.tv_play(None if self.tv_playing else "doorbell", source="HOTKEY [Y]")
         elif k == "V":
             self.view_idx = (self.view_idx + 1) % len(VIEW_NAMES)
             self.view_changed = True
@@ -414,6 +480,8 @@ class NudgeSimulator:
             self.handle_hotkey(str(payload.get("key", "")))
         elif action == "owner_room":
             self.set_owner_room(str(payload.get("room", "")))
+        elif action == "profile":  # contract C10: {"action": "profile", "mode": "deaf"|"blind"|"deafblind"}
+            self.set_profile(str(payload.get("mode", "")))
         elif action == "sound":  # any registry sound by name (GUI buttons for sounds without a hotkey)
             name = str(payload.get("name", ""))
             if name in SOUND_SOURCES:
@@ -435,7 +503,7 @@ class NudgeSimulator:
                                           yaw=float(yaw) if isinstance(yaw, (int, float)) else None):
                 print(f"[sim] GUI: owner is now {st.upper()}")
             else:
-                print(f"[sim] GUI: unknown owner state {st!r} (awake|asleep|idle|unresponsive|fallen)")
+                print(f"[sim] GUI: unknown owner state {st!r} ({'|'.join(OWNER_STATES)})")
         elif action == "chair":  # #19 repro: {"pos": [x, y]} / {"x": .., "y": ..} / {"ahead": m} (in front of the robot)
             try:
                 if "ahead" in payload:  # e.g. dropped mid-guide right in front of the robot
@@ -457,6 +525,9 @@ class NudgeSimulator:
             self.locomotion.set_owner_pos(x, y, float(payload.get("yaw", 0.0)))
             self.owner.on_teleport(float(self.data.time))
             print(f"[sim] GUI: Moved Owner to ({x:.2f}, {y:.2f}) in {get_room_at(x, y)}")
+        elif action == "tv":  # {"action": "tv", "play": "doorbell"|"knock"|"off"} (AGENTS.md 6.2, C9)
+            play = str(payload.get("play", "off"))
+            self.tv_play(None if play in ("off", "", "none") else play, source="GUI")
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()
@@ -493,6 +564,7 @@ class NudgeSimulator:
         cam.azimuth = (math.degrees(ryaw) + float(req.get("azimuth", 0.0))) if mode == "chase" \
             else float(req.get("azimuth", 90.0))
         cam.elevation = float(req.get("elevation", -62.0))
+        self.night.upload_to_renderer(r)  # night sky (sim/night.py), only when it changed
         r.update_scene(self.data, camera=cam, scene_option=self.view_opt)
         self.nudge_fx.draw(r.scene, self.data)
         rgb = r.render()
@@ -504,9 +576,52 @@ class NudgeSimulator:
                     "mission_text": self.mission_text}
             self.pub_sock.send_multipart([b"view", json.dumps(meta).encode("utf-8"), jpg.tobytes()])
 
+    def owner_speaks(self, payload: dict) -> None:
+        """The owner says something to Nudge: their voice plays from the owner's position for a while
+        (proportional to the sentence length). `"spoken": false` = typed silently, no sound."""
+        text = str(payload.get("text", "")).strip()
+        if not text or payload.get("spoken") is False:
+            return
+        words = len(text.split())
+        dur = min(float(OWNER_VOICE["max_s"]),
+                  max(float(OWNER_VOICE["min_s"]), words / float(OWNER_VOICE["words_per_s"])))
+        self.voice_until = float(self.data.time) + dur
+        ox, oy = self.locomotion.get_owner_pos()
+        print(f"[sim] OWNER SPEAKS for {dur:.1f}s from {get_room_at(ox, oy)} ({ox:.1f}, {oy:.1f}): {text!r}")
+
+    def tv_play(self, sound: Optional[str], source: str = "GUI") -> None:
+        """The living-room TV plays `sound` (a registry clip, e.g. a doorbell in a programme) from
+        TV_SOURCE for TV_SOURCE["duration_s"]; None = TV sound off. Not an active sound: nothing to answer."""
+        if sound is not None and (sound not in TV_SOURCE["plays"] or sound not in self.sensors.audio_clips):
+            print(f"[sim] {source}: the TV can't play {sound!r} (plays {', '.join(TV_SOURCE['plays'])})")
+            return
+        if sound is None:
+            self.tv_playing, self.tv_until = None, -1.0
+            print(f"[sim] {source}: TV sound off")
+            return
+        self.tv_playing = sound
+        self.tv_until = float(self.data.time) + float(TV_SOURCE["duration_s"])
+        self.tv_cursor = 0
+        print(f"[sim] {source}: TV in the {TV_SOURCE['room']} plays a {sound} for "
+              f"{float(TV_SOURCE['duration_s']):.0f}s from {TV_SOURCE['pos'][:2]} (not the real door)")
+
+    def tv_window(self) -> list:
+        """`extra_sources` for this audio window: the TV's sound while it plays."""
+        if self.tv_playing is None:
+            return []
+        if float(self.data.time) >= self.tv_until:
+            print(f"[sim] TV {self.tv_playing} finished")
+            self.tv_playing, self.tv_until = None, -1.0
+            return []
+        mono = self.sensors.clip_window(self.tv_playing, self.tv_cursor)
+        self.tv_cursor += len(mono)
+        return [(mono, tuple(TV_SOURCE["pos"][:2]), float(TV_SOURCE["level"]))]
+
     def reset_scene(self) -> None:
         """Put robot, owner, chair and sounds back to the demo start state; start a new episode."""
         self.episode += 1
+        self.voice_until = -1.0
+        self.tv_playing, self.tv_until = None, -1.0
         for s in list(self.active_sounds):
             self._stop_sound(s)
         self.owner_room_idx = 0
@@ -542,13 +657,13 @@ class NudgeSimulator:
             return (f"{now}  MISSION ACTIVE", self.mission_text)
         return (f"{now}  READY (episode {self.episode})",
                 "B/K/M = sound   O = move owner   W = owner wander   C/E = chair   X = silence   R = reset"
-                "   N = noise   V = view")
+                "   N = noise   V = view   Y = TV doorbell")
 
     def glfw_key_callback(self, keycode: int) -> None:
         """Callback invoked by `mujoco.viewer.launch_passive` on key press (viewer thread)."""
         if 32 <= keycode <= 126:
             ch = chr(keycode).upper()
-            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E", "N", "6", "V", "J", "7", "T", "8"):
+            if ch in ("B", "1", "K", "2", "M", "3", "O", "4", "C", "5", "X", "R", "W", "E", "N", "6", "V", "J", "7", "T", "8", "Y"):
                 self.pending_keys.append(ch)  # applied in step_once() on the main thread
 
     def apply_view(self, cam) -> None:
@@ -594,6 +709,11 @@ class NudgeSimulator:
                 r, g, b, a = spec["rgba_idle"]
                 self.model.geom_rgba[gid] = [r, g, b, a]
                 self.model.geom_size[gid][0] = 0.12
+        if self.tv_beacon_id >= 0:  # the TV: purple pulse while it plays a doorbell / knock
+            on = self.tv_playing is not None
+            pulse = 0.65 + 0.35 * np.sin(t * 14.0) if on else 0.0
+            self.model.geom_rgba[self.tv_beacon_id] = [0.75, 0.35, 1.0, 0.95 * pulse] if on else [0.45, 0.3, 0.6, 0.3]
+            self.model.geom_size[self.tv_beacon_id][0] = 0.14 + 0.04 * pulse if on else 0.10
 
     def poll_zmq_commands(self) -> None:
         """Read non-blocking velocity/guiding commands (`cmd`) or test events (`sim_event`)."""
@@ -643,6 +763,8 @@ class NudgeSimulator:
                 self.handle_gui(payload)
             elif topic == "brain":
                 self.handle_brain_status(payload)
+            elif topic == "user_command":
+                self.owner_speaks(payload)
 
         # Safety timeout if brain disconnects for > 0.6s
         if time.monotonic() - self.last_cmd_time > 0.6:
@@ -680,16 +802,21 @@ class NudgeSimulator:
                 "active_sounds": [s for s, on in self.active_sounds.items() if on],
                 # Touch sensor on the guide handle: the owner taps it to acknowledge an alert.
                 "handle_tap": self.owner.handle_tap,
-                "owner_state_gt": self.owner.owner_state,  # awake|asleep|idle - judge only, like owner_pos_gt
+                "owner_state_gt": self.owner.owner_state,  # OWNER_STATES (awake|asleep|idle|unresponsive) - judge only, like owner_pos_gt
                 "owner_activity_gt": self.owner.status(),  # idle|walking|guided|alerted - judge only
                 # Ground truth for avoid-area tests / GUI shading (rules themselves live in the brain).
                 "in_avoid_area": self.in_avoid_area,
                 "avoid_steps": self.avoid_steps,
                 "avoid_areas": {k: list(v) for k, v in AVOID_AREAS.items()},
                 "nudge_says": self.nudge_says,  # what the robot screen shows / speaks
+                "profile": self.profile,  # C10 owner profile: deaf | blind | deafblind
+                "outputs": self.outputs,  # enabled output channels (profile + emergency override)
                 "sim_clock": self.clock.hhmm(float(self.data.time)),  # contract C2
                 "sim_day": self.clock.day(float(self.data.time)),
                 "objects_gt": self.objects_gt(),  # S7: COCO objects, judge only ([] without --coco-objects)
+                "night": round(self.night.shown, 2),  # 0 day .. 1 night (viewer lighting; head camera unchanged)
+                "on_dock": self.dock.charging,  # robot parked on the charging dock (robot_dock)
+                "tv_playing_gt": self.tv_playing,  # sound the TV is playing (or None) - judge only
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -720,9 +847,12 @@ class NudgeSimulator:
         # 3. `audio` @ 2 Hz (every 0.50s)
         if now - self.last_audio_pub >= 0.50:
             self.last_audio_pub = now
+            talking = float(self.data.time) < self.voice_until
             pcm_bytes, audio_meta = self.sensors.synthesize_stereo_audio(
-                pose, self.active_sounds
+                pose, self.active_sounds, voice_pos=tuple(owner_pos[:2]) if talking else None,
+                extra_sources=self.tv_window(),
             )
+            audio_meta["tv_gt"] = self.tv_playing  # judge/debug only, like active_gt
             audio_meta["t"] = round(float(self.data.time), 3)
             audio_meta["robot_pose"] = [round(rx, 4), round(ry, 4), round(ryaw, 4)]
             self.pub_sock.send_multipart(
@@ -760,10 +890,17 @@ class NudgeSimulator:
         )
         self.check_scenario_end()
         self.check_avoid_areas()
+        # Owner profile (C10): a disabled light bar shows its idle look, a disabled screen stays dark.
+        self.refresh_outputs()
+        if not self.outputs["light"]:
+            self.locomotion.lightbar.update(self.model, float(self.data.time), "none")
         # Screen tier: the brain's mission sound if it sent one, else inferred from the alert mode.
+        screen_on = self.outputs["screen"]
         self.screen.update(self.model, float(self.data.time),
-                           self.mission_sound or ALERT_MODE_SOUND.get(self.cmd_alert_mode),
-                           self.mission_status)
+                           (self.mission_sound or ALERT_MODE_SOUND.get(self.cmd_alert_mode)) if screen_on else None,
+                           self.mission_status if screen_on else "idle")
+        self.night.update(self.clock, float(self.data.time))  # sim/night.py
+        self.dock.update(self.model, float(self.data.time), self.locomotion.get_pose()[:2])
         self.publish_telemetry(float(self.data.time))
         # After the sensors: the bump offset is for the viewer / recording only (head camera and
         # LiDAR above always see the true kinematic pose; locomotion rewrites it next step).
@@ -822,6 +959,8 @@ def main() -> None:
                         help="No MuJoCo window, but keep the real head camera and 3D-view rendering "
                              "(use with the control GUI: `pixi run gui`)")
     parser.add_argument("--gui-sub", default="tcp://127.0.0.1:5557", help="Control GUI command address")
+    parser.add_argument("--voice-sub", default="tcp://127.0.0.1:5558",
+                        help="Voice input address (owner's user_command -> their voice plays from the owner)")
     parser.add_argument("--noise", choices=NOISE_NAMES, default="quiet",
                         help="Background noise profile at start (cycle live with [N])")
     parser.add_argument("--coco-objects", action="store_true",
@@ -830,6 +969,9 @@ def main() -> None:
                         help="Sim clock start time HH:MM (state.sim_clock; [R] resets to it; GUI action 'clock' sets it)")
     parser.add_argument("--view", choices=VIEW_NAMES, default="top",
                         help="Viewer camera at start: top, follow (chase robot), dog (head camera); cycle with [V]")
+    parser.add_argument("--profile", choices=PROFILE_NAMES, default=DEFAULT_PROFILE,
+                        help="Owner profile (contract C10, sim/owner_profile.py): which robot outputs are on; "
+                             "the GUI action 'profile' changes it live")
     args = parser.parse_args()
 
     print("[sim] Building nerv-world house + Unitree Go2 + Owner + Chair + Sound Beacons...")
@@ -843,6 +985,8 @@ def main() -> None:
         owner_seed=args.owner_seed,
         clock=args.clock,
         coco_objects=args.coco_objects,
+        profile=args.profile,
+        voice_endpoint=args.voice_sub,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
@@ -902,8 +1046,9 @@ def main() -> None:
                             viewer.set_texts(texts)
                             shown_overlay = overlay
                         with viewer.lock():  # floating "Nudge says" label above the robot
-                            sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.nudge_says)
+                            sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.screen_text)
                             sim.nudge_fx.draw(viewer.user_scn, sim.data)  # visible nudge (after the label reset)
+                        sim.night.upload_to_viewer(viewer)  # night sky; outside the lock (sim/night.py)
                         viewer.sync()
                         last_sync = now_wall
                     if args.duration > 0.0 and (now_wall - start_wall) >= args.duration:

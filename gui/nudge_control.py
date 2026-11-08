@@ -92,7 +92,7 @@ SOUND_KEYS: Dict[str, str] = {"doorbell": "B", "knock": "K", "smoke_alarm": "M",
 # Scene controls: (button label, sim hotkey). Add a line here when the sim gets a new hotkey.
 SCENE_CONTROLS: List[tuple] = [
     ("Next room", "O"), ("Chair in door", "C"), ("Block back exit", "E"),
-    ("Owner wander", "W"), ("Noise", "N"),
+    ("Owner wander", "W"), ("Noise", "N"), ("TV doorbell", "Y"),
 ]
 FIXED_KEYS = ("X", "R")  # Silence, Reset
 
@@ -106,6 +106,10 @@ SOUND_COL = {name: _sound_rgb(name) + (255,) for name in SOUND_SOURCES}
 # Button order: someone-wants-you (tier 3) first, emergencies last; registry order within a tier.
 SOUND_ORDER = sorted(SOUND_SOURCES, key=lambda n: (-int(SOUND_SOURCES[n].get("tier", 3)), list(SOUND_SOURCES).index(n)))
 BUTTONS_PER_ROW = 7  # 5 sounds + Silence + Reset fit one row; more sounds wrap onto the next
+# Owner profile selector (contract C10; the table of which outputs each enables is sim/owner_profile.py)
+PROFILE_LABELS = {"deaf": "Deaf", "blind": "Blind", "deafblind": "Deafblind"}
+PROFILE_CHANNEL_LABELS = {"screen": "screen", "light": "light bar", "speech": "speech", "haptic": "haptic",
+                          "guiding": "guiding"}
 SOURCE_COL = {"llm": PURPLE, "rules": (140, 180, 230, 255), "safety": RED, "watchdog": AMBER,
               "only option": (150, 150, 155, 255)}
 SOURCE_LABEL = {"llm": "GEMMA", "rules": "rules", "safety": "SAFETY", "watchdog": "watchdog",
@@ -462,6 +466,12 @@ class NudgeControl:
                 dpg.add_text("--:--", tag="clock_txt", color=DIM)
                 dpg.add_button(label="Jump to 21:59", callback=lambda: self.send({"action": "clock", "time": "21:59"}))
                 dpg.add_button(label="+1 h", callback=self.clock_plus_hour)
+                # Owner profile (contract C10, sim/owner_profile.py): which robot outputs are on
+                dpg.add_text("   Owner:")
+                dpg.add_radio_button(list(PROFILE_LABELS.values()), tag="profile_radio", horizontal=True,
+                                     default_value=PROFILE_LABELS["deafblind"],
+                                     callback=lambda s, a: self.set_profile(a))
+                dpg.add_text("(sim: ?)", tag="profile_txt", color=DIM)
             dpg.add_text("", tag="scene_txt", color=DIM)
 
             # Tell Nudge: commands, sound preferences and place rules (AGENTS.md 9.3)
@@ -487,6 +497,20 @@ class NudgeControl:
             with dpg.group(horizontal=True):
                 dpg.add_text("Rules:", color=DIM)
                 dpg.add_text("none", tag="rules_txt", wrap=LEFT_W - 80)
+            # Nudge asks the owner something (contract C5 `ask`, e.g. "Shall I call 999?"): answer here
+            with dpg.group(horizontal=True, tag="ask_row", show=False):
+                t = dpg.add_text("NUDGE ASKS:", color=AMBER)
+                if "mid" in self.fonts:
+                    dpg.bind_item_font(t, self.fonts["mid"])
+                dpg.add_text("", tag="ask_txt", color=TEXT)
+                b = dpg.add_button(label="Yes", width=70, callback=lambda: self.answer("yes"))
+                dpg.bind_item_theme(b, self._button_theme((40, 130, 70)))
+                b = dpg.add_button(label="No", width=70, callback=lambda: self.answer("no"))
+                dpg.bind_item_theme(b, self._button_theme((150, 50, 50)))
+                dpg.add_text("", tag="ask_left_txt", color=DIM)
+            with dpg.group(horizontal=True):  # C9: "Is the sound real?" (nudge-brain/sound_check.py)
+                dpg.add_text("Sound check:", color=DIM)
+                dpg.add_text("-", tag="sound_check_txt", color=DIM, wrap=LEFT_W - 110)
 
             # Tabs: the agent's reasoning first, then one tab per plugin panel (gui/panels/*.py)
             with dpg.tab_bar(tag="main_tabs"):
@@ -568,6 +592,28 @@ class NudgeControl:
             return  # sim sends no clock yet
         self.send({"action": "clock", "time": f"{(h + 1) % 24:02d}:{m:02d}"})
 
+    def set_profile(self, label_or_mode: str) -> None:
+        """Owner profile (contract C10): Deaf / Blind / Deafblind -> gui action to the sim."""
+        mode = next((k for k, v in PROFILE_LABELS.items() if v == label_or_mode), str(label_or_mode).lower())
+        if mode in PROFILE_LABELS:
+            self.send({"action": "profile", "mode": mode})
+            print(f"[gui] owner profile -> {mode}")
+
+    def _update_profile(self, st: dict) -> None:
+        """Show the sim's state.profile + the output channels it has on (absent in older sims)."""
+        prof = st.get("profile")
+        if not prof:
+            dpg.set_value("profile_txt", "(sim: no profile)" if st else "(sim: ?)")
+            dpg.configure_item("profile_txt", color=DIM)
+            return
+        if prof != getattr(self, "_shown_profile", None) and prof in PROFILE_LABELS:
+            self._shown_profile = prof  # follow the sim (e.g. started with --profile, or another GUI)
+            dpg.set_value("profile_radio", PROFILE_LABELS[prof])
+        outs = st.get("outputs") or {}
+        on = [PROFILE_CHANNEL_LABELS.get(c, c) for c, v in outs.items() if v]
+        dpg.set_value("profile_txt", f"sim: {prof} | on: {', '.join(on)}")
+        dpg.configure_item("profile_txt", color=TEXT)
+
     # ------------------------------------------------------------------ per-frame updates
     def update(self) -> None:
         now = time.monotonic()
@@ -610,6 +656,8 @@ class NudgeControl:
                 dpg.draw_text((20, 44), f'Nudge says: "{ns["text"]}"', color=(150, 230, 255, 255), size=17,
                               parent="view_overlay")
 
+        self._update_ask_escalation(br if brain_ok else {})
+
         # Sim clock (absent until the sim implements C2)
         clk = st.get("sim_clock") if sim_ok else None
         if clk:
@@ -620,6 +668,7 @@ class NudgeControl:
         else:
             dpg.set_value("clock_txt", "--:--  (sim sends no clock)")
             dpg.configure_item("clock_txt", color=DIM)
+        self._update_profile(st if sim_ok else {})
 
         # Scene line
         if sim_ok:
@@ -630,6 +679,7 @@ class NudgeControl:
             dpg.set_value("scene_txt", "   sim not connected")
 
         self._update_commands(br if brain_ok else {}, brain_ok)
+        self._update_sound_check(br if brain_ok else {})
         self._update_camera_overlay(br if brain_ok else {})
         self._update_status(br if brain_ok else {}, brain_ok, tnow)
         self._update_map(st if sim_ok else {}, br if brain_ok else {}, tnow)
@@ -662,6 +712,47 @@ class NudgeControl:
         label = {"avoid_area": "avoid", "sound_pref": "sound", "command": "do"}.get(kind, kind)
         quote = f' - "{r["text"]}"' if r.get("text") else ""
         return f"{label}: {what}{until}{src}{quote}"
+
+    # ------------------------------------------------------------------ ask + escalation (C5, C8)
+    def answer(self, choice: str) -> None:
+        """Yes / No button: answer the brain's open `ask` (C5) with a `user_answer` on :5557."""
+        ask = self.brain.get("ask") or {}
+        if not ask.get("id"):
+            return
+        self.pub.send_multipart([b"user_answer", json.dumps(
+            {"id": ask["id"], "text": choice, "choice": choice, "confidence": 1.0}).encode("utf-8")])
+        self.answered_ask = ask["id"]
+
+    def _update_ask_escalation(self, br: dict) -> None:
+        ask = br.get("ask") or {}
+        open_ask = bool(ask.get("id")) and ask.get("id") != getattr(self, "answered_ask", None)
+        dpg.configure_item("ask_row", show=open_ask)
+        if open_ask:
+            dpg.set_value("ask_txt", str(ask.get("question", "")))
+            left = ask.get("timeout_s")
+            if getattr(self, "ask_seen", (None, 0.0))[0] != ask["id"]:
+                self.ask_seen = (ask["id"], time.monotonic())  # status has no start time: count from first sight
+            if left is not None:
+                left = max(0.0, float(left) - (time.monotonic() - self.ask_seen[1]))
+            dpg.set_value("ask_left_txt", f"({left:.0f} s to answer)" if left is not None else "")
+            text = f'Nudge asks: "{ask.get("question", "")}"  (Yes / No)'
+            self._overlay_box(text, AMBER, VIEW_H - 92)
+        esc = br.get("escalation") or {}
+        if esc:
+            who = "999 CALLED" if esc.get("contact") == "999" else "EMERGENCY CONTACT ALERTED"
+            if not esc.get("called", True):
+                who = ("999 NOT CALLED (owner said no)" if esc.get("contact") == "999"
+                       else "EMERGENCY CONTACT: waiting")
+            why = {"yes": "owner said yes", "no": "owner said no", "timeout": "no answer"}.get(
+                str(esc.get("answer")), "owner did not respond" if esc.get("reason") == "no_response" else "")
+            self._overlay_box(f"{who}" + (f"  ({why})" if why else ""),
+                              RED if esc.get("called", True) else AMBER, VIEW_H - 52, size=22)
+
+    def _overlay_box(self, text: str, col, y: float, size: int = 18) -> None:
+        w = min(VIEW_W - 8, 40 + int(size * 0.55) * len(text))
+        dpg.draw_rectangle((8, y), (w, y + size + 16), fill=(0, 0, 0, 190), color=col, thickness=2, rounding=6,
+                           parent="view_overlay")
+        dpg.draw_text((20, y + 7), text, color=col, size=size, parent="view_overlay")
 
     # ------------------------------------------------------------------ mic button (#9)
     def _voice_running(self) -> bool:
@@ -724,6 +815,28 @@ class NudgeControl:
             dpg.set_value("heard_cmd_txt", "nothing yet" if brain_ok else "brain not connected")
         rules = (br.get("rules") or []) if brain_ok else []
         dpg.set_value("rules_txt", "   |   ".join(self._rule_text(r) for r in rules) if rules else "none")
+
+    SOUND_CHECK_SHOW_S = 20.0  # a verdict stays highlighted this long (brain sim time), then fades
+
+    def _update_sound_check(self, br: dict) -> None:
+        """C9 `sound_check`: the last "Is the sound real?" verdict (TV vs the real front door)."""
+        sc = br.get("sound_check") or {}
+        if not sc.get("verdict"):
+            dpg.set_value("sound_check_txt", "-")
+            dpg.configure_item("sound_check_txt", color=DIM)
+            return
+        sound = str(sc.get("sound", "sound")).replace("_", " ")
+        age = float(br.get("t", 0.0) or 0.0) - float(sc.get("t", 0.0) or 0.0)
+        if sc["verdict"] == "tv":
+            text, col = f"{sound} came from the TV - ignored", AMBER
+        else:
+            text, col = f"{sound} is real", GREEN
+        if age <= self.SOUND_CHECK_SHOW_S:
+            dpg.set_value("sound_check_txt", f"{text}   ({sc.get('reason', '')})")
+            dpg.configure_item("sound_check_txt", color=col)
+        else:
+            dpg.set_value("sound_check_txt", f"last: {text} ({age:.0f}s ago)")
+            dpg.configure_item("sound_check_txt", color=DIM)
 
     @staticmethod
     def _rule_rect(r: dict):
@@ -838,6 +951,15 @@ class NudgeControl:
         if gt:
             p = w2p(*gt)
             dpg.draw_circle(p, 6, color=(220, 220, 220, 200), thickness=1.5, parent=L)
+        # #10 (C6 `owner_voice`): where the brain HEARD the owner's voice come from (fades after 30 s)
+        voice = br.get("owner_voice") or {}
+        if voice.get("xy") and float(br.get("t", 0.0) or 0.0) - float(voice.get("t", 0.0) or 0.0) <= 30.0:
+            p = w2p(*voice["xy"])
+            vcol = (255, 170, 230, 230)
+            for rr in (5, 9, 13):
+                dpg.draw_circle(p, rr, color=vcol, thickness=1.2, parent=L)
+            dpg.draw_text((p[0] + 14, p[1] - 6), f"heard owner: {voice.get('room', '?')} "
+                          f"(P {float(voice.get('p', 0.0)):.2f})", color=vcol, size=11, parent=L)
         owner = br.get("owner") or {}
         if owner.get("pos"):
             p = w2p(*owner["pos"])
@@ -970,9 +1092,13 @@ class NudgeControl:
                         self.send({"action": "clock", "time": what[6:]})
                     elif what.lower().startswith("say="):
                         self.send_command(what[4:])
+                    elif what.lower().startswith("answer="):
+                        self.answer(what[7:].strip().lower())
                     elif what.lower() in ("mic", "mic=on", "mic=off"):
                         if (what.lower() != "mic=off") != self._voice_running():
                             self.toggle_mic()
+                    elif what.lower().startswith("profile="):  # C10, e.g. profile=blind@3
+                        self.set_profile(what[8:].strip().lower())
                     else:
                         self.key(what.upper())
                 if shots and elapsed >= shots[0][1]:
@@ -997,8 +1123,8 @@ def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Nudge Control: 3D view, events and agent reasoning")
     ap.add_argument("--auto", default="",
-                    help="Scripted actions: key, cam=<preset>, clock=HH:MM, mic=on|off or say=<sentence>, each @ seconds; "
-                         "separate with ';' "
+                    help="Scripted actions: key, cam=<preset>, clock=HH:MM, mic=on|off, profile=deaf|blind|deafblind "
+                         "or say=<sentence>, each @ seconds; separate with ';' "
                          "(or ',' when no sentence has a comma), e.g. 'say=I'm expecting a parcel@2;B@5;cam=Chase cam@6'")
     ap.add_argument("--screenshot", default="",
                     help="Save PNG(s), quit after the last, e.g. 'shot.png@30' or 'a.png@20;b.png@45'")

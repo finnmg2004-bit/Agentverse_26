@@ -2,7 +2,9 @@
 
 Subscribes to the map process on its own (no changes to the core GUI). Shows the occupancy grid
 (white = free, black = wall, grey = unknown), the robot, remembered objects and the room names.
-Without `pixi run python nudge-brain/robot_map.py --objects` running, the tab says so.
+Without `pixi run python nudge-brain/robot_map.py --objects` running, it shows the saved explored map
+(assets/maps/robot_map.npz, from `scripts/test_mapping.py --mode explore`) if there is one.
+Changes (obstacles that appeared since the saved map) are drawn as red rings.
 """
 import json
 import threading
@@ -71,10 +73,42 @@ def _w2p(hdr, x, y):
     return ((x - ox) / res) * VIEW / w, VIEW - ((y - oy) / res) * VIEW / h
 
 
+_file_tried = False
+
+
+def _load_saved():
+    """No live :5559 map yet: show the saved explored map (if any) once."""
+    global _file_tried
+    _file_tried = True
+    try:
+        import sys
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2]
+        f = root / "assets" / "maps" / "robot_map.npz"
+        if not f.exists():
+            f = root / "maps" / "robot_map.npz"     # the explored map committed to git
+        if not f.exists():
+            return
+        if str(root / "nudge-brain") not in sys.path:
+            sys.path.insert(0, str(root / "nudge-brain"))
+        from robot_map import OccupancyGrid
+        g, objs, rooms, meta = OccupancyGrid.load(f, as_base=False)
+        hdr = dict(g.header((0.0, 0.0, 0.0)), objects=objs, rooms=rooms, changes=[], pose=None,
+                   saved=f"{f.name} ({meta.get('made', '')})")
+        with _lock:
+            if _latest["hdr"] is None:
+                _latest.update(hdr=hdr, img=g.to_image(), rx=time.time())
+    except Exception as e:
+        print("[robot_map panel] saved map:", e)
+
+
 def update(ctx):
     global _tex_shape, _last_rx
     with _lock:
         hdr, img, rx = _latest["hdr"], _latest["img"], _latest["rx"]
+    if (hdr is None or img is None) and not _file_tried:
+        _load_saved()
+        return
     if hdr is None or img is None:
         return
     if rx == _last_rx:
@@ -102,6 +136,10 @@ def update(ctx):
         dpg.draw_circle((px, py), 5, color=(255, 170, 0, 255), fill=(255, 170, 0, 200), parent="robotmap_draw")
         dpg.draw_text((px + 7, py - 6), str(o.get("cls", "?")), color=(255, 200, 80, 255), size=14,
                       parent="robotmap_draw")
+    for c in hdr.get("changes") or []:
+        px, py = _w2p(hdr, c["x"], c["y"])
+        dpg.draw_circle((px, py), 9, color=(255, 60, 60, 255), thickness=2, parent="robotmap_draw")
+        dpg.draw_text((px + 10, py + 2), "new", color=(255, 90, 90, 255), size=13, parent="robotmap_draw")
     pose = hdr.get("pose")
     if pose:
         px, py = _w2p(hdr, pose[0], pose[1])
@@ -110,12 +148,16 @@ def update(ctx):
         dpg.draw_line((px, py), (px + 12 * math.cos(pose[2]), py - 12 * math.sin(pose[2])),
                       color=(255, 255, 255, 255), thickness=2, parent="robotmap_draw")
 
+    src = f"saved map {hdr['saved']}" if hdr.get("saved") else f"live, {(time.time() - rx):.0f}s old"
     dpg.set_value("robotmap_status",
-                  f"Robot's own map: {hdr.get('known_frac', 0) * 100:.1f}% explored, {len(objs)} objects, "
-                  f"{(time.time() - rx):.0f}s old")
+                  f"Robot's own map: {hdr.get('known_frac', 0) * 100:.1f}% of the grid known, {len(objs)} objects, "
+                  f"{len(hdr.get('changes') or [])} changes ({src})")
     lines = ["ROOMS (named from objects):", json.dumps(hdr.get("rooms", []), indent=1, default=str),
              "", "OBJECTS:"]
     for o in objs:
         lines.append(f"  {o.get('id', '')} {o.get('cls', '?')} ({o['x']:.1f}, {o['y']:.1f}) "
                      f"room={o.get('room')}")
+    lines += ["", "CHANGES (not in the saved map):"]
+    for c in hdr.get("changes") or []:
+        lines.append(f"  new obstacle at ({c['x']:.1f}, {c['y']:.1f}), {c['cells']} cells")
     dpg.set_value("robotmap_txt", "\n".join(lines)[:8000])

@@ -33,6 +33,7 @@ from typing import List, Optional, Tuple
 import mujoco
 import numpy as np
 
+from sim import owner_pose
 from sim.locomotion import quat_to_yaw, yaw_to_quat
 
 PULSE_MODES = ("1_pulse", "2_pulse", "continuous")
@@ -166,6 +167,9 @@ class NudgeFX:
                 pitch += -math.radians(8.0) * math.sin(math.pi * s)
             q = data.mocap_quat[mid]
             self.owner_yaw = quat_to_yaw(q)
+            if owner_pose.is_lying(loco):  # #8 (Ricktho): lying in bed (NUDGE_OWNER_IN_BED=1) keeps its own pose
+                pitch, hop = 0.0, 0.0
+                self.owner_dirty = False
             if pitch != 0.0 or hop != 0.0:
                 data.mocap_pos[mid][2] = hop
                 data.mocap_quat[mid] = _qmul(yaw_to_quat(self.owner_yaw), _pitch_quat(pitch))
