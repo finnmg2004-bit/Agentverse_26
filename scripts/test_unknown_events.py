@@ -130,6 +130,25 @@ def main() -> int:
             check(fired is None or ue.RULES.get(fired) == "log_only",
                   f"{name} x{gain}: no unknown event (got {fired!r})")
 
+    print("2b. no unknown events from the background-noise profiles (60 s each)")
+    from sim.sensors import NOISE_NAMES, AmbientNoise
+    for prof in NOISE_NAMES:
+        noise = AmbientNoise(np.random.default_rng(1))
+        noise.set(prof)
+        brain = FakeBrain()
+        det = ue.UnknownEvents(brain.agent, loc)
+        fired = []
+        for i in range(120):
+            l, r = noise.generate(8000)
+            res = hearing.process_audio(np.stack([l, r], axis=-1), brain.world.robot_pose)
+            brain.world.t_sim = i * 0.5
+            det.on_audio(res, brain)
+            if det.pending:
+                fired.append(det.pending["cat"])
+                det.pending = None
+        bad = [c for c in fired if ue.RULES.get(c) != "log_only"]
+        check(not bad, f"noise {prof}: events {fired or 'none'}")
+
     print("3. decisions (rules, Gemma offline)")
     est = {"room": "kitchen", "p": 0.8, "xy": (11, 3), "room_probs": {"kitchen": 0.8}}
 

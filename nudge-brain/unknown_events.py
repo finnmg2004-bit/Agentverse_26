@@ -258,7 +258,9 @@ class UnknownEvents:
         w.log(f"UNKNOWN SOUND: {cat} ({best[0]} {best[1]:.2f}) near {room_label(room)}"
               f"{' [DANGER]' if danger else ''}{' [busy: ' + str(w.mission['sound']) + ']' if busy else ''}")
         self.pending = p
-        if self.agent.enabled and self.agent.llm_online and self.agent.model:
+        if len(options) == 1 and not danger:
+            p["result"] = {"error": "only option (busy: no unknown sound interrupts a mission)"}
+        elif self.agent.enabled and self.agent.llm_online and self.agent.model:
             prompt = self._prompt(p, w)
             threading.Thread(target=self._worker, args=(p, prompt), daemon=True).start()
         else:
