@@ -19,3 +19,4 @@
 - 00:57: E3.1 robot_map.py written (log-odds grid, PNG pub 1 Hz, resets on episode change), tested: synthetic unit check PASS; live-sim run not done
 - 01:25: E3.2 object_memory.py + robot_map --objects, tested: synthetic unit check PASS; live sim run PASS (runs, 0 detections), see notes
 - 01:56: E3.3 scripts/test_mapping.py (tour entry,dining,living_room,guest; known 75.6%, wall precision 97.0%, recall 95.0%; objects: tvs are false positives (3 'tv' incl. one outside house), see notes), tested: test_mapping PASS
+- 02:25: E3.4 gui/panels/robot_map.py (own :5559 subscriber, grid texture + robot + objects), tested: module import + coord unit check PASS; live GUI render not run (needs sim+robot_map+gui)

@@ -30,5 +30,5 @@ Each tick:
 - [x] **E3.1** `nudge-brain/robot_map.py` as its **own process** (no edits to `main.py`): subscribe to the sim's `state` + `camera` (:5555), build a 5 cm occupancy grid from LiDAR + robot pose, publish `robot_map` on :5559 (header + PNG-compressed grid, 1 Hz).
 - [x] **E3.2** Object memory from YOLO detections + depth (`vision.py` helpers, read-only use) → `objects: [{id, cls, x, y, room, last_seen}]`; room names from objects (bed → bedroom, couch/tv → living room, refrigerator/oven → kitchen).
 - [x] **E3.3** `scripts/test_mapping.py`: drive a scripted tour (sim hotkeys/`cmd` only), then score the map against `sim/house_layout.py` (wall overlap %, rooms named correctly, object position error). Report numbers honestly.
-- [ ] **E3.4** `gui/panels/robot_map.py`: shows the robot's map + objects (subscribes to :5559 itself).
+- [x] **E3.4** `gui/panels/robot_map.py`: shows the robot's map + objects (subscribes to :5559 itself).
 - [ ] **E3.5 (stretch)** Change detection: the chair `[C]` appears in a doorway → map updates, logged as a change.
