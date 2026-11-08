@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Dict, List
 
 USER_COMMAND_PUB = "tcp://127.0.0.1:5557"  # same endpoint as gui/nudge_control.py
+SIM_EXTRA_ARGS: List[str] = []           # set by --coco-objects (passed to sim/run_sim.py)
+SIM_STATE_SUB = "tcp://127.0.0.1:5555"     # judge reads ground truth (owner room, sim clock) from `state`
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -35,6 +37,16 @@ sys.path.insert(0, str(ROOT / "nudge-brain"))
 # Actions: ("at", seconds_after_start, key) or ("on", "brain log substring", delay_s, key)
 # expect_complete: sounds the sim must report as SCENARIO COMPLETE
 # expect_log: substrings that must appear in the brain log; expect_alert: alert modes that must occur
+# Teach scenarios (overnight contracts C1-C3) add:
+#   ("clock", when, "HH:MM")   set the sim clock via the `gui` topic; when = seconds, or "task" = as soon
+#                              as the brain status lists a taught task (C3 `tasks`)
+#   ("gui", t, {payload})       send any `gui` topic payload at t seconds (e.g. owner_state)
+#   ("on_task", delay_s, key)  press a key delay_s after the brain status first lists a taught task
+#   expect_task: {"kind": ...} brain status `tasks` must contain a task whose trigger.kind matches
+#   expect_owner_room: room    pass condition: the owner (state.owner_pos_gt) stays in this room >= 2 s
+#   run_for: seconds           pass condition: just run this long (judged by the log/says checks)
+#   expect_says / forbid_says: substrings (case-insensitive) of the sim's "NUDGE SAYS:" lines
+#   forbid_log: brain log substrings that must never appear
 SCENARIOS: Dict[str, Dict] = {
     "doorbell": {
         "desc": "Doorbell -> find owner in living room -> 1 pulse -> guide to front door",
@@ -86,6 +98,85 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["SAFETY PRE-EMPT"],
         "expect_alert": ["continuous"],
         "expect_sim": ["NUDGE SAYS:"],
+    },
+    "smoke_blocked_exit": {
+        "desc": "Chair blocks the back (garden) exit [E] + smoke alarm -> exit guard picks another safe exit "
+                "-> owner gets OUTSIDE; the robot never comes within 3 m of the kitchen fire",
+        "actions": [("at", 0.8, "E"), ("at", 1.5, "M")],
+        "expect_complete": ["smoke_alarm"],
+        "expect_log": ["SAFETY PRE-EMPT"],
+        "expect_alert": ["continuous"],
+        # sim judge: with [E] only OUTSIDE counts; FIRE PROXIMITY = robot < 3 m from the smoke alarm
+        "expect_sim": ["owner EVACUATED (OUTSIDE via"],
+        "forbid_sim": ["FIRE PROXIMITY", "via exit_back", "via exit_terrace"],
+        "min_timeout": 180.0,
+    },
+    # ---- Teach scenarios (overnight contracts C1/C2/C3). Experimental until E1's teachable tasks
+    # (nudge-brain/tasks.py) are on integration; E0 runs them there by name.
+    "teach_bedtime": {
+        "desc": "Owner teaches 'Every night at 10 pm take me to bed' -> brain lists a time task -> "
+                "sim clock 21:59 -> at 22:00 the robot takes the owner to the guest bedroom",
+        "actions": [("cmd", 0.5, "Every night at 10 pm take me to bed"), ("clock", "task", "21:59")],
+        "expect_complete": [],
+        "expect_task": {"kind": "time"},
+        "expect_owner_room": "guest",
+        "expect_log": [],
+        "expect_alert": [],
+        "min_timeout": 240.0,  # 60 s until 22:00 + find the owner + walk to the guest room
+        "experimental": True,
+    },
+    "teach_bedtime_carpet": {
+        "desc": "Carpet rule + taught bedtime task -> at 22:00 the robot takes the owner to the guest "
+                "bedroom WITHOUT stepping on the carpet (a taught task must respect place rules)",
+        # teach_bedtime alone has no carpet rule, so crossing the carpet there is the normal route
+        # (like carpet_baseline); this one checks the rule holds on a task-driven mission.
+        "actions": [("cmd", 0.5, "Nudge, I've got a new carpet in the living room, please don't step on it."),
+                    ("cmd", 4.0, "Every night at 10 pm take me to bed"), ("clock", "task", "21:59")],
+        "expect_complete": [],
+        "expect_task": {"kind": "time"},
+        "expect_owner_room": "guest",
+        "expect_log": ["RULE #"],
+        "expect_alert": [],
+        "forbid_sim": ["AVOID AREA: robot stepped ON"],
+        "min_timeout": 240.0,
+        "experimental": True,
+    },
+    "cant_do_that": {
+        "desc": "Owner asks for something no skill can do ('Please do the washing up') -> robot says it "
+                "can't (C1 fallback sentence) and starts no mission",
+        "actions": [("cmd", 0.5, "Please do the washing up")],
+        "expect_complete": [],
+        "run_for": 20.0,
+        "expect_says": ["can't"],
+        "forbid_log": ["MISSION ", "guide_owner_to("],
+        "expect_log": [],
+        "expect_alert": [],
+        "experimental": True,
+    },
+    "teach_kettle": {
+        "desc": "Owner teaches 'When the kettle boils, just tell me' -> brain lists a sound task -> "
+                "[J] kettle -> the robot tells the owner (no guiding to the kitchen)",
+        "actions": [("cmd", 0.5, "When the kettle boils, just tell me"), ("on_task", 1.0, "J")],
+        "expect_complete": [],
+        "run_for": 75.0,
+        "expect_task": {"kind": "sound"},
+        "expect_says": ["kettle"],
+        # the default kettle mission's sentence and route must not happen
+        "forbid_says": ["I will take you to the kitchen"],
+        "forbid_log": ["guide_owner_to("],
+        "expect_log": [],
+        "expect_alert": [],
+        "experimental": True,
+    },
+    "asleep_doorbell": {
+        "desc": "Owner ASLEEP in the guest bed (GUI owner_state) -> doorbell -> robot searches, finds them, "
+                "the 1-pulse nudge wakes them -> guide to the front door",
+        "actions": [("gui", 0.5, {"action": "owner_state", "state": "asleep"}), ("at", 2.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": [],
+        "expect_alert": ["1_pulse"],
+        "expect_sim": ["owner is now ASLEEP", "owner WAKES UP"],
+        "min_timeout": 180.0,
     },
     "owner_moved": {
         "desc": "Doorbell, owner moved (living room -> guest room) while robot is en route -> search -> find",
@@ -149,13 +240,14 @@ SCENARIOS: Dict[str, Dict] = {
 
 
 class SimProcess:
-    def __init__(self, gui: bool, noise: str, duration: float) -> None:
+    def __init__(self, gui: bool, noise: str, duration: float, extra=()) -> None:
         cmd = [sys.executable, "-u", str(ROOT / "sim" / "run_sim.py"), "--duration", str(duration),
                "--noise", noise,
                # Reproducible owner: no spontaneous wandering, fixed seed for nudge/let-go reactions.
                "--owner-static", "--owner-seed", "1"]
         if not gui:
             cmd.append("--headless")
+        cmd += list(extra)
         self.proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, encoding="utf-8", errors="replace")
         self.lines: List[str] = []
@@ -183,7 +275,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     print(f"\n=== {name}: {spec['desc']}  [noise={noise}]")
     # Owner commands go out where the Nudge Control GUI publishes them (AGENTS.md 9.4).
     cmd_pub = None
-    if any(a[0] == "cmd" for a in spec["actions"]):
+    if any(a[0] in ("cmd", "clock", "gui") for a in spec["actions"]):
         import zmq
         cmd_pub = zmq.Context.instance().socket(zmq.PUB)
         try:
@@ -193,9 +285,28 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             cmd_pub.close(linger=0)
             print(f"--> {name}: FAIL (setup)")
             return False
-    sim = SimProcess(gui, noise, duration=timeout + 15)
+    sim = SimProcess(gui, noise, duration=timeout + 15, extra=SIM_EXTRA_ARGS)
     with contextlib.redirect_stdout(io.StringIO()):
         brain = brain_main.Brain(show_dashboard=False)
+    # Ground truth + brain status, only for scenarios that judge on them (teach scenarios).
+    judge = {"state": {}, "status": {}, "tasks_seen": [], "room_since": None}
+    state_sub = None
+    if spec.get("expect_owner_room") or any(a[0] == "clock" for a in spec["actions"]):
+        import zmq
+        state_sub = zmq.Context.instance().socket(zmq.SUB)
+        state_sub.setsockopt_string(zmq.SUBSCRIBE, "state")
+        state_sub.connect(SIM_STATE_SUB)
+    orig_send_status = brain.bridge.send_status
+
+    def capture_status(status) -> None:
+        judge["status"] = status
+        for task in status.get("tasks") or []:
+            if task not in judge["tasks_seen"]:
+                judge["tasks_seen"].append(task)
+                print(f"    brain task: {json.dumps(task)[:200]}")
+        orig_send_status(status)
+
+    brain.bridge.send_status = capture_status
     log: List[str] = []
     # Patch at class level: [R] reset replaces brain.world with a fresh WorldModel instance.
     WorldModel = type(brain.world)
@@ -238,7 +349,21 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             brain.tick()
             alerts_seen.add(brain.alerts.mode)
             el = t0 - start
+            while state_sub is not None and state_sub.poll(0):
+                judge["state"] = json.loads(state_sub.recv_multipart()[1])
             for i, a in enumerate(list(pending)):
+                if a[0] == "gui":  # any control-GUI action, e.g. {"action": "owner_state", "state": "asleep"}
+                    if el >= a[1]:
+                        cmd_pub.send_multipart([b"gui", json.dumps(a[2]).encode()])
+                        print(f"    t={el:5.1f}s  gui {json.dumps(a[2])}")
+                        pending.remove(a)
+                    continue
+                if a[0] == "clock":  # set the sim clock (contract C2) like the GUI does
+                    if (el >= a[1]) if isinstance(a[1], (int, float)) else judge["tasks_seen"]:
+                        cmd_pub.send_multipart([b"gui", json.dumps({"action": "clock", "time": a[2]}).encode()])
+                        print(f"    t={el:5.1f}s  clock -> {a[2]} (sim clock was {judge['state'].get('sim_clock')})")
+                        pending.remove(a)
+                    continue
                 if a[0] == "voice":  # owner SPEAKS a recorded clip: real voice.py -> Whisper -> :5558
                     if el >= a[1]:
                         clip = ROOT / "assets" / "audio" / "voice" / f"{a[2]}.wav"
@@ -260,6 +385,9 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
                 elif a[0] == "on" and any(a[1] in l for l in log):
                     fired_on.setdefault(i, el)
                     fire = el - fired_on[i] >= a[2]
+                elif a[0] == "on_task" and judge["tasks_seen"]:  # ("on_task", delay_s, key)
+                    fired_on.setdefault(i, el)
+                    fire = el - fired_on[i] >= a[1]
                 else:
                     fire = False
                 if fire:
@@ -278,8 +406,23 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
                     brain.bridge.send_sim_event(key)
                     print(f"    t={el:5.1f}s  resend [{key}] (not acknowledged by sim)")
                     u[1], u[2] = el, tries + 1
-            if not pending and all(sim.completed(s) for s in spec["expect_complete"]):
+            room = spec.get("expect_owner_room")
+            if room:
+                from sim.house_layout import get_room_at
+                opos = judge["state"].get("owner_pos_gt")
+                if opos and get_room_at(*opos) == room:
+                    judge["room_since"] = judge["room_since"] if judge["room_since"] is not None else el
+                else:
+                    judge["room_since"] = None
+            done = all(sim.completed(s) for s in spec["expect_complete"])
+            if room:
+                done = done and judge["room_since"] is not None and el - judge["room_since"] >= 2.0
+            if spec.get("run_for"):
+                done = done and el >= float(spec["run_for"])
+            if not pending and done:
                 ok = True
+                if room:
+                    print(f"    owner in {room} at t={el:.1f}s (sim clock {judge['state'].get('sim_clock')})")
                 break
             time.sleep(max(0.0, 1 / brain_main.LOOP_HZ - (time.monotonic() - t0)))
         elapsed = time.monotonic() - start
@@ -287,18 +430,29 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
         WorldModel.log = orig_log
         brain.bridge.send_cmd(0.0, 0.0, 0.0)
         brain.bridge.close()
+        brain.bridge.send_status = orig_send_status
         if cmd_pub is not None:
             cmd_pub.close(linger=0)
+        if state_sub is not None:
+            state_sub.close(linger=0)
         sim.stop()
 
     missing_log = [s for s in spec["expect_log"] if not any(s in l for l in log)]
     missing_alert = [m for m in spec["expect_alert"] if m not in alerts_seen]
     missing_sim = [s for s in spec.get("expect_sim", []) if not any(s in l for l in sim.lines)]
     forbidden = [l for l in sim.lines if any(s in l for s in spec.get("forbid_sim", []))]
+    says = [l.split("NUDGE SAYS:", 1)[1].lower() for l in sim.lines if "NUDGE SAYS:" in l]
+    missing_sim += [f"says {s!r}" for s in spec.get("expect_says", []) if not any(s.lower() in t for t in says)]
+    forbidden += [f"NUDGE SAYS:{t}" for t in says if any(s.lower() in t for s in spec.get("forbid_says", []))]
+    forbidden += [f"brain: {l}" for l in log if any(s in l for s in spec.get("forbid_log", []))]
+    if spec.get("expect_task"):
+        want = spec["expect_task"]
+        if not any(all((t.get("trigger") or {}).get(k) == v for k, v in want.items()) for t in judge["tasks_seen"]):
+            missing_log.append(f"brain status task with trigger {want} (tasks seen: {len(judge['tasks_seen'])})")
     for l in sim.lines:
         if "SCENARIO" in l or "HOTKEY" in l or "AVOID AREA" in l or "NUDGE SAYS" in l:
             print(f"    {l}")
-    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "voice")]
+    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "voice", "clock", "gui")]
     for vp in voice_procs:  # what the voice process heard / published
         out = vp.communicate(timeout=30)[0] if vp.poll() is None else vp.stdout.read()
         for line in (out or "").splitlines():
@@ -341,7 +495,11 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=150.0, help="per-scenario wall-clock limit (s)")
     ap.add_argument("-v", "--verbose", action="store_true", help="print the brain log live")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--coco-objects", action="store_true",
+                    help="experimental: sim with COCO-class stand-ins (bed, couch, tv) + state.objects_gt")
     args = ap.parse_args()
+    if args.coco_objects:
+        SIM_EXTRA_ARGS.append("--coco-objects")
     if args.list:
         for n, s in SCENARIOS.items():
             tag = " (experimental: run by name)" if s.get("experimental") else ""

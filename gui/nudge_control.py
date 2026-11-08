@@ -448,6 +448,12 @@ class NudgeControl:
                 with dpg.group(horizontal=True):
                     for label, k in SCENE_CONTROLS[i:i + 7]:
                         dpg.add_button(label=f"{label}  [{k}]", callback=(lambda kk: (lambda: self.key(kk)))(k))
+            # Sim clock (contract C2: state.sim_clock "HH:MM"); the sim ignores the action until it supports it
+            with dpg.group(horizontal=True):
+                dpg.add_text("Clock:")
+                dpg.add_text("--:--", tag="clock_txt", color=DIM)
+                dpg.add_button(label="Jump to 21:59", callback=lambda: self.send({"action": "clock", "time": "21:59"}))
+                dpg.add_button(label="+1 h", callback=self.clock_plus_hour)
             dpg.add_text("", tag="scene_txt", color=DIM)
 
             # Tell Nudge: commands, sound preferences and place rules (AGENTS.md 9.3)
@@ -542,6 +548,14 @@ class NudgeControl:
             if name in ("front_door", "back_exit_outside"):
                 dpg.draw_text((p[0] + 7, p[1] - 7), name, color=AMBER, size=11)
 
+    def clock_plus_hour(self) -> None:
+        clk = str(self.state.get("sim_clock") or "")
+        try:
+            h, m = (int(x) for x in clk.split(":")[:2])
+        except ValueError:
+            return  # sim sends no clock yet
+        self.send({"action": "clock", "time": f"{(h + 1) % 24:02d}:{m:02d}"})
+
     # ------------------------------------------------------------------ per-frame updates
     def update(self) -> None:
         now = time.monotonic()
@@ -583,6 +597,17 @@ class NudgeControl:
                                    parent="view_overlay")
                 dpg.draw_text((20, 44), f'Nudge says: "{ns["text"]}"', color=(150, 230, 255, 255), size=17,
                               parent="view_overlay")
+
+        # Sim clock (absent until the sim implements C2)
+        clk = st.get("sim_clock") if sim_ok else None
+        if clk:
+            dpg.set_value("clock_txt", f"{clk}" + (f"  (day {st['sim_day']})" if st.get("sim_day") else ""))
+            dpg.configure_item("clock_txt", color=TEXT)
+            if mstatus not in ("active", "complete"):
+                dpg.draw_text((VIEW_W - 90, 12), str(clk), color=TEXT, size=22, parent="view_overlay")
+        else:
+            dpg.set_value("clock_txt", "--:--  (sim sends no clock)")
+            dpg.configure_item("clock_txt", color=DIM)
 
         # Scene line
         if sim_ok:
@@ -826,7 +851,43 @@ class NudgeControl:
                 dpg.add_spacer(height=4)
 
     # ------------------------------------------------------------------ main loop
-    def run(self, auto: Optional[List[tuple]] = None, screenshot: Optional[List[tuple]] = None) -> None:
+    # ------------------------------------------------------------------ recording (--record)
+    def _record_frame(self, sender=None, data=None) -> None:
+        """dpg frame-buffer callback: write one frame to the VideoWriter (RGBA floats 0..1 -> BGR)."""
+        self._rec_calls += 1
+        self._rec_dtype = type(data).__name__
+        try:
+            import numpy as np
+            import cv2
+            w, h = dpg.get_viewport_client_width(), dpg.get_viewport_client_height()
+            arr = np.frombuffer(data, dtype=np.float32)
+            if arr.size != w * h * 4:
+                # the buffer may include the title bar / differ from the client size: derive the height from the width
+                hh = arr.size // (4 * w) if w else 0
+                if hh * w * 4 != arr.size:
+                    if self._rec_calls == 1:
+                        print(f"[gui] record: unexpected buffer size {arr.size} for viewport {w}x{h}")
+                    return
+                h = hh
+            img = (arr.reshape(h, w, 4)[:, :, :3] * 255).astype(np.uint8)
+            if self._rec is None:
+                import os
+                os.makedirs(os.path.dirname(os.path.abspath(self._rec_path)), exist_ok=True)
+                self._rec = cv2.VideoWriter(self._rec_path, cv2.VideoWriter_fourcc(*"mp4v"), 15.0, (w, h))
+                self._rec_size = (w, h)
+            if (w, h) != self._rec_size:
+                img = cv2.resize(img, self._rec_size)
+            self._rec.write(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+            self._rec_frames += 1
+            if self._rec_frames % 30 == 1:  # black-frame check on the first frames
+                self._rec_mean = float(img.mean())
+        except Exception as e:  # never kill the GUI because of the recorder
+            if not getattr(self, "_rec_err", False):
+                self._rec_err = True
+                print(f"[gui] record error: {e}")
+
+    def run(self, auto: Optional[List[tuple]] = None, screenshot: Optional[List[tuple]] = None,
+            record: str = "", record_seconds: float = 0.0) -> None:
         """`auto`: [(seconds, key), ...] buttons pressed on a schedule (testing / scripted demos).
         `screenshot`: [(path, seconds), ...] save the window to PNGs at those times; quit after the last."""
         self.build()
@@ -834,6 +895,9 @@ class NudgeControl:
         start = time.monotonic()
         auto = sorted(auto or [])
         shots = sorted(screenshot or [], key=lambda s: s[1])
+        self._rec, self._rec_path, self._rec_frames, self._rec_mean, self._rec_size = None, record, 0, -1.0, None
+        self._rec_calls, self._rec_dtype = 0, None
+        next_rec = 0.0
         try:
             while dpg.is_dearpygui_running():
                 self.poll()
@@ -841,10 +905,18 @@ class NudgeControl:
                 self.update()
                 dpg.render_dearpygui_frame()
                 elapsed = time.monotonic() - start
+                if record and elapsed >= next_rec:
+                    next_rec = elapsed + 1 / 15
+                    dpg.output_frame_buffer(callback=self._record_frame)
+                if record and record_seconds and elapsed >= record_seconds:
+                    dpg.render_dearpygui_frame()
+                    break
                 while auto and elapsed >= auto[0][0]:
                     what = auto.pop(0)[1]
                     if what.lower().startswith("cam="):
                         self.preset(what[4:])
+                    elif what.lower().startswith("clock="):
+                        self.send({"action": "clock", "time": what[6:]})
                     elif what.lower().startswith("say="):
                         self.send_command(what[4:])
                     else:
@@ -856,6 +928,12 @@ class NudgeControl:
                     if not shots:
                         break
         finally:
+            if record and self._rec is None:
+                print(f"[gui] --record: no frame was written (callback calls: {self._rec_calls}, last data type {self._rec_dtype})")
+            if self._rec is not None:
+                self._rec.release()
+                print(f"[gui] recorded {self._rec_frames} frames to {record} (last sampled mean brightness "
+                      f"{self._rec_mean:.0f}/255{' - BLACK, use scripts/render_video.py' if self._rec_mean == 0 else ''})")
             dpg.destroy_context()
             self.pub.close()
             self.sub.close()
@@ -869,6 +947,8 @@ def main() -> None:
                          "(or ',' when no sentence has a comma), e.g. 'say=I'm expecting a parcel@2;B@5;cam=Chase cam@6'")
     ap.add_argument("--screenshot", default="",
                     help="Save PNG(s), quit after the last, e.g. 'shot.png@30' or 'a.png@20;b.png@45'")
+    ap.add_argument("--record", default="", help="Record the whole window to this .mp4 (15 fps), e.g. ~/nudge-overnight/videos/a.mp4")
+    ap.add_argument("--record-seconds", type=float, default=0.0, help="Stop recording and quit after N s (0 = until closed)")
     args = ap.parse_args()
     sep = ";" if ";" in args.auto else ","
     auto = [(float(t), k) for k, t in (p.rsplit("@", 1) for p in args.auto.split(sep) if p.strip())]
@@ -876,7 +956,8 @@ def main() -> None:
     for item in (s for s in args.screenshot.split(";") if s.strip()):
         path, secs = item.rsplit("@", 1)
         shots.append((path.strip(), float(secs)))
-    NudgeControl().run(auto, shots)
+    import os
+    NudgeControl().run(auto, shots, os.path.expanduser(args.record), args.record_seconds)
 
 
 if __name__ == "__main__":

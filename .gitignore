@@ -30,3 +30,7 @@ assets/models/
 
 # Editor
 .vscode/
+
+# taught tasks (overnight C1), per machine
+assets/tasks.json
+assets/tasks.tmp

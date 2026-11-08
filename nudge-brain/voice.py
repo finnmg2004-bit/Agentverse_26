@@ -15,6 +15,9 @@ Pipeline: mic (PipeWire `pw-record` -> PulseAudio -> ALSA -> sounddevice; NUDGE_
      0.8 s without speech (max 8 s); steady fan / hum noise is ignored
   -> Whisper base.en (faster-whisper, CTranslate2 int8 on the CPU, ~0.5 s per sentence; NUDGE_STT_MODEL)
   -> wake word: "Nudge, <command>" publishes <command>; "Nudge." alone arms the next sentence (6 s)
+  -> ask_owner (contract C5): while the brain status (:5556) has an open `ask`, no wake word is needed;
+     the answer is published as topic `user_answer` {id, text, choice (best fuzzy match), confidence}.
+     The mic is muted while the robot speaks (`state.speaking`, else estimated from `nudge_says`).
   -> ZMQ PUB bound on tcp://127.0.0.1:5558, topic `user_command` (the brain SUB-connects):
        {"text": "take me to the kitchen", "source": "voice", "confidence": 0.0-1.0,
         "raw": "Nudge, take me to the kitchen.", "t": unix_time}
@@ -64,7 +67,10 @@ WAKE_ARM_S = 6.0  # "Nudge." alone -> the next sentence within 6 s is the comman
 # whole sentences: on a very short clip ("Nudge.") Whisper can copy a sentence-style prompt back as
 # the transcript ("Nudge, take me to the kitchen." x 25 in a test) -> a command nobody gave.
 STT_PROMPT = ("Nudge. Kitchen, front door, back door, living room, bedroom, dining room, family room, "
-              "hallway, garden, carpet, stop, come here, phone, oven, kettle.")
+              "hallway, garden, carpet, stop, come here, phone, oven, kettle, "
+              # teaching tasks (overnight R3): triggers, times, reminders
+              "bed, every night, every morning, every day, remind me, when, boils, oven timer, doorbell, "
+              "forget, task, o'clock, half past, quarter past, 10 pm, 7 am.")
 MAX_WORDS_PER_S = 4.5  # fast speech is ~3-4 words/s; more than this is a Whisper hallucination
 # Whisper sometimes spells the wake word differently.
 WAKE_RE = re.compile(r"^\W*(?:(?:hey|ok|okay)\W+)?(?:nudge|nudges|nudge's|nudj|nuj|budge|nadge|nodge)\b\W*(.*)$",
@@ -232,6 +238,50 @@ class SpeechToText:
         return text, round(min(1.0, conf), 2)
 
 
+# ---------------------------------------------------------------------- time normalisation
+_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+        "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+_MIN = {"oh five": 5, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40,
+        "forty five": 45, "forty-five": 45, "fifty": 50}
+_H = r"(\d{1,2}|" + "|".join(_NUM) + r")"
+_AMPM = r"(am|pm)"
+
+
+def _hour(tok: str) -> int:
+    return int(tok) if tok.isdigit() else _NUM[tok.lower()]
+
+
+def normalize_times(text: str) -> str:
+    """Spoken times -> digits, so the brain's task parser sees one form (overnight R3):
+    'ten pm' / '10 p.m.' / '10pm' -> '10 pm'; 'half past nine' -> '9:30'; 'quarter past/to six' ->
+    '6:15' / '5:45'; 'ten o'clock' -> '10:00'; 'seven thirty am' -> '7:30 am'; '9.30' -> '9:30'.
+    Only rewrites number words next to a time cue (am/pm, o'clock, past/to), never 'take me to two rooms'."""
+    t = re.sub(r"\b([ap])\.\s?m\.?", r"\1m", text, flags=re.IGNORECASE)            # p.m. -> pm
+    t = re.sub(r"\b([ap])\s(m)\b", r"\1\2", t, flags=re.IGNORECASE)                # p m -> pm
+    t = re.sub(r"\b(\d{1,2})(am|pm)\b", r"\1 \2", t, flags=re.IGNORECASE)          # 10pm -> 10 pm
+    t = re.sub(r"\b(\d{1,2})\.(\d{2})\b", r"\1:\2", t)                            # 9.30 -> 9:30
+    t = re.sub(r"\b(AM|PM|Am|Pm)\b", lambda m: m.group(1).lower(), t)
+
+    def past(m: "re.Match[str]") -> str:
+        h, mins = _hour(m.group(2)), {"half": 30, "quarter": 15}[m.group(1).lower()]
+        return f"{h}:{mins:02d}"
+
+    def to(m: "re.Match[str]") -> str:
+        h = _hour(m.group(1))
+        return f"{12 if h == 1 else h - 1}:45"
+
+    t = re.sub(r"\b(half|quarter)\s+past\s+" + _H + r"\b", past, t, flags=re.IGNORECASE)
+    t = re.sub(r"\bquarter\s+to\s+" + _H + r"\b", to, t, flags=re.IGNORECASE)
+    mins_re = "|".join(sorted((re.escape(k) for k in _MIN), key=len, reverse=True))
+    t = re.sub(r"\b" + _H + r"\s+(" + mins_re + r")\s+" + _AMPM + r"\b",
+               lambda m: f"{_hour(m.group(1))}:{_MIN[m.group(2).lower()]:02d} {m.group(3).lower()}",
+               t, flags=re.IGNORECASE)
+    t = re.sub(r"\b" + _H + r"\s+o['’]?\s?clock\b", lambda m: f"{_hour(m.group(1))}:00", t, flags=re.IGNORECASE)
+    t = re.sub(r"\b" + _H + r"\s+" + _AMPM + r"\b",
+               lambda m: f"{_hour(m.group(1))} {m.group(2).lower()}", t, flags=re.IGNORECASE)
+    return t
+
+
 # ---------------------------------------------------------------------- sentence segmentation
 class Segmenter:
     """Feed 30 ms frames; returns a finished sentence (float32 16 kHz) when the speaker pauses."""
@@ -302,12 +352,171 @@ class WakeWord:
         return None
 
 
+# ---------------------------------------------------------------------- ask_owner answers (C5)
+BRAIN_ENDPOINT = os.environ.get("NUDGE_BRAIN_PUB", "tcp://127.0.0.1:5556")  # brain status (topic `brain`)
+SIM_ENDPOINT = os.environ.get("NUDGE_SIM_PUB", "tcp://127.0.0.1:5555")      # sim `state` (speaking / nudge_says)
+ASK_DEFAULT_TIMEOUT_S = 15.0
+TTS_WORDS_PER_S = 2.6   # Piper LJSpeech speaks ~2.6-3 words/s; used when the sim has no `speaking` flag
+TTS_PAD_S = 0.8         # + start-up / room echo
+CHOICE_MIN_SCORE = 0.6
+_SYNONYMS = {
+    "yes": ("yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "correct", "right", "do it",
+            "go ahead", "that's right", "of course", "alright", "all right"),
+    "no": ("no", "nope", "nah", "don't", "do not", "not now", "cancel", "no thanks", "never mind", "wrong", "later"),
+}
+
+
+_UNSURE_RE = re.compile(r"\b(don't know|do not know|not sure|no idea|maybe|i guess|dunno|what)\b", re.IGNORECASE)
+
+
+def _words(text: str) -> List[str]:
+    return re.sub(r"[^\w' ]+", " ", text.lower()).split()
+
+
+def match_choice(text: str, choices: List[str]) -> Tuple[Optional[str], float]:
+    """Best fuzzy match of an answer to the question's choices -> (choice | None, score 0..1).
+    'yeah, please' -> 'yes'; 'the one in the guest room' -> 'guest room'; nothing close -> (None, best)."""
+    import difflib
+
+    said = " ".join(_words(text))
+    if not said or not choices:
+        return None, 0.0
+    if _UNSURE_RE.search(said):  # "I don't know" is not "no": let the brain ask again / decide
+        return None, 0.0
+    said_w = set(said.split())
+    best, best_score = None, 0.0
+    for choice in choices:
+        c = " ".join(_words(str(choice)))
+        variants = {c, *_SYNONYMS.get(c, ())}
+        score = 0.0
+        for v in variants:
+            vw = v.split()
+            if re.search(r"\b" + re.escape(v) + r"\b", said):        # said contains the choice / synonym
+                score = max(score, 1.0 if len(vw) > 1 or said.split()[0] == v else 0.9)
+            elif vw:
+                overlap = len(said_w & set(vw)) / len(vw)
+                score = max(score, 0.8 * overlap, difflib.SequenceMatcher(None, said, v).ratio() * 0.9)
+        if score > best_score:
+            best, best_score = choice, score
+    # "yes" and "no" both said ("no, yes") -> ambiguous; leave it to the brain
+    if {"yes", "no"} <= {" ".join(_words(str(c))) for c in choices}:
+        y = any(re.search(r"\b" + re.escape(v) + r"\b", said) for v in _SYNONYMS["yes"])
+        n = any(re.search(r"\b" + re.escape(v) + r"\b", said) for v in _SYNONYMS["no"])
+        if y and n:
+            return None, 0.5
+    return (best, round(best_score, 2)) if best_score >= CHOICE_MIN_SCORE else (None, round(best_score, 2))
+
+
+class RobotContext:
+    """What the voice process needs from the robot: the brain's open question (`ask`, contract C5) and
+    whether the robot is speaking (mute the mic so Nudge doesn't hear itself).
+
+    - brain status (:5556 topic `brain`): `ask: {"id", "question", "choices", "timeout_s"} | null`.
+      While a not-yet-answered `ask` is open (< timeout_s since it appeared) no wake word is needed.
+    - sim state (:5555 topic `state`): `speaking` (truthy while the robot talks; Sean's proposal) if
+      present, else the speaking time is estimated from each new `nudge_says` text.
+    """
+
+    def __init__(self, brain_ep: str = BRAIN_ENDPOINT, sim_ep: str = SIM_ENDPOINT, listen: bool = True) -> None:
+        self.ask: Optional[Dict[str, Any]] = None
+        self.ask_since = 0.0
+        self.answered: set = set()
+        self.mute_until = 0.0
+        self._say = ""
+        self._has_speaking = False
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._eps = (brain_ep, sim_ep)
+        if listen:
+            threading.Thread(target=self._loop, daemon=True).start()
+
+    # -- inputs (also called directly by tests)
+    def on_brain(self, status: Dict[str, Any], now: Optional[float] = None) -> None:
+        now = time.monotonic() if now is None else now
+        ask = status.get("ask")
+        with self._lock:
+            if not isinstance(ask, dict) or ask.get("id") is None:
+                self.ask = None
+            elif self.ask is None or ask.get("id") != self.ask.get("id"):
+                self.ask, self.ask_since = dict(ask), now
+                print(f"[voice] question {ask.get('id')}: {ask.get('question')!r} choices {ask.get('choices')} "
+                      "-> answer mode (no wake word)", flush=True)
+
+    def on_state(self, state: Dict[str, Any], now: Optional[float] = None) -> None:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            if "speaking" in state:
+                self._has_speaking = True
+                if state.get("speaking"):
+                    self.mute_until = max(self.mute_until, now + 0.3)
+            say = state.get("nudge_says") or ""
+            if isinstance(say, dict):
+                say = say.get("text") or ""
+            if say != self._say:
+                self._say = say
+                if say and not self._has_speaking:
+                    self.mute_until = max(self.mute_until, now + TTS_PAD_S + len(say.split()) / TTS_WORDS_PER_S)
+
+    # -- queries
+    def open_question(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            a = self.ask
+            if a is None or a.get("id") in self.answered:
+                return None
+            if now - self.ask_since > float(a.get("timeout_s") or ASK_DEFAULT_TIMEOUT_S):
+                return None
+            return a
+
+    def muted(self, now: Optional[float] = None) -> bool:
+        return (time.monotonic() if now is None else now) < self.mute_until
+
+    def mark_answered(self, ask_id: Any) -> None:
+        with self._lock:
+            self.answered.add(ask_id)
+
+    def _loop(self) -> None:
+        try:
+            import zmq
+        except ImportError:
+            return
+        ctx = zmq.Context.instance()
+        socks = []
+        for ep, topic in zip(self._eps, (b"brain", b"state")):
+            s = ctx.socket(zmq.SUB)
+            s.setsockopt(zmq.LINGER, 0)
+            s.setsockopt(zmq.RCVHWM, 10)
+            s.connect(ep)
+            s.setsockopt(zmq.SUBSCRIBE, topic)
+            socks.append(s)
+        poller = zmq.Poller()
+        for s in socks:
+            poller.register(s, zmq.POLLIN)
+        while not self._stop.is_set():
+            for s, _ in poller.poll(200):
+                try:
+                    parts = s.recv_multipart(zmq.NOBLOCK)
+                    msg = json.loads(parts[1].decode("utf-8"))
+                except Exception:
+                    continue
+                (self.on_brain if parts[0] == b"brain" else self.on_state)(msg)
+        for s in socks:
+            s.close(0)
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
 # ---------------------------------------------------------------------- the voice process
 class VoiceCommander:
     """Mic -> sentences -> Whisper -> wake word -> on_command(dict). Also keeps a status dict."""
 
-    def __init__(self, on_command: Callable[[Dict[str, Any]], None], wake: bool = True, mic: str = "") -> None:
+    def __init__(self, on_command: Callable[[Dict[str, Any]], None], wake: bool = True, mic: str = "",
+                 on_answer: Optional[Callable[[Dict[str, Any]], None]] = None,
+                 robot: Optional["RobotContext"] = None) -> None:
         self.on_command = on_command
+        self.on_answer = on_answer
+        self.robot = robot  # None = no answer mode, no self-speech muting (old behaviour)
         self.stt = SpeechToText()
         self.wake = WakeWord(required=wake)
         self.mic = make_mic(mic)
@@ -326,11 +535,26 @@ class VoiceCommander:
 
     def handle_text(self, raw: str, confidence: float) -> Optional[Dict[str, Any]]:
         self.status["last_heard"] = raw
+        ask = self.robot.open_question() if (self.robot is not None and self.on_answer) else None
+        if ask is not None and raw and not SELF_SPEECH_RE.match(raw):
+            m = WAKE_RE.match(raw)
+            said = m.group(1).strip() if m else raw.strip()
+            choice, score = match_choice(said, list(ask.get("choices") or []))
+            # "Nudge, stop" while a question is open: a command that doesn't answer it stays a command
+            if not (m and choice is None and re.sub(r"\W", "", said)):
+                if re.sub(r"\W", "", said):
+                    msg = {"id": ask.get("id"), "text": normalize_times(said), "choice": choice,
+                           "confidence": round(confidence * (score if choice else 1.0), 2), "raw": raw,
+                           "source": "voice", "t": time.time()}
+                    self.robot.mark_answered(ask.get("id"))
+                    self.on_answer(msg)
+                    return msg
         cmd = self.wake.command(raw)
         if cmd is None:
             print(f"[voice] heard (no wake word): {raw!r}" if raw else "[voice] heard nothing intelligible")
             return None
-        msg = {"text": cmd, "source": "voice", "confidence": confidence, "raw": raw, "t": time.time()}
+        msg = {"text": normalize_times(cmd), "source": "voice", "confidence": confidence, "raw": raw,
+               "t": time.time()}
         self.on_command(msg)
         return msg
 
@@ -347,6 +571,13 @@ class VoiceCommander:
                     if f is None:
                         raise RuntimeError(f"{self.mic.name} stopped delivering audio")
                     self.status["level"] = round(float(np.sqrt(np.mean(f * f))), 4)
+                    if self.robot is not None and self.robot.muted():
+                        if self.status["state"] != "muted":
+                            seg = Segmenter()  # drop the robot's own words mid-sentence
+                        self.status["state"] = "muted"
+                        continue
+                    if self.status["state"] == "muted":
+                        self.status["state"] = "listening"
                     recent = (recent + [f])[-100:]  # last 3 s, for the mic health check
                     if len(recent) == 100 and time.monotonic() - warned_at > 30:
                         problem = mic_problem(np.concatenate(recent))
@@ -514,6 +745,10 @@ def main() -> int:
     ap.add_argument("--endpoint", default=VOICE_ENDPOINT)
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--mic-test", action="store_true", help="check the microphone + Whisper before recording a demo")
+    ap.add_argument("--no-robot", action="store_true",
+                    help="don't listen to the brain/sim (no ask_owner answer mode, no muting while Nudge speaks)")
+    ap.add_argument("--wait-ask", type=float, default=0.0,
+                    help="--file/--text: wait up to this many s for an open `ask` first (tests)")
     args = ap.parse_args()
     if args.mic_test:
         return mic_test(args.mic)
@@ -526,9 +761,18 @@ def main() -> int:
         pub.send("user_command", msg)
         print(f"[voice] -> user_command {json.dumps(msg)}", flush=True)
 
+    def publish_answer(msg: Dict[str, Any]) -> None:
+        pub.send("user_answer", msg)
+        print(f"[voice] -> user_answer {json.dumps(msg)}", flush=True)
+
+    robot = None if args.no_robot else RobotContext()
     if args.text or args.file:
         time.sleep(0.5)  # PUB/SUB slow joiner: let subscribers connect before the one-shot message
-        vc = VoiceCommander(publish, wake=not args.no_wake, mic="off")
+        t_wait = time.monotonic()
+        while robot is not None and args.wait_ask > 0 and robot.open_question() is None \
+                and time.monotonic() - t_wait < args.wait_ask:
+            time.sleep(0.05)
+        vc = VoiceCommander(publish, wake=not args.no_wake, mic="off", on_answer=publish_answer, robot=robot)
         if args.text:
             vc.handle_text(args.text, 1.0)
         for f in args.file or []:
@@ -537,7 +781,7 @@ def main() -> int:
         pub.close()
         return 0
 
-    vc = VoiceCommander(publish, wake=not args.no_wake, mic=args.mic)
+    vc = VoiceCommander(publish, wake=not args.no_wake, mic=args.mic, on_answer=publish_answer, robot=robot)
     if vc.mic is None:
         print("[voice] no microphone backend found (install PipeWire/PulseAudio tools or use --file/--text)")
         return 1

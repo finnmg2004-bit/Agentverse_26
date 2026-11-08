@@ -75,3 +75,10 @@ alarm)" to "laundry (heard)"; that is why the terrace exit was not already exclu
 - Owner wander on or off during the take? (On = more "unscripted", but less repeatable.)
 - Does the evacuation cross the carpet in the current build? Rehearse and keep whichever is true; the reason text must match.
 - Who is the "owner" voice in the video?
+
+## Take B (experimental): a taught task, then smoke (~60 s, draft, not rehearsed)
+Only if the teachable-task track (overnight E1 + `teach_bedtime`) is merged and green; otherwise stay with the star take.
+1. Owner (voice or GUI box): *"Nudge, every night at 10, take me to bed."* The screen confirms, the GUI **Tasks** tab lists "bedtime" (~8 s).
+2. Press **Jump to 21:59** in the GUI clock; at 22:00 the task fires: Nudge finds the owner, says "It's 10 pm. Time for bed.", offers the handle and guides to the guest bedroom (~35 s).
+3. **Smoke alarm** while guiding: emergency pre-empts the task, continuous vibration, exit choice with Gemma's reason on screen (~15 s). Stop recording once the evacuation starts.
+Cue check: the task must fire within ~5 s of the clock jump, or cut beat 2 short. Not yet recorded: needs `teach_bedtime` passing on integration.
