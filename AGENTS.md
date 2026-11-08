@@ -903,6 +903,20 @@ Not today: **#21 LED colours** (kept as they are, team decision).
 - [ ] Teo → Sean (recording + robot map):
   - **Robot map:** please post tests 1 + 2 here when they finish, even partial. With no room for the soak (test 3), the map stays **off** for the demo by the rule above and goes in the pitch as "built, off by default"; nothing to change on the recording laptop.
   - **Which owner the video shows:** since `18dbcad` a Renderpeople scan installed in `assets/models/` still wins over Ricktho's Busy man. If the recording laptop has the scan Ricktho copied, the video shows that; `--owner busy` (or `NUDGE_OWNER=busy`) forces Busy man (YOLO 98 %). Either is fine, just pick one on purpose. The GUI Start-up tab now lists busy / visitor too (`e03fdc5`).
+  - Sean → Teo, Eden: **robot-map tests 1 + 2** (RTX 5060, main `4e27195`, `NUDGE_ROBOT_MAP=1`):
+    - 1 (with `--coco-objects`): **11/12 PASS** - doorbell 59 s, knock 60, smoke 41, kettle 97, oven_timer 97, chair 60,
+      smoke_blocked_exit 80, owner_moved 72, demo 86, robot_map_tv 90, robot_map_sofa 110; **carpet_rule FAIL** (150 s).
+    - 2 (default house): doorbell, knock, smoke, kettle, oven_timer, chair, smoke_blocked_exit, owner_moved PASS; **carpet_rule FAIL**
+      (the rest still running).
+    - **The carpet_rule FAIL is NOT the robot map**: it fails the same way with the flag OFF on `4e27195` (re-run 12:20). So for
+      the map decision: everything else passes, plus your soak 9/9.
+- [ ] Sean → Eden + Ricktho + Finn: **URGENT, `carpet_rule` (default suite, and the start of the demo story) FAILS on main since
+  agent B / D merged** (it passed at 11:06 on `6a81081`): after the spoken carpet command, the doorbell `[B]` is judged
+  "That was the TV, not the door." -> doorbell unresolved after 120 s, 0 alerts. Same with `NUDGE_ROBOT_MAP` on or off.
+  Likely cause: the owner's voice for the `user_command` is played from the owner's spot in the living room, next to the TV,
+  just before the doorbell, so agent B's sound check (direction + loudness vs the TV) calls the real doorbell "TV"; `doorbell`
+  and `demo` (no spoken command) still pass. Repro: `python scripts/test_scenarios.py carpet_rule -v`. Please fix before the
+  12:45 freeze, or drop the sound check / owner voice from the demo path.
 - [ ] Teo → Sean + Eden: **robot-map test 3 (soak) is running now on Teo's PC** (3 rounds of doorbell + smoke + smoke_blocked_exit, `NUDGE_ROBOT_MAP=1`, plain-code decisions), so neither of you needs to find room for it. Result + verdict here by **12:30**. If it shows a failure, the fix lands on a side branch and Teo merges it only if it re-passes; Sean, your tests 1 + 2 stay valid unless I say otherwise here. The map goes into the demo only if 1, 2 and 3 are all green (the rule above); then the recording needs `NUDGE_ROBOT_MAP=1` and, Eden, the GUI's Robot map tab in view.
 - [ ] Teo → Eden (for agent L, Rescan) + Sean: **explorer geofence in the apartment.** The explorer's only outside knowledge is a "stay inside this box" rectangle (the geofence), so it doesn't drive out of an open door into the garden. `scripts/test_mapping.py` takes it from `house_layout.HOUSE_BOUNDS`, which `--house apt` / `NUDGE_HOUSE=apt` already swaps to the apartment's box (23 x 15 m), so the geofence itself follows the house. **Agent L: build the Rescan's `FrontierExplorer(geofence=...)` from `house_layout.HOUSE_BOUNDS` the same way, never a hard-coded box**, then it works in both houses. One gap left, in Teo's file: the robot's map grid (`robot_map.py` `ORIGIN` / `SIZE_M`) is sized for the big house, and the apartment's south edge (y < -7) falls 0.5 m outside it; Teo fixes that so the grid follows `HOUSE_BOUNDS` (no change for the default house). Rescan in the apartment is untested; nobody needs to test it before the freeze.
 - [x] Sean → Teo + Eden: **apartment checks (12.0b, Sean 2)** on the RTX 5060, `NUDGE_HOUSE=apt`, main `877960b`, own ports (no contention seen):
