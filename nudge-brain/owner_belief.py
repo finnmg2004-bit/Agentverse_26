@@ -11,6 +11,11 @@ A discrete Bayes filter over rooms: P(owner is in room r).
   look(pose)     Camera frame WITHOUT a detection: every room whose owner spot / floor sample
                  is inside the camera's field of view, in range and not behind a wall gets
                  down-weighted ("negative evidence"). Rooms the robot has looked into fade.
+  hear(probs)    The owner's VOICE was localised by the ears (sound_localizer.py, label "owner_voice"):
+                 p(r) ~ snapshot(r) x (VOICE_FLOOR + probs[r]), where snapshot = the belief when this
+                 utterance started. Re-applied on every window of the same utterance (the localiser's
+                 room probabilities sharpen as evidence accumulates), so repeating it never over-counts;
+                 end_utterance() makes the next sentence fresh evidence.
   best_room()    Where to search next: probability discounted by travel distance (hops).
 
 The dashboard draws P(room) as a heat map, so judges can watch the belief move.
@@ -36,6 +41,7 @@ P_DETECT = 0.15           # chance one camera frame detects a visible owner (10 
 MOVE_RATE = 1.0 / 90.0    # people change room roughly every 1.5 min
 HOP_DISCOUNT = 0.35       # search score = P / (1 + HOP_DISCOUNT * hops)
 FLOOR = 1e-4
+VOICE_FLOOR = 0.05        # hear(): rooms the voice did not come from keep 5 % weight (reverb, mislocalisation)
 
 
 def _samples(room: str) -> List[Tuple[Tuple[float, float], float]]:
@@ -53,6 +59,7 @@ class OwnerBelief:
         # Prior: the owner's usual room, then other rooms they spend time in, then the rest.
         p = {r: (0.45 if r == prior_room else 0.09 if r in self.spot_rooms else 0.01) for r in self.rooms}
         self.p: Dict[str, float] = self._norm(p)
+        self._voice_snapshot: Optional[Dict[str, float]] = None  # belief at the start of this utterance
 
     @staticmethod
     def _norm(p: Dict[str, float]) -> Dict[str, float]:
@@ -75,6 +82,20 @@ class OwnerBelief:
         if room not in self.p:
             return
         self.p = self._norm({r: (0.97 if r == room else 0.03 / (len(self.rooms) - 1)) for r in self.rooms})
+
+    def hear(self, room_prob: Dict[str, float]) -> None:
+        """Owner's voice localised: P(room) from sound_localizer (any subset of rooms, need not sum to 1)."""
+        if not room_prob:
+            return
+        if self._voice_snapshot is None:
+            self._voice_snapshot = dict(self.p)
+        snap = self._voice_snapshot
+        self.p = self._norm({r: snap.get(r, FLOOR) * (VOICE_FLOOR + float(room_prob.get(r, 0.0)))
+                             for r in self.rooms})
+
+    def end_utterance(self) -> None:
+        """The owner stopped talking: the next sentence is new evidence (snapshot taken again)."""
+        self._voice_snapshot = None
 
     def visible_fraction(self, pose: Tuple[float, float, float], room: str) -> float:
         x, y, yaw = pose

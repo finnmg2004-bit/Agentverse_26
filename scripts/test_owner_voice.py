@@ -31,6 +31,7 @@ from hearing import StereoHearing  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
 
 WINDOWS = 6  # 3 s of talking
+MISSION_CONF = 0.5  # main.py NEW_SOUND_CONF: one window this high starts a mission
 
 
 def main() -> int:
@@ -41,6 +42,7 @@ def main() -> int:
     clip = d.astype(np.float32) / 32768.0
     hearing = StereoHearing()
     bad = 0
+    wrong = 0
     for noise_name in a.noise:
         noise = AmbientNoise(np.random.default_rng(1))
         noise.set(noise_name)
@@ -68,11 +70,16 @@ def main() -> int:
             top = est["room_probs"] if est else {}
             best = next(iter(top), None)
             ok = best == room
-            bad += (not ok) + bool(false_hits)
+            # a false MISSION = a household sound >= main.py NEW_SOUND_CONF (0.5) from the voice alone;
+            # a wrong room from ONE pose (front/back ambiguity, no head turn) is soft evidence, not a failure
+            missions = [h for h in false_hits if max(h.values()) >= MISSION_CONF]
+            bad += bool(missions)
+            wrong += not ok
             print(f"{noise_name:6} owner in {room:12} speech {np.mean(speech):.2f} (min {min(speech):.2f})  "
                   f"az {np.mean(rel):+5.0f} (true {truth:+4.0f})  -> {best} {top}"
-                  f"{'' if ok else '  WRONG ROOM'}{'  FALSE SOUND ' + str(false_hits[:2]) if false_hits else ''}")
-    print(f"\n{bad} problem(s)")
+                  f"{'' if ok else '  WRONG ROOM'}{'  FALSE SOUND ' + str(false_hits[:2]) if false_hits else ''}"
+                  f"{'  FALSE MISSION' if missions else ''}")
+    print(f"\n{bad} case(s) with a false mission, {wrong} wrong top room(s) from one robot pose")
     return 1 if bad else 0
 
 

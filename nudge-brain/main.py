@@ -32,6 +32,7 @@ from vision import OwnerDetector  # noqa: E402
 from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
+from owner_voice import OwnerVoice  # noqa: E402  (#10: where the owner is when they speak)
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
 from tasks import OwnerActivity, TaskRunner, TaskStore, confirmation  # noqa: E402
 from ask import AnswerListener, AskOwner  # noqa: E402
@@ -143,6 +144,7 @@ class Brain:
         self.executor = SkillExecutor(self.nav, self.alerts)
         self.agent = NudgeAgent()
         self.localizer = SoundLocalizer()
+        self.owner_voice = OwnerVoice()
         self.evac = EvacuationPlanner(self.nav.planner)
         # What the owner tells the robot (GUI text box / voice): rules.py
         self.cmd_listener = CommandListener()
@@ -188,6 +190,7 @@ class Brain:
         self.executor.skill = Skill()
         self.world = WorldModel()
         self.localizer.reset()
+        self.owner_voice.reset()
         self.latched = {}
         self.deferred = set()
         self.sound_events.reset()
@@ -209,6 +212,7 @@ class Brain:
 
         # Localise the sound from the ears (direction + loudness, accumulated as the robot moves).
         changed = self.localizer.update(res, self.world.robot_pose)
+        self.hear_owner_voice(res)
         if changed:
             est = self.localizer.estimate(changed)
             self.world.sound_estimates[changed] = est
@@ -284,6 +288,20 @@ class Brain:
                 self.world.mission["sound"] = label
                 if self.alerts.mode != "none":
                     self.alerts.set_for_sound(label)
+
+    def hear_owner_voice(self, res: dict) -> None:
+        """#10: the owner spoke -> owner belief from where the voice came from (owner_voice.py). If the robot
+        is walking to search a room and the voice now points elsewhere, it heads for the new best room."""
+        if self.owner_voice.update(res, self.world, self.localizer) is None:
+            return
+        w = self.world
+        sk = self.executor.skill
+        if (isinstance(sk, GoToRoom) and w.mission is not None and w.phase == "searching"
+                and not w.owner_recently_seen(3.0) and self.owner_voice.logged_room is not None):
+            room = w.best_search_room()
+            if room != sk.room and w.belief.p[room] >= 0.5:
+                w.log(f"OWNER VOICE: searching {room} instead of {sk.room}")
+                self.executor.execute({"tool": "go_to_room", "args": {"room": room}}, w)
 
     def on_camera(self) -> None:
         meta, rgb, depth = self.bridge.latest_camera
@@ -588,6 +606,8 @@ class Brain:
             "backends": {"hearing": self.hearing.backend_name, "vision": self.vision.backend},
             # last sentence the owner said/typed, as received (control GUI "Heard:" line)
             "heard": self.last_heard,
+            # C6: where the owner's voice came from, last utterance (owner_voice.py), or None
+            "owner_voice": self.owner_voice.status,
             # debounced sound start/stop events + what Nudge heard in the last 5 min (hearing.SoundEvents)
             "sound_events": list(self.sound_events.log)[-10:],
             "heard_sounds": self.sound_events.what_did_i_hear(since_t=w.t_sim - 300.0),

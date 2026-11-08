@@ -74,6 +74,22 @@ ALARM_TONE_MIN_SHARE = 0.15
 SMOKE_TONAL_RULE = os.environ.get("NUDGE_SMOKE_TONAL", os.environ.get("NUDGE_REAL_AUDIO", "0")) not in (
     "0", "", "false", "off")
 YAMNET_SMOKE_CAP_WITH_KETTLE = 0.45  # < SoundEvents.START_CONF (0.5): a capped score is no smoke start event
+# The owner's voice (#10) vs the doorbell / knock spectral rules: speech formants and syllables live in their
+# 110-700 Hz bands, so the owner talking alone scored doorbell up to 0.67 and knock 0.97 (false missions).
+# When YAMNet hears speech and does NOT hear that sound itself, the SPECTRAL score is damped:
+# x (1 - (1 - SPEECH_DAMP_MIN) * ramp(speech, SPEECH_DAMP_FROM .. SPEECH_DAMP_FULL)). Only these sounds:
+# the kettle / oven rules are narrowband tonality tests that speech never fires, and a tier-1 sound
+# (smoke alarm) is never damped (safety). A real doorbell / knock masks the voice for YAMNet (speech <= 0.06
+# with the owner talking at the same time), so they are not damped. NUDGE_SPEECH_DAMP=0 = off.
+SPEECH_DAMPED_SOUNDS = ("doorbell", "knock")
+SPEECH_DAMP_FROM = 0.15
+SPEECH_DAMP_FULL = 0.5
+SPEECH_DAMP_MIN = 0.2
+SPEECH_DAMP_YAMNET_MAX = 0.2   # YAMNet's own score for the sound below this = YAMNet doesn't hear it
+# ...and the oven timer: a few voice windows (sibilants) reach oven tonality ~13 (score 0.58, a false oven
+# mission); the real timer is >= 82 everywhere. While speech is heard, a weaker "beep" than this is damped too.
+SPEECH_OVEN_TONAL_MIN = 40.0
+SPEECH_DAMP = os.environ.get("NUDGE_SPEECH_DAMP", "1") != "0"
 
 
 def zero_scores() -> Dict[str, float]:
@@ -366,9 +382,16 @@ class StereoHearing:
             if (kettle_gate and spectral["smoke_alarm"] < 0.3 and alarm_tonal < ALARM_TONE_UNCAP
                     and "smoke_alarm" in yamnet_scores):
                 yamnet_scores["smoke_alarm"] = min(yamnet_scores["smoke_alarm"], YAMNET_SMOKE_CAP_WITH_KETTLE)
+            ramp = min(1.0, max(0.0, (self._speech - SPEECH_DAMP_FROM) / (SPEECH_DAMP_FULL - SPEECH_DAMP_FROM)))
+            speech_damp = 1.0 - (1.0 - SPEECH_DAMP_MIN) * ramp if SPEECH_DAMP else 1.0
             for sound in SOUNDS:
                 y = yamnet_scores.get(sound, 0.0)
                 sp = spectral[sound] if self.allow_spectral else 0.0
+                damped = sound in SPEECH_DAMPED_SOUNDS or (sound == "oven_timer"
+                                                           and oven_tonal < SPEECH_OVEN_TONAL_MIN)
+                if (speech_damp < 1.0 and damped and y < SPEECH_DAMP_YAMNET_MAX
+                        and int(SOUND_SOURCES[sound].get("tier", 3)) > 1):
+                    sp *= speech_damp  # the owner talking, not a doorbell / knock (never a tier-1 sound)
                 scores[sound] = round(max(y, sp), 3)
                 sources[sound] = "yamnet" if y >= sp else "spectral"
             yamnet_scores = {k: round(v, 3) for k, v in yamnet_scores.items()}
