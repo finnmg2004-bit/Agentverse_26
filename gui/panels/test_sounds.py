@@ -4,8 +4,8 @@ agent J's unknown-sound reasoning (P4) and the hearing gate that stops them faki
 
 Sends the sim's gui action {"action": "play", "file": "unknown/<clip>.wav", "pos": [x, y], "level", "repeat"}
 (sim/clip_player.py): the robot's ears hear it from that spot (distance, walls, direction) and the laptop speakers
-play it. The brain reacts by default (NUDGE_UNKNOWN_EVENTS=0 turns it off; then it should simply not start any
-mission: no fake doorbell).
+play it. The brain only reacts with NUDGE_UNKNOWN_EVENTS=1 (off by default); otherwise it should simply not start
+any mission (no fake doorbell).
 """
 from pathlib import Path
 
@@ -41,7 +41,7 @@ def build(ctx):
     _ctx = ctx
     dpg.add_text("Sounds Nudge has no rule for (dog, glass...). It should never treat them as a doorbell.",
                  color=(150, 150, 155, 255))
-    dpg.add_text("Brain reaction: glass / crash -> finds + tells the owner; water -> asks; dog -> log only (45 s cooldown)",
+    dpg.add_text("Brain reacts only with NUDGE_UNKNOWN_EVENTS=1: glass / crash -> tells the owner; water -> asks; dog -> log only",
                  color=(150, 150, 155, 255))
     with dpg.group(horizontal=True):
         dpg.add_text("Room")
@@ -65,7 +65,7 @@ def update(ctx):
         return
     _sig = sig
     if not ev:
-        dpg.set_value("testsounds_brain", "none yet (brain off with NUDGE_UNKNOWN_EVENTS=0)")
+        dpg.set_value("testsounds_brain", "none yet (start the brain with NUDGE_UNKNOWN_EVENTS=1 to react)")
         return
     dpg.set_value("testsounds_brain", ", ".join(f"{k}: {v}" for k, v in ev.items()
                                                  if k in ("label", "category", "room", "action", "source",
