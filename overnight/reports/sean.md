@@ -8,9 +8,10 @@
   - S4 owner states: `state.owner_state_gt` = `awake|asleep|idle` (judge only); gui action `{"action": "owner_state", "state": "asleep"}`. Asleep = moved to the guest bed, still, wakes only on a `1_pulse`+ nudge (slower reaction), then awake. Idle = awake, no wandering. [R] -> awake. New scenario `asleep_doorbell` (default suite) PASS: robot searches, nudge wakes the owner, front door after 72 s.
   - S5 `scripts/soak.py` (N rounds through `locked_test.py`, pass-rate table, failure lines for flaky ones). Tonight's run on this branch: all green, no flaky scenarios (table under "Soak results").
 - Behind a flag / experimental:
+  - S7 COCO stand-ins, `run_sim.py --coco-objects` / `test_scenarios.py --coco-objects`: bed (guest NW corner), couch (living room SW corner), wall TV (living room north wall, above LiDAR height) added via MjSpec in new `sim/coco_standins.py` (group 0; `worlds/nerv-world/` and `sim/world.py` untouched). `state.objects_gt` lists them + the house's dining table and fridge (judge only; `[]` without the flag). Nav map stays the plain house. With the flag: doorbell, smoke, carpet_rule, smoke_blocked_exit, asleep_doorbell PASS; check_world passes.
   - S3 teach scenarios `teach_bedtime`, `cant_do_that`, `teach_kettle` (`experimental`, run by name). They FAIL on this branch on purpose (no E1 code here); E0 runs them on integration. Harness additions (only used by these): `("clock", t|"task", "HH:MM")`, `("on_task", delay, key)`, `expect_task`, `expect_owner_room`, `run_for`, `expect_says`/`forbid_says`, `forbid_log`. Brain status is captured by wrapping `bridge.send_status` in-process; owner room from `state.owner_pos_gt` (:5555).
 - S6: nothing to fix - both soaks (core x3, wider set x2) were 22/22 PASS on this branch.
-- Not done: S7
+- Not done: nothing left in the queue (S1-S7 done).
 - Merge risks (files, contract assumptions):
   - `state.owner_state_gt` changed meaning (activity -> awake/asleep/idle, as AGENTS.md describes); the old activity value is now `state.owner_activity_gt`. Nothing outside `run_sim.py` read it on integration at 02:05.
   - New files `sim/sim_clock.py`, `scripts/check_clock.py` (not in the lane file list, but sim-side/new; nobody else touches them).
@@ -42,6 +43,7 @@ Soak 20261108-0303: 2 rounds in 19 min, logs `~/nudge-overnight/soak/20261108-03
 - `kettle_during_doorbell` (still `experimental`, flagged ~50 % flaky in the TODO) passed 2/2 here; too few runs to un-flag it, worth a longer soak on integration (`python scripts/soak.py -n 5 kettle_during_doorbell`).
 
 ## Needs from others
+- eden-mapping (E3): COCO objects for the head camera are available with `--coco-objects`; ground truth to score object memory against is `state.objects_gt` (`class`, `pos`, `room`).
 - eden-gui (E2): optional owner-state selector (awake/asleep/idle) sending `{"action": "owner_state", "state": ...}` on :5557.
 - eden-tasks (E1): publish non-mission replies as brain status `say` (see contract note); `cant_do_that` must log no `MISSION ` and no `guide_owner_to(`; the kettle "just tell me" path must not use the default kettle sentence ("I will take you to the kitchen").
 - eden-gui (E2): a clock field/button in the GUI could send `{"action": "clock", "time": "HH:MM"}` on :5557 and show `state.sim_clock`.
@@ -62,3 +64,4 @@ Soak 20261108-0303: 2 rounds in 19 min, logs `~/nudge-overnight/soak/20261108-03
 - 02:09: S4 owner states + asleep_doorbell, 60b1ad6, tested: asleep_doorbell PASS, doorbell PASS, owner_moved PASS, smoke PASS
 - 02:50: S5 soak.py + soak doorbell/smoke/carpet_rule/demo x3, 90ea9ec, tested: 12/12 PASS
 - 03:22: S6 wider soak (kettle_during_doorbell, smoke_blocked_exit, asleep_doorbell, kettle, oven_timer x2), no code change, tested: 10/10 PASS
+- 03:53: S7 COCO stand-ins + objects_gt behind --coco-objects, 7638a26, tested: coco_standins self-check OK, check_world OK, flag on: doorbell/smoke/carpet_rule/smoke_blocked_exit/asleep_doorbell PASS, flag off: doorbell PASS
