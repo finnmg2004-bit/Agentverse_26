@@ -423,6 +423,7 @@ class SoundEvents:
     Built-in missions react to the raw 2 Hz scores; taught tasks ("when the oven timer goes, ...")
     and `what_did_i_hear()` need clean events instead:
       start: a registry sound scores >= START_CONF in START_WINDOWS consecutive 0.5 s windows
+             (tier 1 / danger: one window >= DANGER_START_CONF = 0.6, the safety pre-emption threshold)
       stop:  it then scores < STOP_CONF in STOP_WINDOWS consecutive windows
       (per sound: registry field `event_stop_windows`, e.g. knock = 8 because knocking comes in bursts)
     Event (contract C4 in overnight/README.md; taught tasks fire on phase == "start"):
@@ -443,6 +444,12 @@ class SoundEvents:
     START_WINDOWS = 2
     STOP_CONF = 0.25
     STOP_WINDOWS = 3
+
+    DANGER_START_CONF = 0.6  # = safety.py smoke pre-emption threshold
+
+    @staticmethod
+    def tier(name: str) -> int:
+        return int(SOUND_SOURCES.get(name, {}).get("tier", 3))
 
     @classmethod
     def stop_windows(cls, name: str) -> int:
@@ -466,7 +473,10 @@ class SoundEvents:
             conf = float(scores.get(name, 0.0))
             if name not in self.active:
                 self._above[name] = self._above.get(name, 0) + 1 if conf >= self.START_CONF else 0
-                if self._above[name] >= self.START_WINDOWS:
+                # Tier 1 (danger): one window at the safety pre-emption threshold is enough, like safety.py
+                # (the real smoke-alarm recording alternates 0.98 / 0.45 windows: 2-in-a-row was patchy).
+                danger_now = self.tier(name) == 1 and conf >= self.DANGER_START_CONF
+                if self._above[name] >= self.START_WINDOWS or danger_now:
                     ev = self._event(name, "start", conf, result, t)
                     self.active[name] = ev
                     self._below[name] = 0
