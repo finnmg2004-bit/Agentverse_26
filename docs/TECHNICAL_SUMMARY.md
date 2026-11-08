@@ -1,57 +1,57 @@
-# Nudge: a local-AI assistance dog for deaf, blind and deafblind people
-*Agentverse 2026, Robotics track. Technical summary (draft, Eden; numbers measured 2026-11-07)*
+# Nudge: a local-AI assistance dog that adapts to its owner and their home
+*Agentverse 2026, Robotics track. Technical summary (Eden, draft 12:10 on 2026-11-08; [TBC] = confirm after the 12:45 freeze)*
 
-**The problem.** A deaf or deafblind person cannot hear the doorbell, the kettle or the smoke alarm, and a
-blind person cannot see where to go. Nudge is a Unitree Go2 quadruped that hears household sounds for its
-owner, finds them anywhere in the house, nudges them, tells them what happened (vibration code on its handle,
-its screen, its voice) and leads them by the handle to the door, the kitchen, or out of the house in a fire.
+**The problem.** A deaf or deafblind person can't hear the doorbell, the kettle or the smoke alarm; a blind
+person can't see where to go. Nudge is a Unitree Go2 quadruped that hears the house for its owner, finds them,
+nudges them, tells them what happened (handle vibration, light, screen, voice) and leads them by the handle to
+the door, the kitchen, or out of the house in a fire. **Rules for safety, local Gemma for the unknown.**
 
-**How it works.** Two processes talk over ZeroMQ so 500 Hz physics never waits for AI.
-- **Simulator (MuJoCo):** a multi-room house (nerv-world) with the Go2, an owner who wanders and taps the
-  handle to acknowledge, a movable chair, a carpet, and sound sources. Sensors: head RGB-D camera, 36-ray
-  LiDAR, and two ears that synthesize stereo audio with distance and wall attenuation.
-- **Brain:** perception (YAMNet sound classifier fused with spectral rules, stereo bearing for sound
-  localisation; YOLOv8n person detection on the head camera; LiDAR), a Bayes filter over which room the owner
-  is in, and a two-layer agent.
-- **Reflex layer (plain code, milliseconds):** danger sounds pre-empt everything, obstacle stops, speed cap
-  near the owner, stale-command stop, and validation of every decision. The LLM can never override it.
-  In rehearsal, with the back exit blocked, Gemma proposed the terrace exit next to the kitchen fire; the
-  safety layer rejected it ("passes 1.6 m from the fire; the front door keeps 12.5 m") and the owner was
-  evacuated through the front door.
-- **Thinking layer (local Gemma 4 E2B via Ollama):** on each event it chooses one option from a menu of
-  legal actions built from live perception (e.g. "search the guest bedroom: owner probability 42 %, 9 m"),
-  with a one-line reason shown on screen; the answer is constrained by a JSON schema, so it cannot produce an
-  invalid action. It also writes the plain-words message for the owner and, in a fire, chooses the exit
-  (away from the fire, not blocked) and whether to call emergency services.
-- **The owner can teach it** by voice (local Whisper, wake word "Nudge") or text: "I've got a new carpet in
-  the living room, please don't step on it" becomes a structured rule that the route planner enforces.
-  Rules can never downgrade a danger sound. **Teachable tasks (experimental):** one sentence such as "every night\n  at 10, take me to bed" becomes a small task program (trigger + steps built only from existing skills), shown\n  in the GUI task list; plain code validates and runs it, and tier-1 danger always pre-empts it.
+**How it works.** Two processes over ZeroMQ, so 500 Hz MuJoCo physics never waits for AI.
+- **Senses (simulated, like a real robot):** head RGB-D camera, 36-ray LiDAR, two ears that synthesize stereo
+  audio (distance + wall attenuation, interaural level/time difference, 5 background-noise profiles).
+- **Perception:** YAMNet + spectral rules (sounds), stereo bearing + triangulation (where a sound came from),
+  YOLOv8n (the owner, objects), a Bayes filter over which room the owner is in.
+- **Reflex layer (plain code):** a smoke alarm pre-empts everything; exit choice checked against the fire;
+  obstacle stops, speed cap near the owner, a 4 s watchdog on every LLM call. The LLM can never override it.
+- **Thinking layer (local Gemma 4 E2B, Ollama):** picks one option from a menu of legal actions built from live
+  perception, with a one-line reason on screen; JSON-schema-constrained, so it can't produce an invalid action.
 
-**Adapting to change (shown live).** Owner moved mid-search → re-search by probability; a chair blocks a
-doorway → LiDAR re-plan; a new carpet rule → route around it; smoke alarm during a doorbell task →
-immediate pre-emption; back exit blocked → a different exit.
+**Adapting to new situations (the focus).**
+- **Owner moves / speaks:** Nudge hears *where* the owner's voice comes from and searches that room first; a
+  camera sighting overrides it. Owner moved mid-search → re-search by probability.
+- **Is the sound real?** A doorbell on the TV is told apart from the real front door by direction + loudness
+  ("That was the TV, not the door"); [TBC] Nudge first turns and walks over to check.
+- **Unknown sounds [TBC]:** glass breaking, a dog, a baby crying, a crash: local Gemma reasons about what it
+  heard, where and the owner's state, then investigates, describes it to the owner, asks, or logs it; danger-like
+  sounds are always treated as top priority.
+- **Obstacles + getting stuck:** a chair in a doorway or in its path → back off, remember it, re-plan; if the
+  only door is blocked, it says so and escalates. A new carpet rule ("please don't step on it") → route around.
+- **When the owner doesn't respond:** after unanswered nudges it alerts the emergency contact and stays; in a
+  fire it asks "Shall I call 999?" and calls on yes or no answer, while still leading them out; a fallen owner on
+  the floor (Gemma looks at the camera image) → "Are you OK?" → 999.
+- **Teach it new jobs in one sentence:** "every night at 10, take me to bed", "when the kettle boils, just
+  tell me"; plain code validates them; calls/messages it can't make are refused.
+- **A home it has never seen:** a second home (apartment) selectable at start; the robot can explore a house by
+  itself (frontier exploration) and build its own map with objects and exits ([TBC] live "Rescan house" button).
+- **Owner profiles:** Deaf / Blind / Deafblind switch which outputs fire; speech only when the owner is near.
 
-**Operational autonomy.** Everything runs locally on a laptop; no cloud calls at runtime: YAMNet (TFLite),
-YOLOv8n (ONNX), Gemma 4 E2B (Ollama), Whisper (faster-whisper), Piper text-to-speech. Models are
-SHA-256-pinned and fetched by one command.
+**Operational autonomy.** 100 % local on a laptop, no cloud calls: YAMNet (TFLite), YOLOv8n (ONNX), Gemma 4 E2B
+(Ollama), Whisper (faster-whisper), Piper TTS. Models SHA-256-pinned, one fetch command.
 
 **Measured.**
 | What | Result |
 |---|---|
-| Gemma menu decisions, accuracy on the eval set | 97.8 % (base `gemma4:e2b`) |
-| Gemma decision latency, RTX 5050 laptop | ~0.4–0.9 s; 0 watchdog fallbacks over 16 calls in the test suite |
-| Spoken rule → structured rule (carpet) | Whisper transcript confidence 0.96; Gemma parse ~1.0–1.6 s |
-| Smoke alarm → Gemma's exit decision | ~0.8 s; owner outside ~24 s later (from the living room) |
-| End-to-end scenario tests | 9 / 9 pass (doorbell, knock, smoke, owner moved, chair, reset, carpet ×2, full demo) |
-| Simulation speed with the live 3D view | 1.00× real time (Windows) |
-| Doorbell → owner at the front door | ~58 s sim time |
+| Gemma decisions, recording laptop (RTX 5060) | **0.19 s** median, 0.26 s p95; 100 % inside the watchdog; 93 % on real logged decisions |
+| Hearing, 1,000 random trials (5 noise profiles, ESC-50 distractors) | registry sounds alerted **96 %** (median 0.5 s); **smoke alarm never missed** (0/51); noise alone **0 %** false alerts |
+| TV doorbell check | 0 of 243 real door sounds called "TV"; a real doorbell isn't delayed |
+| Owner detection (scanned / CC0 human models) | YOLOv8n sees the owner in **97–98 %** of head-camera views |
+| Robot's own map (frontier exploration) | **99.8 %** of the floor found, walls 97.4 % precise; TV + sofa found by itself |
+| Gemma owner check (standing / lying / not visible) | 9 / 10 test images |
+| Scenario tests | [TBC] full suite at the freeze (14/14 default on the morning merge) |
+| Adaptability benchmark (randomised unseen runs) | [TBC] Sean |
+| Simulation speed with the live 3D view | 1.00× real time |
 
-**Accessibility choices.** Output by tier (1 emergency, 2 needs action, 3 someone wants you): a distinct
-vibration pattern per tier, light colour, screen text and speech, so the same robot serves deaf, blind and
-deafblind owners. Messages are short and plain because for many BSL users English is a second language.
-Voice is one input among several, never the only one.
-
-**Limitations (honest).** The robot's pose comes from the simulator (a real robot needs SLAM); walking is
-kinematic, not a learned gait; some sound clips are synthesized and some furniture is proxy boxes; Gemma's
-speed depends on the laptop GPU (on a GTX 1650 it misses the 4 s budget about a third of the time, and the
-rules take over).
+**Limitations (honest).** [TBC: if localisation lands, "pose can be estimated from LiDAR (particle filter)";
+else] the robot's pose comes from the simulator (a real robot needs SLAM); walking is kinematic, not a learned
+gait; some furniture is proxy boxes; the apartment is experimental; teaching by sentence is ~89–93 % on our test
+set, so unknown phrasings fall back to "I can't do that yet".
