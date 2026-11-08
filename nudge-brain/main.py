@@ -38,6 +38,7 @@ from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
 from owner_voice import OwnerVoice  # noqa: E402  (#10: where the owner is when they speak)
 from sound_check import SoundCheck  # noqa: E402  ("Is the sound real?" TV vs front door, C9)
+from unknown_events import UnknownEvents  # noqa: E402  (P4: sounds with no rule, reasoned by Gemma)
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
 from tasks import OwnerActivity, TaskRunner, TaskStore, confirmation  # noqa: E402
 from ask import AnswerListener, AskOwner  # noqa: E402
@@ -195,6 +196,7 @@ class Brain:
                                            busy=lambda: self.agent.pending_info() is not None)
         self.owner_voice = OwnerVoice()
         self.sound_check = SoundCheck()
+        self.unknown = UnknownEvents(self.agent, self.localizer)  # NUDGE_UNKNOWN_EVENTS=0 = off
         self.evac = EvacuationPlanner(self.nav.planner)
         # What the owner tells the robot (GUI text box / voice): rules.py
         self.cmd_listener = CommandListener()
@@ -247,6 +249,7 @@ class Brain:
         self.localizer.reset()
         self.owner_voice.reset()
         self.sound_check.reset()
+        self.unknown.reset()
         self.latched = {}
         self.deferred = set()
         self.sound_events.reset()
@@ -286,6 +289,7 @@ class Brain:
         est = self.world.sound_estimates.get(res.get("label"))
         res["estimated_room"] = est["room"] if est and est["converged"] else None
         self.world.update_sound(res)
+        self.unknown.on_audio(res, self)  # P4: YAMNet hears something with no registry rule
         for ev in self.sound_events.update(res, self.world.t_sim):
             self.new_sound_events.append(ev)
             extra = f" after {ev['duration_s']:.1f}s" if ev["phase"] == "stop" else f" ({ev['confidence']:.2f})"
@@ -685,6 +689,7 @@ class Brain:
                 if self.world.phase == "guiding":
                     self.agent.submit("path_blocked", self.world)
 
+        self.unknown.tick(self)  # P4: finish an unknown-sound decision / investigate / deferred alert
         out = self.executor.step(self.world)
         if self.owner_check:
             if out.event == "owner_no_response":
@@ -820,6 +825,8 @@ class Brain:
             "fallen": self.fallen.status() if self.fallen else None,  # owner lying on the floor (fallen.py)
             # C9: last "Is the sound real?" verdict {"sound", "verdict": "real"|"tv", "reason", "t"} or None
             "sound_check": self.sound_check.status(),
+            # P4: last unknown sound {"label", "category", "room", "action", "by", "reason", "say", "t"} or None
+            "unknown_event": self.unknown.status,
         }
 
     def run(self, duration: float = 0.0) -> None:

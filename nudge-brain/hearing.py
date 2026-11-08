@@ -126,6 +126,7 @@ class StereoHearing:
         self._buf = np.zeros(YAMNET_SAMPLES, dtype=np.float32)
         self.speech_index: list = []
         self._speech = 0.0  # YAMNet speech score of the last window (the owner talking)
+        self._topk: list = []  # YAMNet top-5 (class, score) of the last window (unknown_events.py)
         yamnet_path = MODEL_DIR / "yamnet.tflite"
         class_map = MODEL_DIR / "yamnet_class_map.csv"
         if yamnet_path.exists() and class_map.exists():
@@ -155,6 +156,8 @@ class StereoHearing:
         mapped = {sound: float(max(s[i] for i in idx)) for sound, idx in self.yamnet_index.items()}
         self._speech = float(max((s[i] for i in self.speech_index), default=0.0))
         top = int(np.argmax(s))
+        # top-5 classes of this window (P4 unknown_events.py: sounds with no registry entry)
+        self._topk = [(self.yamnet_names[int(i)], round(float(s[i]), 3)) for i in np.argsort(s)[-5:][::-1]]
         return mapped, self.yamnet_names[top], float(s[top])
 
     @staticmethod
@@ -265,6 +268,7 @@ class StereoHearing:
                 "backend": self.backend_name,
                 "speech": 0.0,
                 "speech_gated": [],
+                "yamnet_topk": [],
             }
 
         # Compute Welch PSD / FFT spectrum on the 16 kHz mono signal
@@ -367,6 +371,7 @@ class StereoHearing:
         # Fuse with YAMNet: per sound, take the stronger of YAMNet and (if allowed) the spectral rules.
         yamnet_scores: Dict[str, float] = {}
         yamnet_top: Tuple[str, float] = ("", 0.0)
+        self._topk = []
         sources: Dict[str, str] = {}
         if self.tflite_interpreter is not None:
             yamnet_scores, top_name, top_score = self._yamnet()
@@ -414,6 +419,7 @@ class StereoHearing:
             "yamnet_scores": yamnet_scores,
             "spectral_scores": spectral,
             "yamnet_top": yamnet_top,
+            "yamnet_topk": list(self._topk),  # [(AudioSet class, score)] top-5, [] without YAMNet
             "rel_azimuth_deg": rel_az,
             "world_azimuth_deg": world_az,
             "ild_db": ild_db,

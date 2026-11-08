@@ -115,6 +115,7 @@ from sim.robot_nudge import NudgeFX
 from sim.sim_clock import SimClock
 from sim.night import NightScene  # agent F: night lighting (viewer / GUI view only)
 from sim.charging_dock import DockStatus  # agent F: charging-dock status light
+from sim.clip_player import ClipPlayer  # P4: gui action "play" (any clip from a position)
 from sim.house_layout import CHAIR_EXIT_POS
 from sim.house_layout import OWNER_VOICE
 from sim.house_layout import TV_SOURCE
@@ -166,6 +167,7 @@ class NudgeSimulator:
         self.tv_playing: Optional[str] = None
         self.tv_until: float = -1.0
         self.tv_cursor: int = 0
+        self.clips = ClipPlayer()  # P4 test sources: {"action": "play", "file": ..., "pos": [x, y]}
         if coco_objects:  # S7 (experimental): COCO-class stand-ins + state.objects_gt
             from sim.coco_standins import build_model_with_objects
             self.model, self.data = build_model_with_objects(verbose=True, cutaway=cutaway)
@@ -594,6 +596,8 @@ class NudgeSimulator:
         elif action == "tv":  # {"action": "tv", "play": "doorbell"|"knock"|"off"} (AGENTS.md 6.2, C9)
             play = str(payload.get("play", "off"))
             self.tv_play(None if play in ("off", "", "none") else play, source="GUI")
+        elif action == "play":  # P4: {"action": "play", "file": "unknown/glass_break.wav", "pos": [x, y]}
+            self.clips.play(payload)
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()
@@ -688,6 +692,7 @@ class NudgeSimulator:
         self.episode += 1
         self.voice_until = -1.0
         self.tv_playing, self.tv_until = None, -1.0
+        self.clips.stop()
         for s in list(self.active_sounds):
             self._stop_sound(s)
         self.owner_room_idx = 0
@@ -897,6 +902,7 @@ class NudgeSimulator:
                 "night": round(self.night.shown, 2),  # 0 day .. 1 night (viewer lighting; head camera unchanged)
                 "on_dock": self.dock.charging,  # robot parked on the charging dock (robot_dock)
                 "tv_playing_gt": self.tv_playing,  # sound the TV is playing (or None) - judge only
+                "played_gt": self.clips.names(),  # P4 clips playing (judge only)
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -930,7 +936,7 @@ class NudgeSimulator:
             talking = float(self.data.time) < self.voice_until
             pcm_bytes, audio_meta = self.sensors.synthesize_stereo_audio(
                 pose, self.active_sounds, voice_pos=tuple(owner_pos[:2]) if talking else None,
-                extra_sources=self.tv_window(),
+                extra_sources=self.tv_window() + self.clips.window(),
             )
             audio_meta["tv_gt"] = self.tv_playing  # judge/debug only, like active_gt
             audio_meta["t"] = round(float(self.data.time), 3)
