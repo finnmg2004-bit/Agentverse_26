@@ -23,9 +23,10 @@
     | smoke + doorbell | 140/400 | 1/400 (party, robot at the doorbell) |
 
     No smoke false positives (max 0.17 without an alarm). Other sounds are unchanged in `test_sound_events`. Scenarios smoke, kettle, doorbell, demo PASS. One-off `kettle_then_smoke` PASS (evacuation 75 s with AGC, 102 s without). The scenario-level gain is small because the robot rarely stands 1-3 m from the alarm in today's scenarios, but a kitchen mission would.
+  - **R3 teaching by voice** (`12a32d5`): the Whisper vocabulary now has task words, and the published `user_command.text` gets times normalised (`raw` stays as heard): "ten pm" / "10 p.m." -> "10 pm", "half past nine" -> "9:30", "quarter to seven" -> "6:45", "ten o'clock" -> "10:00". New `assets/audio/voice_tests/` (5 teach + 3 command clips, Piper) + `scripts/test_voice_clips.py`: **teach 5/5 exact, commands 3/3**, 0.64 s per clip (the old prompt got 4/5). The selftest passes, and nothing is copied back on "Nudge." alone, silence or babble. carpet_rule_voice PASS. **For eden-tasks:** times arrive as "10 pm", "9:30", "7:30 am", "10:00" (no "p.m.", no number words).
 - Behind a flag / experimental: `NUDGE_EVAC_HYSTERESIS=0` turns R1 off, `NUDGE_EAR_AGC=0` turns the R2c AGC off (both default on).
-- Not done: R3-R6.
-- Merge risks (files, contract assumptions): `sim/sensors.py` (+20 lines in `synthesize_stereo_audio`, audio only). `sim/house_layout.py` knock entry gained `event_stop_windows` (data only). `choose()` gained an optional `now=` kwarg and returns an extra `hysteresis` field. Callers are unchanged.
+- Not done: R4-R6.
+- Merge risks (files, contract assumptions): voice `text` is now time-normalised (an additive change in form; `raw` is unchanged). `sim/sensors.py` (+20 lines in `synthesize_stereo_audio`, audio only). `sim/house_layout.py` knock entry gained `event_stop_windows` (data only). `choose()` gained an optional `now=` kwarg and returns an extra `hysteresis` field. Callers are unchanged.
 - How to see it working: the EVAC decision dict has `hysteresis` = "kept (... only 1.0 m better)" / "switched (...)".
 
 ## Needs from others
@@ -41,3 +42,4 @@
 - 01:20: R2 sound triggers C4, e23638c, tested: test_sound_events sweep (kettle/oven 400/400 exactly-one), kettle PASS, oven_timer PASS, knock PASS; found R2b (false kettle start once in oven_timer)
 - 01:46: R2b false kettle/smoke starts at the stove, 33e7522, tested: test_sound_events PASS, oven_timer PASS, kettle PASS x3, smoke PASS; found R2c (smoke masked by the kettle at the stove)
 - 02:24: R2c sim ear AGC (smoke deaf spot in the kitchen), 1ade7e8, tested: offline smoke sweep 136/400 missed -> 0/400, test_sound_events PASS, smoke/kettle/doorbell/demo PASS, kettle_then_smoke (one-off) PASS
+- 02:44: R3 teaching by voice, 12a32d5, tested: test_voice_clips teach 5/5 + commands 3/3, voice --selftest PASS, carpet_rule_voice PASS
