@@ -27,7 +27,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_DIR = PROJECT_ROOT / "assets" / "models"
 OUT_DIR = MODEL_DIR / "owner"
-DEFAULT_SRC = MODEL_DIR / "rp_mei_posed_001_OBJ"
+DEFAULT_SRC = MODEL_DIR / "rp_posed_00178_29_OBJ"
 
 
 def pick_files(src: Path) -> tuple[Path, Path]:
@@ -35,8 +35,10 @@ def pick_files(src: Path) -> tuple[Path, Path]:
     if not objs:
         sys.exit(f"[owner] no .obj found in {src}")
     difs = list(src.rglob("*_dif_*.jpg")) + list(src.rglob("*_dif_*.png"))
+    if not difs:  # newer Renderpeople packs: tex/<name>_basecolor.jpg (4k) instead of *_dif_2k.jpg
+        difs = list(src.rglob("*basecolor*.jpg")) + list(src.rglob("*basecolor*.png"))
     if not difs:
-        sys.exit(f"[owner] no diffuse texture (*_dif_*.jpg/png) found in {src}")
+        sys.exit(f"[owner] no diffuse texture (*_dif_*.jpg/png or *basecolor*.jpg/png) found in {src}")
 
     def res_k(p: Path) -> int:  # rp_..._dif_2k.jpg -> 2
         m = re.search(r"_(\d+)k\.", p.name)
@@ -90,6 +92,8 @@ def main() -> int:
     img = cv2.imread(str(tex_path), cv2.IMREAD_COLOR)
     if img is None:
         sys.exit(f"[owner] could not read {tex_path}")
+    if max(img.shape[:2]) > 2048:  # 4k basecolor -> 2k, like the *_dif_2k.jpg packs
+        img = cv2.resize(img, (2048, 2048), interpolation=cv2.INTER_AREA)
     cv2.imwrite(str(OUT_DIR / "owner.png"), img)
     print(f"[owner] wrote   {(OUT_DIR / 'owner.obj').relative_to(PROJECT_ROOT)} ({vi} verts) + owner.png "
           f"({img.shape[1]}x{img.shape[0]})")

@@ -26,10 +26,10 @@ Optional, for the real local models: `pixi run fetch-models` downloads YOLOv8n, 
 Optional, for the realistic owner: `pixi run prepare-owner` (see [Owner model](#owner-model-third-party-asset-not-in-git) below).
 
 ### Owner model (third-party asset, not in git)
-The owner is **"Mei Posed 001"**, a free scanned human from **Renderpeople** (<https://renderpeople.com/free-3d-people/>), © Renderpeople. Their terms apply to free models too and do not allow sharing the files as downloadable 3D data (GTC §4.2b/§4.3b), so this public repo does not include them. To use it:
-1. Download the free model (OBJ version) from the link above.
-2. Unzip it so you have `assets/models/rp_mei_posed_001_OBJ/` (the whole `assets/models/` folder is gitignored).
-3. Run `pixi run prepare-owner`: it converts the 30k-triangle mesh and the 2k diffuse texture into `assets/models/owner/` for MuJoCo.
+The owner is a free scanned human from **Renderpeople** (<https://renderpeople.com/free-3d-people/>), © Renderpeople: by default **`rp_posed_00178_29`** (the earlier **"Mei Posed 001"**, `rp_mei_posed_001_OBJ`, works too). Their terms apply to free models too and do not allow sharing the files as downloadable 3D data (GTC §4.2b/§4.3b), so this public repo does not include them. To use it:
+1. Download a free posed model (OBJ version) from the link above.
+2. Unzip it into `assets/models/` so you have e.g. `assets/models/rp_posed_00178_29_OBJ/` with the `.obj` and a `tex/` folder (the whole `assets/models/` folder is gitignored).
+3. Run `pixi run prepare-owner` (another folder: `pixi run prepare-owner --src assets/models/<folder>`). It converts the mesh and the colour texture into `assets/models/owner/` (`owner.obj` + `owner.png`, metres, Z-up, feet on the floor) for MuJoCo. Both texture namings are found: older packs ship `*_dif_2k.jpg`, newer ones `tex/*_basecolor.jpg` (4k, shrunk to 2048×2048).
 
 Without it the sim falls back to the primitive owner, which YOLO does not recognise as a person (the brain's colour fallback still finds it).
 
@@ -145,6 +145,7 @@ planner.plan(H.ROBOT_START_XY, H.LANDMARKS["back_exit_outside"])   # [(x, y, doo
 | `pixi run brain` dashboard opens and closes at once (`KeyError: 'kettle'`) | `git pull` (fixed in `51dde78`) |
 | Dashboard / GUI window not visible | It may be behind other windows: Alt+Tab to "Nudge Brain" / "Nudge Control" |
 | `Address already in use` / two brains fighting | Another sim / brain / GUI / voice is still running: close it (`q` in the dashboard, Ctrl+C in its terminal) |
+| `[owner] no diffuse texture ... found` | The texture isn't in the folder `prepare-owner` reads: check for `*_dif_*.jpg` or `tex/*_basecolor.jpg`, or pass `--src assets/models/<folder>` |
 | `[voice] WARNING: mic muted or silent?` | Unmute the mic (Linux: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`) |
 | `[voice] WARNING: mic is clipping` | Lower the mic boost (Linux: `amixer -c 1 sset 'Internal Mic Boost' 0`, check the card with `arecord -l`) |
 
