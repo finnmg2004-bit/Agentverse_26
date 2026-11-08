@@ -39,6 +39,7 @@ sys.path.insert(0, str(ROOT / "nudge-brain"))
 # Teach scenarios (overnight contracts C1-C3) add:
 #   ("clock", when, "HH:MM")   set the sim clock via the `gui` topic; when = seconds, or "task" = as soon
 #                              as the brain status lists a taught task (C3 `tasks`)
+#   ("gui", t, {payload})       send any `gui` topic payload at t seconds (e.g. owner_state)
 #   ("on_task", delay_s, key)  press a key delay_s after the brain status first lists a taught task
 #   expect_task: {"kind": ...} brain status `tasks` must contain a task whose trigger.kind matches
 #   expect_owner_room: room    pass condition: the owner (state.owner_pos_gt) stays in this room >= 2 s
@@ -150,6 +151,16 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_alert": [],
         "experimental": True,
     },
+    "asleep_doorbell": {
+        "desc": "Owner ASLEEP in the guest bed (GUI owner_state) -> doorbell -> robot searches, finds them, "
+                "the 1-pulse nudge wakes them -> guide to the front door",
+        "actions": [("gui", 0.5, {"action": "owner_state", "state": "asleep"}), ("at", 2.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": [],
+        "expect_alert": ["1_pulse"],
+        "expect_sim": ["owner is now ASLEEP", "owner WAKES UP"],
+        "min_timeout": 180.0,
+    },
     "owner_moved": {
         "desc": "Doorbell, owner moved (living room -> guest room) while robot is en route -> search -> find",
         "actions": [("at", 1.0, "B"), ("at", 3.0, "O")],
@@ -246,7 +257,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     print(f"\n=== {name}: {spec['desc']}  [noise={noise}]")
     # Owner commands go out where the Nudge Control GUI publishes them (AGENTS.md 9.4).
     cmd_pub = None
-    if any(a[0] in ("cmd", "clock") for a in spec["actions"]):
+    if any(a[0] in ("cmd", "clock", "gui") for a in spec["actions"]):
         import zmq
         cmd_pub = zmq.Context.instance().socket(zmq.PUB)
         try:
@@ -323,6 +334,12 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             while state_sub is not None and state_sub.poll(0):
                 judge["state"] = json.loads(state_sub.recv_multipart()[1])
             for i, a in enumerate(list(pending)):
+                if a[0] == "gui":  # any control-GUI action, e.g. {"action": "owner_state", "state": "asleep"}
+                    if el >= a[1]:
+                        cmd_pub.send_multipart([b"gui", json.dumps(a[2]).encode()])
+                        print(f"    t={el:5.1f}s  gui {json.dumps(a[2])}")
+                        pending.remove(a)
+                    continue
                 if a[0] == "clock":  # set the sim clock (contract C2) like the GUI does
                     if (el >= a[1]) if isinstance(a[1], (int, float)) else judge["tasks_seen"]:
                         cmd_pub.send_multipart([b"gui", json.dumps({"action": "clock", "time": a[2]}).encode()])
@@ -417,7 +434,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     for l in sim.lines:
         if "SCENARIO" in l or "HOTKEY" in l or "AVOID AREA" in l or "NUDGE SAYS" in l:
             print(f"    {l}")
-    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "voice", "clock")]
+    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "voice", "clock", "gui")]
     for vp in voice_procs:  # what the voice process heard / published
         out = vp.communicate(timeout=30)[0] if vp.poll() is None else vp.stdout.read()
         for line in (out or "").splitlines():
