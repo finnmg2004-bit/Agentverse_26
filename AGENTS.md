@@ -914,4 +914,13 @@ Not today: **#21 LED colours** (kept as they are, team decision).
     - stuck: a chair wedged next to the archway → recovers in 1 step (`stuck_chair` PASS; before the fix it was stuck > 30 s).
   - **Line 54 [TBC] localisation:** agent I passed live (`NUDGE_LOCALIZE=1`, `doorbell` + `smoke` PASS). Offline: 0.08 m mean / 0.21 m max error on a 62 s, 5-room tour, against 9.4 m drift with odometry alone. It's experimental and off by default; global (kidnapped) start doesn't work yet.
 - [ ] Ricktho → Finn, Sean, Eden (12.0b items): **(2) done:** the owner's answers (`user_answer` from the voice mic :5558 and the GUI Yes / No buttons :5557) now play the owner's voice in the sim like `user_command` ("OWNER SPEAKS ... 'yes'"), so a spoken "yes" to "Shall I call 999?" is heard by the robot's ears. Sean: 2 lines in `sim/run_sim.py` (SUBSCRIBE `user_answer` + the topic check next to `user_command`). Tested: `smoke_999` PASS (52 s), `doorbell` PASS. **(1) P8 was already done** (`6357df6`, `NUDGE_INTERMITTENT=1`, see 9.5b), Eden: please tick it. **(3)** real PD / CC0 clips for agent J's unknown sounds: in progress (also checks agent J's warning that real glass / a dog bark can fire the spectral oven / doorbell rules).
-- [ ] Teo → Finn (FYI for your review of agent L, Rescan, when it reports): three things in Teo's mapping code worth a glance: (1) the `FrontierExplorer(geofence=...)` box comes from `house_layout.HOUSE_BOUNDS`, not a hard-coded box (so it also works with `--house apt`); (2) the new scan is saved to its own file, never over the PC's `assets/maps/robot_map.npz` / the committed `maps/robot_map.npz` unless the button is clearly meant to replace it; (3) anything that changes how the brain plans stays behind `NUDGE_ROBOT_MAP=1`, off by default. Ask Teo here if something in `explorer.py` / `robot_map.py` is unclear.
+- [ ] Teo → Eden (`docs/TECHNICAL_SUMMARY.md` @ 08cd41a): the brief asks for **where each model runs, with hardware and latency**; the draft only has Gemma's. Measured numbers (all local, no cloud):
+  | Model | Runs on | Latency |
+  |---|---|---|
+  | Gemma 4 E2B (Ollama), decisions | laptop GPU (RTX 5060) | 0.19 s median, 0.26 s p95 |
+  | Gemma 4 E2B, owner sentence → rule / task | laptop GPU (RTX 5060) | ~0.6 s |
+  | Gemma 4 E2B, camera look at the owner | laptop GPU (measured on a GTX 1650) | 1.6–2.5 s warm (never waited on) |
+  | YOLOv8n (ONNX Runtime), owner detection | CPU, 4 threads | ~60 ms per frame, 10 Hz camera |
+  | YAMNet (TFLite) + spectral rules, sounds | CPU, 2 threads | alert 0.5 s median after the sound starts (0.5 s audio windows) |
+  | Whisper base.en (faster-whisper int8), voice | CPU | ~0.5 s per sentence |
+  | Piper TTS, speech | CPU | voice loads in ~5 s at start-up (per-sentence time not measured) |
