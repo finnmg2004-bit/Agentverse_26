@@ -323,7 +323,10 @@ def yamnet_clean_accuracy(hearing: StereoHearing, dis_and_knock: dict) -> dict:
 
 # --------------------------------------------------------------------------- report
 def pct(a, b):
-    return f"{100.0 * a / b:.0f} %" if b else "-"
+    if not b:
+        return "-"
+    v = 100.0 * a / b
+    return f"{v:.1f} %" if 0 < v < 10 else f"{v:.0f} %"
 
 
 def draw_chart(path: Path, reg_rows, dis_rows, title: str) -> None:
@@ -482,7 +485,6 @@ def write_report(args, results, clean, elapsed, backend) -> None:
     syn = [r for r in reg if r["variant"] == "synth"]
     smoke = [r for r in reg if r["expected"] == "smoke_alarm"]
     smoke_syn = [r for r in smoke if r["variant"] == "synth"]
-    false_oth = [r for r in oth if r["wrong_alerts"]]
     false_reg = [r for r in reg if r["wrong_alerts"]]
     L.append("## Headline\n")
     L.append("| | result |\n|---|---|")
@@ -490,10 +492,17 @@ def write_report(args, results, clean, elapsed, backend) -> None:
              f"({sum(r['detected'] for r in syn)}/{len(syn)}) |")
     L.append(f"| (a) Registry sounds, all clips incl. real recordings | {pct(sum(r['detected'] for r in reg), len(reg))} "
              f"({sum(r['detected'] for r in reg)}/{len(reg)}) |")
-    L.append(f"| (b) Other sounds + background: false alert | **{pct(len(false_oth), len(oth))}** ({len(false_oth)}/{len(oth)}) |")
-    ev_oth = [r for r in oth if r["wrong_events"]]
-    L.append(f"| (b) same, with the 2-window debounce of `SoundEvents` | {pct(len(ev_oth), len(oth))} ({len(ev_oth)}/{len(oth)}); "
+    esc = [r for r in oth if r["kind"] == "other"]
+    bgr = [r for r in oth if r["kind"] == "background"]
+    fe = [r for r in esc if r["wrong_alerts"]]
+    L.append(f"| (b) Background noise only: false alert | **{pct(sum(bool(r['wrong_alerts']) for r in bgr), len(bgr))}** "
+             f"({sum(bool(r['wrong_alerts']) for r in bgr)}/{len(bgr)}) |")
+    L.append(f"| (b) Other real-world sounds (ESC-50): false alert | **{pct(len(fe), len(esc))}** ({len(fe)}/{len(esc)}) |")
+    ev_esc = [r for r in esc if r["wrong_events"]]
+    L.append(f"| (b) same, with the 2-window debounce of `SoundEvents` | {pct(len(ev_esc), len(esc))} ({len(ev_esc)}/{len(esc)}); "
              f"registry demo clips then detected {pct(sum(r['event_detected'] for r in syn), len(syn))} |")
+    fs = [r for r in esc if "smoke_alarm" in r["wrong_alerts"]]
+    L.append(f"| (b) of which a false smoke alert (= false evacuation) | {pct(len(fs), len(esc))} ({len(fs)}/{len(esc)}) |")
     L.append(f"| (b) Registry trials: alert for the wrong sound | {pct(len(false_reg), len(reg))} ({len(false_reg)}/{len(reg)}) |")
     L.append(f"| (c) Smoke alarm missed, demo clip | **{pct(sum(not r['detected'] for r in smoke_syn), len(smoke_syn))}** "
              f"({sum(not r['detected'] for r in smoke_syn)}/{len(smoke_syn)}) |")
