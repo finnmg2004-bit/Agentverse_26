@@ -94,3 +94,21 @@
 
 Re-tested after the fixes: `check-world` all passed; `sim/sim_clock.py`, `sim/night.py` (head camera still
 byte-identical), and `sim/charging_dock.py` OK. The new dock picture is `agentF_dock_render_v2.png`.
+
+Merged `origin/main` into the branch. Regression on the merged branch (before the dock move): doorbell PASS (59.7 s), smoke PASS (52.9 s).
+
+## Round 3: the charging dock moves to the entry hall (team feedback P10)
+- `house_layout.LANDMARKS["robot_dock"]` is now `(-1.4, -2.5)` = `ROBOT_START_XY`. The robot starts every run parked on the
+  dock, facing north, and the status light is green from the start (`state.on_dock` true).
+  The old spot was robot_home (8.0, -2.7), the upstream ROBOT_HOME_XY.
+  **AGENTS.md section 4 still lists (8.0, -2.7). Eden: please update it.**
+- The dock is now a **low charging pad**: a 2.4 cm plate (0.76 × 1.10 m) with copper contacts, a light front stripe and a printed
+  lightning bolt, plus an 8 cm rear lip on the south edge that carries the LED bar. Everything is below the nav map's 0.10 m band and the
+  0.32 m LiDAR plane, so it **cannot block** the front-door route, the guest/entry door, the archway, or the owner's path.
+  `python sim/charging_dock.py` checks this: no nav-map obstacle within 0.6/0.8 m, no LiDAR ray hits it, and the robot at the start pose counts as on the dock.
+- Why no upright panel: I first built a 0.8 m side tower east of the start pose. YOLO, from 10 head-camera viewpoints in the entry, scored it as:
+  - next to the open front-door opening: "tv" 0.36 (dark tower), 0.48 (0.54 m tower), 0.38 (light-coloured tower). The bare house scores 0.26.
+  - looking west at the tower: "person" 0.35, the `vision.py` threshold. The bare house scores 0.31.
+  With the pad: "tv" 0.33 (below object_memory's tv MIN_CONF 0.40), "person" 0.32 (the house's own baseline), no owner detection, no HSV hit.
+  It also scores "bench" up to 0.53, but bench is not a class we use.
+- Picture: `agentF_dock_entry.png`.
