@@ -666,3 +666,11 @@ Agents share the test lock (`scripts/locked_test.py`) and stop at 11:35 (final p
 ### 12.5 Demo (decide at 11:45)
 Proposal using today's features: the owner (guest bedroom, out of sight) says "Nudge, I'm expecting a parcel" → Nudge hears where they are → doorbell (audible) → goes straight to the guest room, nudges, speaks, starts guiding → **unscripted:** smoke alarm → pre-empts, evacuates, asks "Shall I call 999?". Fallbacks: test videos A / B from the overnight run (`docs/DEMO_STORYBOARD.md`).
 Not today: **#21 LED colours** (kept as they are, team decision).
+
+### 12.6 Watching each other's pushes + questions (every session, today)
+- **AI assistants: watch GitHub for the rest of the day.** Run a background watcher that does `git fetch origin` every ~2 min and tells you about every new commit by someone else (author, branch, message, and whether it edits `AGENTS.md` / `TODO.md`). In Claude Code: a `Monitor` with a fetch loop (max 30 min per run; re-arm it when it expires). When something arrives, check whether it touches your files, conflicts with your work, or asks you something, and tell your human.
+- **Questions go in 12.7 below**, one line each: `- [ ] <from> → <to>: <question>`. The answer goes on the next line, and the box is ticked when it's settled. Use names, not GitHub `@` mentions. Push the question straight away (small commit, AGENTS.md only) so the watchers pick it up.
+- Urgent or blocking: say it in the team chat as well.
+
+### 12.7 Questions & answers
+- (none yet)
