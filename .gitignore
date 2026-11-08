@@ -34,3 +34,8 @@ assets/models/
 # taught tasks (overnight C1), per machine
 assets/tasks.json
 assets/tasks.tmp
+
+# Evaluation datasets (ESC-50 etc., third-party licences: never commit) — `pixi run fetch-esc50`
+assets/datasets/
+# Hearing-eval raw outputs (the report + chart in docs/ are committed)
+assets/eval/
