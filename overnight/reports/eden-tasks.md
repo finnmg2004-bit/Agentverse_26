@@ -10,10 +10,12 @@
 - Behind a flag / experimental: E1.5 confirmation question (`NUDGE_ASK_CONFIRM=1`). For the demo: turn it on only if the GUI shows `ask` (E2) and someone answers it on camera; otherwise Nudge says the question and then "No answer, so I kept it" 20 s later. Tasks only run when someone teaches one, so with no taught task the brain behaves as before.
 - E1.6 `idle` + `owner_entered_room` triggers run: `tasks.OwnerActivity` (brain-side evidence only: owner seen > 0.5 m from where they were last still, spoke/typed, tapped/held the handle; seen in the same spot is NOT activity). Idle time is on the sim clock, so "two hours" is shown with a clock jump. Room entry = a sighting in another room (30 s cooldown). Brain status adds `owner_activity {idle_min, room}`. Live check: `scripts/idle_check.py <repo> idle_check_on` (ad-hoc, needs the sim clock, i.e. integration) PASS. Limitation for the summary: the robot only knows the owner moved when it sees them, so "haven't moved" really means "no sign of activity".
 - All E1 items are done. Next ticks: only fixes from STATUS.md / E0.
+- E0 note 03:50 (teach_bedtime steps on the carpet): not a bug. teach_bedtime sets no carpet rule, so the default route crosses the carpet (like `carpet_baseline`). Avoid areas apply to every Navigator plan, task missions included. Proof: `scripts/carpet_task_check.py <repo> carpet_task` (carpet rule + taught bedtime, forbid_sim `AVOID AREA`) PASS on integration 2f65136. Sean, optional: adopt it into test_scenarios.py as `teach_bedtime_carpet`.
 - Behaviour change on purpose: brain status `say` (top-level) = the current `nudge_says` text for 20 s. Sean's sim already reads it outside a mission, so the robot screen/speaker now also shows rule/teach confirmations and "can't do that" replies (needed by `cant_do_that`).
 - Behaviour change on purpose: `assets/tasks.json` is emptied at brain start unless `NUDGE_TASKS_KEEP=1`, so a task taught in one scenario never leaks into the next.
 - Behaviour change on purpose: an unknown sentence now gets the C1 "can't do that yet" reply instead of "Sorry, I did not understand. Please say it again." (needed by Sean's `cant_do_that`).
 - Merge risks (files, contract assumptions): `rules.py` (+ teach section), `main.py` (new `TaskAdapter` class, `tick_tasks()`, a branch in the `guide_complete` handling, status fields), new `tasks.py`, `.gitignore`. `main.py`/`tasks.py` were identical on integration before this, so the merge should be clean.
+- Fixed 04:30 (was under Needs from others): a taught sound task ("when the kettle boils, just tell me") now nudges with the trigger sound's tier pattern (kettle `2_pulse`), not the owner-request `1_pulse`. The mission stores `alert_sound`; main.py upgrades a 1-pulse alert to it. Built-in missions and time/idle/event tasks are unchanged.
 - How to see it working: `pixi run python scripts/test_tasks.py`; `scripts/test_scenarios.py teach_bedtime cant_do_that` on integration.
 
 ## Needs from others
@@ -21,7 +23,6 @@
 - Sean, optional: a scenario `teach_confirm` (env `NUDGE_ASK_CONFIRM=1`): teach -> "no" -> task gone; my `scripts/ask_check.py` has the two ad-hoc versions.
 - E0: run `teach_bedtime`, `cant_do_that` and `teach_kettle` on integration after merging 0f5e33e (all PASS on my temp merges). Note: integration's main.py is behind this branch (E1.5 adds `nudge-brain/ask.py`; merge the whole branch, not single files).
 - Sean, optional: adopt `idle_check_on` from `scripts/idle_check.py` into test_scenarios.py as `teach_check_on`.
-- Small, not blocking: a taught "tell me" task nudges with `1_pulse` (it runs as an owner-request mission), not the sound's tier pattern (`2_pulse` for the kettle). Could use the trigger sound's tier later.
 
 ## Contract assumptions / changes proposed
 - C2: the time trigger reads `state.sim_clock` ("HH:MM") + `state.sim_day`. It fires when the clock *crosses* the task time. A jump to more than 30 min past the time does NOT fire it (stale). "Jump to 21:59" and then letting the clock run does fire it. A clock going backwards (R reset) re-arms it.
@@ -30,6 +31,8 @@
 - Pixi isn't on PATH for the headless ticks on Eden's PC; tests run with `.pixi/envs/default/python.exe` directly.
 
 ## Heartbeat log
+- 04:30: taught sound tasks nudge with the sound's tier pattern, 0e990d1, tested: test_tasks PASS, teach_kettle (alerts seen 2_pulse) / kettle / doorbell / carpet_rule PASS on temp integration 2f65136 + this branch
+- 04:00: E0 carpet note checked (expected, no rule set); added carpet_task live check, 9026f7a, tested: carpet_task PASS on integration 2f65136
 - 03:50: E1.6 idle / owner_entered_room triggers (OwnerActivity), fa2a08e, tested: test_tasks PASS, carpet_rule/doorbell/smoke PASS, idle_check_on PASS on temp integration+E1.6
 - 03:12: E1.5 ask_owner brain side behind NUDGE_ASK_CONFIRM, 8a00022, tested: test_tasks PASS, ask_check ask_no/ask_timeout PASS (flag on), carpet_rule/doorbell/smoke PASS (flag off)
 - 02:30: E1.4 sound task replaces the built-in response, 0f5e33e, tested: test_tasks PASS, carpet_rule/doorbell/smoke PASS, teach_kettle + kettle PASS on temp integration+E1.4
