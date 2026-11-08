@@ -40,7 +40,7 @@ pose. These rooms are large and open, and from there the 4 m LiDAR sees too few 
 look-alike rooms. In one of them the estimate was in fact right (0.31 m) but did not pass the uniqueness check.
 When the robot is kidnapped while tracking it recovers more easily, because it keeps driving and sees new walls.
 
-**Regression, flags off** (`scripts/test_scenarios.py --port-base 7255 doorbell smoke`, 13:01): **doorbell PASS,
+**Regression, flags off** (`scripts/test_scenarios.py --port-base 7255 doorbell smoke`, 13:01 and again 13:08 after merging main): **doorbell PASS,
 smoke PASS** (49.8 s).
 **Live, `NUDGE_LOCALIZE=1 NUDGE_LOCALIZE_GLOBAL=1` doorbell (port 7265, 13:03): FAIL.** The filter never
 converged (`mode: global, converged: false`, err 10.3 m, 3600 particles, so at least one search ran) and the
