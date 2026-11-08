@@ -27,3 +27,6 @@ Judging weights to hit: perception-driven action 25 %, adapting to scene changes
 - [ ] Screenshot: safety rejection in the GUI event log (from the rehearsal)
 - [ ] Short carpet-rule clip (voice → "Nudge says" → shaded no-go area)
 - [ ] Numbers slide (from `docs/TECHNICAL_SUMMARY.md`)
+
+## Pitch note: "Teaching it" slide, variant B (experimental)
+Replace the carpet clip (2:50-3:30) or add 20 s: the owner says "every night at 10, take me to bed"; Gemma turns it into a task program (trigger + steps from existing skills only), the Tasks tab shows it, the clock jumps to 21:59 and Nudge acts. Say: "New jobs are data, not code; the validator only allows known skills, and a smoke alarm beats every task." Unsupported requests get an honest "Sorry, I can't do that yet."

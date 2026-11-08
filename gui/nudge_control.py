@@ -915,6 +915,8 @@ class NudgeControl:
                     what = auto.pop(0)[1]
                     if what.lower().startswith("cam="):
                         self.preset(what[4:])
+                    elif what.lower().startswith("clock="):
+                        self.send({"action": "clock", "time": what[6:]})
                     elif what.lower().startswith("say="):
                         self.send_command(what[4:])
                     else:
