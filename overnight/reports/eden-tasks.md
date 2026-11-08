@@ -10,6 +10,7 @@
 - Behind a flag / experimental: E1.5 confirmation question (`NUDGE_ASK_CONFIRM=1`). For the demo: turn it on only if the GUI shows `ask` (E2) and someone answers it on camera; otherwise Nudge says the question and then "No answer, so I kept it" 20 s later. Tasks only run when someone teaches one, so with no taught task the brain behaves as before.
 - E1.6 `idle` + `owner_entered_room` triggers run: `tasks.OwnerActivity` (brain-side evidence only: owner seen > 0.5 m from where they were last still, spoke/typed, tapped/held the handle; seen in the same spot is NOT activity). Idle time is on the sim clock, so "two hours" is shown with a clock jump. Room entry = a sighting in another room (30 s cooldown). Brain status adds `owner_activity {idle_min, room}`. Live check: `scripts/idle_check.py <repo> idle_check_on` (ad-hoc, needs the sim clock, i.e. integration) PASS. Limitation for the summary: the robot only knows the owner moved when it sees them, so "haven't moved" really means "no sign of activity".
 - All E1 items are done. Next ticks: only fixes from STATUS.md / E0.
+- 05:00 check on integration 2a8ded5 (all branches merged): teach_kettle PASS (2_pulse), cant_do_that PASS; E0 had teach_bedtime PASS. So all three teach scenarios are green on the merged head.
 - E0 note 03:50 (teach_bedtime steps on the carpet): not a bug. teach_bedtime sets no carpet rule, so the default route crosses the carpet (like `carpet_baseline`). Avoid areas apply to every Navigator plan, task missions included. Proof: `scripts/carpet_task_check.py <repo> carpet_task` (carpet rule + taught bedtime, forbid_sim `AVOID AREA`) PASS on integration 2f65136. Sean, optional: adopt it into test_scenarios.py as `teach_bedtime_carpet`.
 - Behaviour change on purpose: brain status `say` (top-level) = the current `nudge_says` text for 20 s. Sean's sim already reads it outside a mission, so the robot screen/speaker now also shows rule/teach confirmations and "can't do that" replies (needed by `cant_do_that`).
 - Behaviour change on purpose: `assets/tasks.json` is emptied at brain start unless `NUDGE_TASKS_KEEP=1`, so a task taught in one scenario never leaks into the next.
@@ -31,6 +32,7 @@
 - Pixi isn't on PATH for the headless ticks on Eden's PC; tests run with `.pixi/envs/default/python.exe` directly.
 
 ## Heartbeat log
+- 05:00: no STATUS items; checked the teach scenarios E0's suite skips on integration 2a8ded5 (no code change), tested: teach_kettle (alerts 2_pulse) PASS, cant_do_that PASS
 - 04:30: taught sound tasks nudge with the sound's tier pattern, 0e990d1, tested: test_tasks PASS, teach_kettle (alerts seen 2_pulse) / kettle / doorbell / carpet_rule PASS on temp integration 2f65136 + this branch
 - 04:00: E0 carpet note checked (expected, no rule set); added carpet_task live check, 9026f7a, tested: carpet_task PASS on integration 2f65136
 - 03:50: E1.6 idle / owner_entered_room triggers (OwnerActivity), fa2a08e, tested: test_tasks PASS, carpet_rule/doorbell/smoke PASS, idle_check_on PASS on temp integration+E1.6
