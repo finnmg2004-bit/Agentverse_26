@@ -46,7 +46,17 @@ Pressing it puts the running brain into **scan mode** (`nudge-brain/scan_mode.py
   [M] smoke -> scan aborted (not saved) in < 1 s and the smoke emergency ran; `scan` during the emergency
   -> refused. All 11 checks PASS, exit 0 (first run: 37 %, same result).
 - Regression (no scan): `test_scenarios.py doorbell smoke --port-base 6955`: **PASS doorbell (60.9 s), PASS smoke (52.5 s)**.
-- GUI screenshot mid-scan: see the final message (taken with sim + brain + GUI under the shared lock).
+- GUI screenshot mid-scan (sim + brain + GUI under the shared lock, Rescan pressed via `NUDGE_GUI_AUTOSCAN=12`):
+  `C:\Users\edenu\AppData\Local\Temp\claude\d399a05716f65f38\5ea040e9-93e2-4524-8d35-865ff9703f0f\scratchpad\rescan_gui_mid2.png`
+  (Robot map tab: "Scanning... 26 % known, 1:28", brain phase "scanning", event log "SCAN started (cap 600 s)").
+  Not committed (800 KB).
+
+## Known limits
+- At the default GUI window height the Robot map tab's map drawing (560 px, existing layout) is below the
+  fold: scroll the tab. The buttons + status line are always visible.
+- No YOLO objects during the rescan (objects / rooms carried over from the previous map).
+- A non-emergency mission (doorbell, owner request, task) also ends the scan without saving (simplest safe rule).
+- The new map is used for planning from the next brain start (`NUDGE_ROBOT_MAP=1`), not hot-reloaded.
 
 ## Merge notes
 - New files only, plus the small hooks above. No contract field removed or renamed.
