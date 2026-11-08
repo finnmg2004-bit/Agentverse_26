@@ -205,7 +205,8 @@ def live(args) -> int:
         ctrl = FrontierExplorer(geofence=GEOFENCE)
     elif args.mode == "scan":
         from explorer import ViewpointScan
-        ctrl = ViewpointScan(mb.grid, H.ROBOT_START_XY, geofence=GEOFENCE)
+        first = tuple(float(v) for v in args.scan_from.split(",")) if args.scan_from else H.ROBOT_START_XY
+        ctrl = ViewpointScan(mb.grid, first, geofence=GEOFENCE)
         print(f"[test_mapping] scan: {ctrl.total} viewpoints", flush=True)
     else:
         ctrl = Tour(args.rooms.split(","))
@@ -343,6 +344,8 @@ def replay(args) -> int:
                 grid.integrate_depth(tuple(meta["robot_pose"]), np.load(f).astype(np.float32))
     det, mem = (None if args.raw_in else ObjectDetector()), ObjectMemory()
     mem.grid = grid
+    if mp and mp.exists() and args.keep_objects:      # add to the map's objects instead of starting empty
+        mem.load(_o)
     raw, n_frames = [], 0
     if args.raw_in:     # re-score saved detections (tuning the memory's filters without re-running YOLO)
         raw = json.loads(Path(args.raw_in).read_text())
@@ -390,8 +393,10 @@ def main() -> int:
     ap.add_argument("--record", default=None, help="record states + camera frames (2 Hz) into this directory")
     ap.add_argument("--replay", default=None, help="offline: objects + rooms on a recording")
     ap.add_argument("--raw", action="store_true", help="replay: also write raw_detections.json")
+    ap.add_argument("--keep-objects", action="store_true", help="replay: start from the --load map's objects")
     ap.add_argument("--raw-in", default=None, help="replay: re-score a saved raw_detections.json instead of YOLO")
     ap.add_argument("--time-cap", type=float, default=600.0)
+    ap.add_argument("--scan-from", default=None, help="scan: order the viewpoint tour starting nearest to x,y")
     ap.add_argument("--gui", action="store_true")
     ap.add_argument("--port-base", type=int, default=5555,
                     help="sim ports: state PUB = base, cmd = base+1, gui = base+2 (use e.g. 5655 next to other tests)")

@@ -86,6 +86,8 @@ def _load_saved():
         root = Path(__file__).resolve().parents[2]
         f = root / "assets" / "maps" / "robot_map.npz"
         if not f.exists():
+            f = root / "maps" / "robot_map.npz"     # the explored map committed to git
+        if not f.exists():
             return
         if str(root / "nudge-brain") not in sys.path:
             sys.path.insert(0, str(root / "nudge-brain"))
