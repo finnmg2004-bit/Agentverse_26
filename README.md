@@ -1,5 +1,7 @@
 # Nudge — a local-AI assistance dog for deaf, blind and deafblind people
 
+The correct video is attached below, this is incorrect on builder base.
+
 Agentverse 2026, Robotics Track. A Unitree Go2 in MuJoCo **hears the house for its owner** (doorbell, knock, kettle, oven timer, smoke alarm, and sounds it has no rule for), **finds them**, **nudges** them, tells them what happened (handle vibration code, light bar, on-robot screen, voice) and **leads them by the handle** to the door, the kitchen, or out of the house in a fire. Everything runs **locally** on a laptop: no cloud calls.
 
 **Rules for safety, local Gemma for the unknown.** Plain-code reflexes (danger first, obstacles, speed near the owner, a watchdog on every LLM call) can never be overridden; a local Gemma 4 model makes the judgement calls, picking from a menu of legal actions built from live perception, with its reason shown on screen.
