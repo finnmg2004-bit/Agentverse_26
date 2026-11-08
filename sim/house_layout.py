@@ -475,3 +475,21 @@ def count_walls_crossed(p1: Vec2, p2: Vec2) -> int:
         return ccw(a, c, d) != ccw(b, c, d) and ccw(a, b, c) != ccw(a, b, d)
 
     return sum(1 for sa, sb in WALL_SEGMENTS_2D if intersects(p1, p2, sa, sb))
+
+
+# --------------------------------------------------------------------------- #
+# EXPERIMENTAL other house (start-up option --house / NUDGE_HOUSE=apt). Default: unset -> nothing
+# changes. Otherwise sim/layouts/<name>.py, which defines the same names, replaces them here.
+# --------------------------------------------------------------------------- #
+def _select_house() -> None:
+    import importlib
+    import os
+    name = os.environ.get("NUDGE_HOUSE", "").strip().lower()
+    if name in ("", "house"):
+        return
+    mod = importlib.import_module(f"sim.layouts.{name}")
+    globals().update({k: v for k, v in vars(mod).items() if not k.startswith("__")})
+    print(f"[layout] EXPERIMENTAL house {name!r}: {WORLD_SCENE_XML}")
+
+
+_select_house()
