@@ -411,6 +411,7 @@ SCENARIOS: Dict[str, Dict] = {
                        "MISSION REQUEST", "NUDGE SAYS:"],
         "forbid_log": ["SAFETY PRE-EMPT", "-> log_only"],
         "expect_alert": ["continuous"],
+        "unknown_events": True,  # turn on unknown_events.py for this run
         "experimental": True,
     },
     "unknown_baby": {
@@ -423,6 +424,7 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["UNKNOWN SOUND: baby crying", "UNKNOWN DECISION"],
         "forbid_log": ["SAFETY PRE-EMPT", "-> log_only"],
         "expect_alert": [],
+        "unknown_events": True,  # turn on unknown_events.py for this run
         "experimental": True,
     },
     "unknown_during_doorbell": {
@@ -435,6 +437,7 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["alert_owner(doorbell", "guide_owner_to(front_door)"],
         "forbid_log": ["find owner + tell them", "asked the owner", "going to look in", "MISSION REQUEST"],
         "expect_alert": ["1_pulse"],
+        "unknown_events": True,  # turn on unknown_events.py for this run
         "experimental": True,
     },
     "owner_voice": {
@@ -510,6 +513,8 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     sim = SimProcess(gui, noise, duration=timeout + 15, extra=SIM_EXTRA_ARGS)
     with contextlib.redirect_stdout(io.StringIO()):
         brain = brain_main.Brain(show_dashboard=False)
+    if spec.get("unknown_events"):  # P4 scenarios: the feature is off by default (NUDGE_UNKNOWN_EVENTS)
+        brain.unknown.enabled = True
     # Ground truth + brain status, only for scenarios that judge on them (teach scenarios).
     judge = {"state": {}, "status": {}, "tasks_seen": [], "room_since": None}
     state_sub = None

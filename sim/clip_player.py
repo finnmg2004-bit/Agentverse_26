@@ -48,7 +48,7 @@ class ClipPlayer:
         except Exception as exc:
             print(f"[sim] play: can't play {name!r} ({exc})")
             return
-        repeat = max(1, int(payload.get("repeat", 1)))
+        repeat = min(10, max(1, int(payload.get("repeat", 1))))  # bounded: np.tile copies the clip
         clip = np.tile(self._cache[name], repeat)
         self.playing.append({"file": name, "clip": clip, "cursor": 0, "pos": xy,
                              "level": float(payload.get("level", 1.0))})
