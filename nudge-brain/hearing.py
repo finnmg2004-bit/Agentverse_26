@@ -60,6 +60,17 @@ KNOCK_BURST_GATE = 4.0
 # smoke-alarm recording has a 2.2-2.4 kHz component that fires the kettle rule on every other window,
 # and the cap then pushed a REAL alarm down to 0.45 (NUDGE_REAL_AUDIO=1). Kettle (+ oven) alone <= 65.
 ALARM_TONE_UNCAP = 150.0
+# Real-alarm rule (R5): a real smoke alarm beeps at ~2.8 kHz (the recording: 2.79 + 2.86 kHz), outside the
+# synthetic 2.95-3.4 kHz band, and through walls YAMNet hears it as "Police car (siren)". Rule: a sharp
+# tone in 2.6-3.6 kHz (tonality > ALARM_TONE_GATE) that also carries > ALARM_TONE_MIN_SHARE of the
+# window's energy (the real doorbell's chime harmonics reach tonality 563 but only ~1-25 % share).
+# Offline sweep (18 spots x 4 headings x 5 noise profiles, real + synthesized clips, alone and with
+# kettle / oven / doorbell): 0 / 15120 false windows; ~13 / 576 listening cases per combination missed.
+# A false window = a false evacuation, so it is opt-in: NUDGE_SMOKE_TONAL (default = NUDGE_REAL_AUDIO).
+ALARM_TONE_GATE = 100.0
+ALARM_TONE_MIN_SHARE = 0.15
+SMOKE_TONAL_RULE = os.environ.get("NUDGE_SMOKE_TONAL", os.environ.get("NUDGE_REAL_AUDIO", "0")) not in (
+    "0", "", "false", "off")
 YAMNET_SMOKE_CAP_WITH_KETTLE = 0.45  # < SoundEvents.START_CONF (0.5): a capped score is no smoke start event
 
 
@@ -295,6 +306,11 @@ class StereoHearing:
         kettle_ratio = self._band_energy(freqs, psd, 2150.0, 2400.0) / total_energy
         kettle_gate = kettle_tonal > KETTLE_TONAL_GATE and kettle_ratio >= KETTLE_MIN_RATIO
         alarm_tonal = self._tonality(freqs, psd, (2600.0, 3600.0), ((1700.0, 2100.0), (3700.0, 4400.0)))
+        if SMOKE_TONAL_RULE and alarm_tonal > ALARM_TONE_GATE:
+            alarm_share = self._band_energy(freqs, psd, 2600.0, 3600.0) / total_energy
+            if alarm_share > ALARM_TONE_MIN_SHARE:
+                score_smoke = max(score_smoke, float(np.clip(
+                    0.65 + 0.15 * math.log10(alarm_tonal / ALARM_TONE_GATE), 0.0, 0.97)))
         score_kettle = 0.0
         if kettle_gate:
             score_kettle = float(np.clip(max(kettle_ratio * 1.1,
