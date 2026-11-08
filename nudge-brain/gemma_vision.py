@@ -10,6 +10,8 @@ doesn't respond -> alert the emergency contact) and the agent's reasoning use it
     NUDGE_OWNER_CHECK=1         turn it on (default OFF: the brain behaves exactly as before)
     NUDGE_OWNER_CHECK_S=5       refresh interval while the owner is visible (s); forced checks
                                 (owner just seen, nudge without response, on demand) wait >= 2 s
+    NUDGE_OWNER_CHECK_ALWAYS=1  also check the whole frame every interval when YOLO sees nobody:
+                                YOLO misses an owner lying on the floor, Gemma doesn't (test script)
     NUDGE_VISION_MODEL=...      Ollama model (default: NUDGE_LLM_MODEL, else gemma4:e2b - the same
                                 model as the agent, so only one model sits in VRAM)
 
@@ -105,6 +107,7 @@ class OwnerChecker:
         self.model = model or os.environ.get("NUDGE_VISION_MODEL") or os.environ.get("NUDGE_LLM_MODEL") or "gemma4:e2b"
         self.interval_s = float(interval_s if interval_s is not None else os.environ.get("NUDGE_OWNER_CHECK_S", "5"))
         self.busy = busy or (lambda: False)
+        self.always = os.environ.get("NUDGE_OWNER_CHECK_ALWAYS", "0") == "1"
         self.log = log
         self._lock = threading.Lock()
         self._wake = threading.Event()
@@ -199,7 +202,7 @@ class OwnerChecker:
                 return None
             if self._forced:
                 trigger = self._forced
-            elif f["found"] and now - self._last_start >= self.interval_s:
+            elif (f["found"] or self.always) and now - self._last_start >= self.interval_s:
                 trigger = "periodic"
             else:
                 return None

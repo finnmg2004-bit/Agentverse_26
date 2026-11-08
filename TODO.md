@@ -7,6 +7,7 @@ Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00
 - [ ] **Eden:** #9 GUI mic button · merge + suites at 10:45 / 11:45 · then #15 GUI Deaf/Blind switch, demo, summary, pitch, submit
 - [ ] **Finn:** #13 999 call (ask first) · #20 no response → emergency contact · then #19 getting stuck, #11 search/paths
 - [ ] **Teo:** #16/#6 Gemma visual owner check (`owner_check`) + deeper reasoning · steer agents A + C (Modal + Gemma licence by 10:00)
+  - [x] Teo: `owner_check` (C7) built on `claude/gemma-vision-a43658`, `NUDGE_OWNER_CHECK=1`, `scripts/test_owner_check.py` 9/10 · **For Finn:** review the flagged hooks in `main.py` + `agent._situation` (AGENTS.md 12.4 C7); YOLO misses a lying owner, Gemma doesn't
 - [ ] **Sean:** #4 visible nudge · #12 speech on by default · #19 repro scenarios · then #15 modes on the robot, #1 night, #2 charging station
 - [ ] **Ricktho:** #3 audible sounds · YOLO check of the scanned owner · review agents B + D · then #8 owner in bed / on the sofa
 - [ ] **Agent A** `day/own-map`: Option A, 10.8 steps 1–5 (#7, #17, #18) + pitch clip
