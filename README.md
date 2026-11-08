@@ -86,7 +86,7 @@ Everything new is **off by default** unless listed as on.
 | `NUDGE_OWNER_CHECK` / `NUDGE_FALLEN_CHECK` | off | Gemma looks at the camera image (owner standing / lying / not visible; fallen owner → "Are you OK?" → 999) |
 | `NUDGE_ASK_CONFIRM` | off | After teaching a task, Nudge asks "…OK?" |
 | `NUDGE_REAL_AUDIO` | off | Real household recordings instead of the synthesized clips (experimental) |
-| `NUDGE_OWNER` / `NUDGE_HOUSE` | — | Owner model (`visitor`, or a downloaded scan) / house (`apt`) |
+| `NUDGE_OWNER` / `NUDGE_HOUSE` | — | Owner model (`busy` = default, `visitor`) / house (`apt`) |
 | `NUDGE_LLM_MODEL` | `gemma4:e2b` | Local Ollama model; the 4 s watchdog hands over to rules if it is slow or offline |
 
 ## 3. Tests and evaluations
@@ -117,10 +117,6 @@ Close the GUI / sim / brain / voice before `test-scenarios` (same ports 5555–5
 ### Owner model
 **Default, in git (everyone has it):** "Busy man" by Ricktho (Nudge team), **CC0**, made with MakeHuman (CC0 assets); YOLOv8n detects it in 98 % of head-camera views. Alternative: `NUDGE_OWNER=visitor` = "FemaleVisitor" by Wan Yi Seow, Open Robotics, **CC BY 4.0** (Gazebo Fuel). Files, credits and numbers: [`assets/owner_default/README.md`](assets/owner_default/README.md); regenerate with `scripts/prepare_default_owner.py`.
 
-**Optional, not in git: a Renderpeople scan** takes priority on a PC that has one. The owner is then a free scanned human from **Renderpeople** (<https://renderpeople.com/free-3d-people/>), © Renderpeople: by default **`rp_posed_00178_29`** (the earlier **"Mei Posed 001"**, `rp_mei_posed_001_OBJ`, works too). Their terms apply to free models too and do not allow sharing the files as downloadable 3D data (GTC §4.2b/§4.3b), so this public repo does not include them. **Never commit them.** To use one:
-1. Download a free posed model (OBJ version) from the link above.
-2. Unzip it into `assets/models/` so you have e.g. `assets/models/rp_posed_00178_29_OBJ/` with the `.obj` and a `tex/` folder (`assets/models/` and `rp_*_OBJ/` are gitignored).
-3. `pixi run sim` converts it automatically on its first start; `--owner <name>` picks one when you have several (`pixi run python scripts/prepare_owner.py --all` converts them all). `NUDGE_AUTO_OWNER=0` turns the automatic conversion off.
 
 ### Robot voice
 Local [Piper](https://github.com/OHF-Voice/piper1-gpl) text-to-speech (`piper-tts`, GPL-3.0; installed as a dependency, not included in this repo) through `speech/tts.py`. Voice: **en_US-ljspeech-medium** from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) (MIT), trained from scratch on the [LJ Speech dataset](https://keithito.com/LJ-Speech-Dataset/) (public domain). `pixi run fetch-models` downloads it; test with `pixi run python speech/tts.py "Take my handle."`.
