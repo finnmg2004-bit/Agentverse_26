@@ -21,6 +21,10 @@ Owner state (overnight S4; `state.owner_state_gt`, judge only, the brain must ne
   idle      awake but staying put (no wandering), e.g. to trigger a taught "idle" task.
   unresponsive  doesn't react to anything (no tap, won't take the handle): tests the brain's
             no-response escalation (#20). Added by Finn's lane; [R] / "awake" undo it.
+  fallen    lying on the floor where they are (the scan tipped over, as in scripts/test_owner_check.py),
+            reacts to nothing: tests the brain's fallen-owner check (YOLO misses a person lying down).
+            Optional "yaw" in the gui action = the direction the head points. Finn's lane; [R] / "awake"
+            stand them up again.
   Set by the `gui` action {"action": "owner_state", "state": "asleep"} (sim/run_sim.py).
 
 Sensors exposed to the brain (published in `state`):
@@ -52,7 +56,8 @@ LET_GO_HOLD_S = (2.0, 3.5)         # stands still at least this long after letti
 LET_GO_COOLDOWN_S = 30.0
 REGRAB_REACH = 1.1                 # robot handle within this distance -> owner can regrab
 NUDGE_CONTACT = 0.60               # robot centre this close + alert on = nudge felt
-OWNER_STATES = ("awake", "asleep", "idle", "unresponsive")
+OWNER_STATES = ("awake", "asleep", "idle", "unresponsive", "fallen")
+FALLEN_Z = 0.14                    # body origin height while lying (scan tipped over 90 deg)
 WAKE_ALERT_MODES = ("1_pulse", "2_pulse", "continuous")  # what can wake a sleeping owner (vibration)
 WAKE_REACTION_S = (1.5, 3.0)       # asleep: nudge felt -> awake + handle tap
 
@@ -118,12 +123,19 @@ class OwnerBehavior:
         """Activity: idle | walking | guided | alerted (published as `owner_activity_gt`)."""
         return self.state
 
-    def set_owner_state(self, state: str, t: float) -> bool:
-        """awake | asleep | idle (published as `owner_state_gt`). Returns False for an unknown state."""
+    def set_owner_state(self, state: str, t: float, yaw: Optional[float] = None) -> bool:
+        """awake | asleep | idle | unresponsive | fallen (published as `owner_state_gt`).
+        Returns False for an unknown state. `yaw` (fallen only): where the head points."""
         if state not in OWNER_STATES:
             return False
+        was_fallen = self.owner_state == "fallen"
         self.owner_state = state
-        self.loco.owner_grip = state != "unresponsive"  # an unresponsive owner never takes the handle
+        self.loco.owner_grip = state not in ("unresponsive", "fallen")  # neither ever takes the handle
+        if state == "fallen":
+            self._lie_down(self.yaw if yaw is None else float(yaw))
+        elif was_fallen:
+            ox, oy = self.loco.get_owner_pos()
+            self._set_pose(ox, oy, self.yaw)  # stand up again
         if state != "awake":
             self.state, self.path, self.target_yaw = "idle", [], None
         else:
@@ -161,6 +173,18 @@ class OwnerBehavior:
         self.loco.data.mocap_quat[mid] = yaw_to_quat(yaw)
         self.yaw = yaw
 
+    def _lie_down(self, yaw: float) -> None:
+        """Fallen: tip the owner 90 deg about the body's y axis (head along `yaw`, back on the floor)."""
+        mid = self.loco.owner_mocap_id
+        if mid < 0:
+            return
+        ox, oy = self.loco.get_owner_pos()
+        a, b = math.cos(yaw / 2), math.sin(yaw / 2)       # q_yaw = (a, 0, 0, b)
+        c = math.cos(math.pi / 4)                           # q_tip = (c, 0, c, 0)
+        self.loco.data.mocap_pos[mid] = [ox, oy, FALLEN_Z]
+        self.loco.data.mocap_quat[mid] = [a * c, -b * c, a * c, b * c]  # q_yaw * q_tip
+        self.yaw = yaw
+
     def _turn_toward(self, target_yaw: float, dt: float, rate: float = 1.5) -> None:
         ox, oy = self.loco.get_owner_pos()
         err = _wrap(target_yaw - self.yaw)
@@ -173,7 +197,7 @@ class OwnerBehavior:
         rx, ry, ryaw = robot_pose
         ox, oy = self.loco.get_owner_pos()
         d_robot = math.hypot(rx - ox, ry - oy)
-        if self.owner_state == "unresponsive":  # #20 test hook: feels nothing, taps nothing, holds nothing
+        if self.owner_state in ("unresponsive", "fallen"):  # #20 / fallen test hooks: feel, tap, hold nothing
             self.loco.owner_grip = False
             return
 

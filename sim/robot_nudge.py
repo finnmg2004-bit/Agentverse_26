@@ -140,7 +140,7 @@ class NudgeFX:
 
         # ---- owner reaction
         mid = loco.owner_mocap_id
-        if mid >= 0:
+        if mid >= 0 and getattr(owner, "owner_state", "awake") != "fallen":  # fallen: pose owned by owner_behavior
             asleep = getattr(owner, "owner_state", "awake") == "asleep"
             if self._was_asleep and not asleep:
                 self.wake_t = t

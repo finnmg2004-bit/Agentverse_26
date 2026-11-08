@@ -430,10 +430,12 @@ class NudgeSimulator:
             st = str(payload.get("state", ""))
             if st == "asleep":
                 self.set_owner_room("guest")  # in bed = guest bedroom
-            if self.owner.set_owner_state(st, float(self.data.time)):
+            yaw = payload.get("yaw")  # fallen: where the head points (optional)
+            if self.owner.set_owner_state(st, float(self.data.time),
+                                          yaw=float(yaw) if isinstance(yaw, (int, float)) else None):
                 print(f"[sim] GUI: owner is now {st.upper()}")
             else:
-                print(f"[sim] GUI: unknown owner state {st!r} (awake|asleep|idle)")
+                print(f"[sim] GUI: unknown owner state {st!r} (awake|asleep|idle|unresponsive|fallen)")
         elif action == "chair":  # #19 repro: {"pos": [x, y]} / {"x": .., "y": ..} / {"ahead": m} (in front of the robot)
             try:
                 if "ahead" in payload:  # e.g. dropped mid-guide right in front of the robot

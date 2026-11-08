@@ -152,6 +152,25 @@ SCENARIOS: Dict[str, Dict] = {
         "forbid_log": ["guide_owner_to("],
         "min_timeout": 160.0,
     },
+    "owner_fallen": {
+        "desc": "Owner FALLEN (lying on the floor, GUI owner_state) -> doorbell -> robot finds them on the floor "
+                "(fallen.py: depth + person detector / Gemma), stops beside them, asks 'Are you OK?', "
+                "no answer -> 999 (C8 reason fallen) -> stays with them (no nudging onto them, no guiding)",
+        # fallen check is off by default in the brain; the sim must render the real head camera (EGL):
+        # the headless pinhole fallback draws every owner upright, so nobody could ever lie down in it
+        "env": {"NUDGE_FALLEN_CHECK": "1", "MUJOCO_GL": "egl"},
+        "sim_args": ["--render-camera"],  # real head-camera renders, not the headless pinhole fallback
+        "actions": [("gui", 0.5, {"action": "owner_state", "state": "fallen", "yaw": 3.14159}), ("at", 2.0, "B")],
+        "expect_complete": [],
+        "run_for": 75.0,
+        "expect_log": ["FALLEN: owner LYING ON THE FLOOR", 'ASK ', "ESCALATION 999: calling", "reason fallen"],
+        "expect_alert": [],
+        "expect_says": ["on the floor", "calling 999"],
+        "forbid_log": ["guide_owner_to("],
+        "min_timeout": 140.0,
+        "experimental": True,  # needs NUDGE_FALLEN_CHECK (set above); with the scanned owner YOLO misses
+                               # them lying down, so the Gemma look (Ollama) has to confirm instead
+    },
     # ---- Teach scenarios (overnight contracts C1/C2/C3). Experimental until E1's teachable tasks
     # (nudge-brain/tasks.py) are on integration; E0 runs them there by name.
     "teach_bedtime": {
@@ -401,9 +420,17 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             cmd_pub.close(linger=0)
             print(f"--> {name}: FAIL (setup)")
             return False
-    sim = SimProcess(gui, noise, duration=timeout + 15, extra=SIM_EXTRA_ARGS)
+    # Per-scenario env (spec "env"): seen by the sim process and the Brain (both read it at start).
+    saved_env = {k: os.environ.get(k) for k in spec.get("env", {})}
+    os.environ.update(spec.get("env", {}))
+    sim = SimProcess(gui, noise, duration=timeout + 15, extra=list(SIM_EXTRA_ARGS) + list(spec.get("sim_args", [])))
     with contextlib.redirect_stdout(io.StringIO()):
         brain = brain_main.Brain(show_dashboard=False)
+    for k, v in saved_env.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
     # Ground truth + brain status, only for scenarios that judge on them (teach scenarios).
     judge = {"state": {}, "status": {}, "tasks_seen": [], "room_since": None}
     state_sub = None

@@ -267,6 +267,10 @@ def _situation(event: str, world) -> List[str]:
     if oc and oc.get("state") != "not_visible" and oc.get("age", 99.0) <= 10.0:
         lines.append(f"Camera look at the owner {oc['age']:.0f} s ago: {oc['description']} "
                      f"({oc['state'].replace('_', ' ')}).")
+    fallen = getattr(world, "fallen", None)  # fallen.py: someone lying on the floor YOLO can't see
+    if fallen and fallen.get("stage") != "ok":
+        lines.append(f"The camera sees the owner LYING ON THE FLOOR ({fallen.get('description', '')}); "
+                     f"Nudge is checking on them (stage: {fallen.get('stage')}).")
     if world.owner_ack == "acknowledged":
         lines.append("The owner acknowledged the alert (tapped the handle).")
     elif world.nudge_attempts:

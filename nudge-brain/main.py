@@ -31,6 +31,7 @@ from navigator import Navigator  # noqa: E402
 from skills import GoToRoom, Skill, SkillExecutor, SkillOutput, wrap  # noqa: E402
 from vision import OwnerDetector  # noqa: E402
 from gemma_vision import OwnerChecker  # noqa: E402  (Teo, C7 owner_check; NUDGE_OWNER_CHECK=1)
+from fallen import FallenWatch  # noqa: E402  (owner lying on the floor; NUDGE_FALLEN_CHECK=1 or NUDGE_OWNER_CHECK=1)
 from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
@@ -183,6 +184,9 @@ class Brain:
         # Gemma looks at the owner (C7, gemma_vision.py): None unless NUDGE_OWNER_CHECK=1
         self.owner_check = OwnerChecker.from_env(busy=lambda: self.agent.pending_info() is not None)
         self.localizer = SoundLocalizer()
+        # Owner lying on the floor (fallen.py): None unless NUDGE_FALLEN_CHECK=1 / NUDGE_OWNER_CHECK=1
+        self.fallen = FallenWatch.from_env(self.nav.planner, self.owner_check,
+                                           busy=lambda: self.agent.pending_info() is not None)
         self.evac = EvacuationPlanner(self.nav.planner)
         # What the owner tells the robot (GUI text box / voice): rules.py
         self.cmd_listener = CommandListener()
@@ -221,6 +225,8 @@ class Brain:
         self.last_heard = None  # last thing the owner told the robot (voice or GUI), for the GUI echo
         self.world.log(f"Brain up | hearing={self.hearing.backend_name} vision={self.vision.backend} "
                        f"agent={self.agent.backend}")
+        if self.fallen:
+            self.world.log("Fallen-owner check ON (fallen.py)")
 
     def reset(self, episode) -> None:
         """Sim was reset: drop the mission, plan, alerts, owner belief and pending agent decision."""
@@ -245,6 +251,8 @@ class Brain:
         self.last_owner_seen_event = 0.0
         if self.owner_check:
             self.owner_check.reset()
+        if self.fallen:
+            self.fallen.reset()
         self.episode = episode
         self.world.log(f"RESET by sim (episode {episode}) - ready")
 
@@ -339,6 +347,8 @@ class Brain:
         self.world.update_owner_detection(det)
         if self.owner_check:  # latest frame only; the check itself runs in its own thread
             self.owner_check.on_frame(rgb, det, self.world.t_sim)
+        if self.fallen:  # someone lying on the floor that YOLO can't see? (geometry + a Gemma look)
+            self.fallen.on_frame(rgb, depth, (float(pose[0]), float(pose[1]), float(pose[2])), self.world)
         now = time.monotonic()
         if (det["found"] and self.world.mission is not None and self.world.phase == "searching"
                 and now - self.last_owner_seen_event > OWNER_SEEN_COOLDOWN):
@@ -664,6 +674,8 @@ class Brain:
                 self.world.log(f"SKILL {self.executor.skill.label()}")
             else:
                 self.executor.execute(action, self.world)
+        if self.fallen:  # owner on the floor: approach, "Are you OK?", 999 (takes over until resolved)
+            self.fallen.tick(self)
 
         vx, vy, wz = safety.filter_cmd(out.vx, out.vy, out.wz, self.world, self.world.lidar_ranges,
                                        allow_contact=out.allow_contact)
@@ -747,6 +759,7 @@ class Brain:
             "owner_activity": self.owner_activity.status(),
             # C7: Gemma's camera look at the owner (NUDGE_OWNER_CHECK=1, else null)
             "owner_check": self.owner_check.status(w.t_sim) if self.owner_check else None,
+            "fallen": self.fallen.status() if self.fallen else None,  # owner lying on the floor (fallen.py)
         }
 
     def run(self, duration: float = 0.0) -> None:
