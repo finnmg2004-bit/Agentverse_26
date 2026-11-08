@@ -25,7 +25,11 @@ from typing import Dict, List, Optional, Tuple
 
 ENABLED = os.environ.get("NUDGE_ROBOT_MAP", "0") == "1"
 _ROOT = Path(__file__).resolve().parent.parent
-MAP_FILE = Path(os.environ.get("NUDGE_ROBOT_MAP_FILE", str(_ROOT / "assets" / "maps" / "robot_map.npz")))
+# Your own fresh map (assets/maps/, git-ignored) wins; else the explored map committed in maps/ (so no PC
+# has to re-explore); NUDGE_ROBOT_MAP_FILE overrides both.
+_LOCAL_MAP = _ROOT / "assets" / "maps" / "robot_map.npz"
+_SHARED_MAP = _ROOT / "maps" / "robot_map.npz"
+MAP_FILE = Path(os.environ.get("NUDGE_ROBOT_MAP_FILE", "") or (_LOCAL_MAP if _LOCAL_MAP.exists() else _SHARED_MAP))
 
 # object class -> (place key, words the owner may use)
 OBJECT_PLACES = {
