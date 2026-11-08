@@ -86,6 +86,7 @@ from sim.robot_voice import RobotVoice
 from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
 from sim.owner_behavior import OwnerBehavior
+from sim.sim_clock import SimClock
 from sim.house_layout import CHAIR_EXIT_POS
 
 VIEW_NAMES = ["top", "follow", "dog"]
@@ -115,6 +116,7 @@ class NudgeSimulator:
         gui_endpoint: str = "tcp://127.0.0.1:5557",
         owner_wander: bool = True,
         owner_seed=None,
+        clock: str = "08:00",
     ) -> None:
         self.cutaway = cutaway
         self.model, self.data = build_nudge_model(verbose=True, cutaway=cutaway)
@@ -127,6 +129,8 @@ class NudgeSimulator:
         from sim.nav_map import GridPlanner
         self.owner = OwnerBehavior(self.locomotion, lambda: GridPlanner(self.nav_map),
                                    seed=owner_seed, wander=owner_wander)
+        # Sim clock (contract C2): time of day in the house, advancing with sim time.
+        self.clock = SimClock(clock, float(self.data.time))
         self.chair_at_exit = False
 
         # Scene state controlled by hotkeys
@@ -372,6 +376,13 @@ class NudgeSimulator:
             if name in SOUND_SOURCES:
                 self._start_sound(name)
                 print(f"[sim] GUI: {SOUND_SOURCES[name].get('label', name)} started at {SOUND_SOURCES[name]['pos'][:2]}")
+        elif action == "clock":  # contract C2: {"action": "clock", "time": "21:59"}
+            try:
+                self.clock.set(str(payload.get("time", "")), float(self.data.time))
+                print(f"[sim] GUI: clock set to {self.clock.hhmm(float(self.data.time))} "
+                      f"(day {self.clock.day(float(self.data.time))})")
+            except ValueError:
+                print(f"[sim] GUI: bad clock time {payload.get('time')!r} (want HH:MM)")
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()
@@ -427,6 +438,7 @@ class NudgeSimulator:
         ox, oy = ROOMS[ROOM_ORDER[0]]["owner_spot"]
         self.locomotion.set_owner_pos(ox, oy)
         self.owner.reset(float(self.data.time))
+        self.clock.reset(float(self.data.time))
         self.chair_blocking = False
         self.chair_at_exit = False
         self.locomotion.set_chair_pos(*CHAIR_STOWED_POS)
@@ -446,12 +458,13 @@ class NudgeSimulator:
               f"{get_room_at(*ROBOT_START_POSE[:2])}, owner in {ROOM_ORDER[0]}, chair stowed, sounds off")
 
     def status_overlay(self) -> tuple:
-        """(title, detail) for the viewer's on-screen mission status."""
+        """(title, detail) for the viewer's on-screen mission status (title starts with the sim clock)."""
+        now = self.clock.hhmm(float(self.data.time))
         if self.mission_status == "complete":
-            return ("MISSION COMPLETE", self.mission_text)
+            return (f"{now}  MISSION COMPLETE", self.mission_text)
         if self.mission_status == "active":
-            return ("MISSION ACTIVE", self.mission_text)
-        return (f"READY (episode {self.episode})",
+            return (f"{now}  MISSION ACTIVE", self.mission_text)
+        return (f"{now}  READY (episode {self.episode})",
                 "B/K/M = sound   O = move owner   W = owner wander   C/E = chair   X = silence   R = reset"
                 "   N = noise   V = view")
 
@@ -589,6 +602,8 @@ class NudgeSimulator:
                 "avoid_steps": self.avoid_steps,
                 "avoid_areas": {k: list(v) for k, v in AVOID_AREAS.items()},
                 "nudge_says": self.nudge_says,  # what the robot screen shows / speaks
+                "sim_clock": self.clock.hhmm(float(self.data.time)),  # contract C2
+                "sim_day": self.clock.day(float(self.data.time)),
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -719,6 +734,8 @@ def main() -> None:
     parser.add_argument("--gui-sub", default="tcp://127.0.0.1:5557", help="Control GUI command address")
     parser.add_argument("--noise", choices=NOISE_NAMES, default="quiet",
                         help="Background noise profile at start (cycle live with [N])")
+    parser.add_argument("--clock", default="08:00",
+                        help="Sim clock start time HH:MM (state.sim_clock; [R] resets to it; GUI action 'clock' sets it)")
     parser.add_argument("--view", choices=VIEW_NAMES, default="top",
                         help="Viewer camera at start: top, follow (chase robot), dog (head camera); cycle with [V]")
     args = parser.parse_args()
@@ -732,6 +749,7 @@ def main() -> None:
         gui_endpoint=args.gui_sub,
         owner_wander=not args.owner_static,
         owner_seed=args.owner_seed,
+        clock=args.clock,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
