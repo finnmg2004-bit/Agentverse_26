@@ -16,8 +16,17 @@
   - **R2b false starts next to the stove** (`33e7522`): (1) the kettle rule now also needs >= 1e-3 of the window's energy in its band. The loud oven-timer beep clips at the stove and left a ~1e-6 "tonal" spur at 2.2 kHz, which gave `SOUND start: Kettle (0.55)` in `oven_timer`. (2) The YAMNet smoke cap with the kettle is now 0.45 (was 0.5 = the start threshold, which gave `SOUND start: Smoke alarm (0.50)` in `kettle`). Debug dump: `NUDGE_HEARING_DUMP=<dir>`.
   - **R2c ear AGC** (`1ade7e8`, `sim/sensors.py` audio part; that file is mine per AGENTS 9.1 and no lane owns it tonight). **CORRECTION (03:50): my "smoke deaf spot in the kitchen" claim was wrong.** My offline harness fed int16 instead of float audio, so YAMNet saw garbage. Re-measured with float input, the brain hears the synthesized alarm everywhere with or without AGC, because YAMNet carries it. The AGC still has a real effect, so keep it: without it, kettle + oven timer at the stove under vacuum noise give a **false smoke score of 0.76 (false evacuation)**, and with it the maximum is 0.45. The `kettle_then_smoke` evacuation was also faster (75 s vs 102 s). The ears now have a peak-limiting AGC instead of hard clipping (one gain for both ears, so ILD is kept). `NUDGE_EAR_AGC=0` gives the old behaviour.
   - **R5 slice 1** (`27ceff2`): (1) with the real recordings the "kettle is on" cap also suppressed the REAL smoke alarm. The recording has a 2.2-2.4 kHz part that fires the kettle rule on every other window. The cap is now skipped when an alarm tone at 2.6-3.6 kHz is present. Real smoke + kettle went from never detected (400/400 cases) to 180/400 missed. (2) Harness fix: `test_sound_events.py` now feeds float audio like the bridge. The R2/R2b numbers are the same after re-running.
+  - **R5 slice 2** (`280a251`): opt-in tonal smoke rule for real ~2.8 kHz alarms (a sharp tone in 2.6-3.6 kHz **and** > 15 % of the window's energy). Real recordings, listening cases that never reach 0.6 (of 400):
+    | | before tonight | after slice 1 | after slice 2 |
+    |---|---|---|---|
+    | smoke alone | 281 | 243 | **13** |
+    | smoke + kettle | 400 | 180 | **15** |
+    | smoke + oven | 329 | 326 | **13** |
+    | smoke + doorbell | 260 | 238 | **15** |
+
+    0 / 15120 false windows (real + synthesized negatives). Scenarios with `NUDGE_REAL_AUDIO=1`: smoke, doorbell, kettle PASS.
 - Behind a flag / experimental: `NUDGE_EVAC_HYSTERESIS=0` turns R1 off, `NUDGE_EAR_AGC=0` turns the R2c AGC off (both default on).
-- Not done: **R5 is not finished: real recordings are still poor.** Smoke alone is missed in 243/400 cases (it beats only at 2.79 kHz, outside the spectral rule's 2.95-3.4 kHz band, and YAMNet reads it as "Police car" through walls). The real doorbell fires false oven-timer starts. Knock is only heard in a quiet room. The demo must stay on synthesized clips. R6 is not done either. The brain side of C5 (publish `ask`, consume `user_answer`) isn't built by anyone yet.
+- Not done: **R5 is not finished: real recordings are still poor.** Smoke is now fine with `NUDGE_REAL_AUDIO=1` (slice 2). The real doorbell fires false oven-timer starts. Knock is only heard in a quiet room. The demo must stay on synthesized clips. R6 is not done either. The brain side of C5 (publish `ask`, consume `user_answer`) isn't built by anyone yet.
 - Merge risks (files, contract assumptions): voice `text` is now time-normalised (an additive change in form; `raw` is unchanged). `sim/sensors.py` (+20 lines in `synthesize_stereo_audio`, audio only). `sim/house_layout.py` knock entry gained `event_stop_windows` (data only). `choose()` gained an optional `now=` kwarg and returns an extra `hysteresis` field. Callers are unchanged.
 - How to see it working: the EVAC decision dict has `hysteresis` = "kept (... only 1.0 m better)" / "switched (...)".
 
@@ -40,3 +49,4 @@
 - 02:34: R3 teaching by voice, 12a32d5, tested: test_voice_clips teach 5/5 + commands 3/3, voice --selftest PASS, carpet_rule_voice PASS
 - 03:05: R4 ask_owner by voice (C5 voice side), f3a4bb4, tested: test_ask_owner 4/4, voice --selftest PASS, test_voice_clips 5/5+3/3, carpet_rule_voice PASS
 - 03:51: R5 slice 1 (no kettle cap on a real alarm + harness float fix; R2c claim corrected), 27ceff2, tested: offline sweeps synth unchanged / real smoke+kettle 400->180 missed, smoke PASS, kettle PASS
+- 04:11: R5 slice 2 (opt-in tonal smoke rule for real alarms), 280a251, tested: offline real smoke 243->13/400 missed, 0/15120 false windows; real-audio scenarios smoke/doorbell/kettle PASS
