@@ -1,9 +1,9 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Nudge: technical summary</title>
 <style>
-@page { size: A4; margin: 7mm 9mm; }
+@page { size: A4; margin: 6mm 8mm; }
 * { box-sizing: border-box; }
-body { font-family: Calibri, Arial, sans-serif; font-size: 7.45pt; line-height: 1.15; color: #1d1d22; margin: 0; }
+body { font-family: Calibri, Arial, sans-serif; font-size: 7.3pt; line-height: 1.13; color: #1d1d22; margin: 0; }
 h1 { font-family: Cambria, Georgia, serif; font-size: 15pt; margin: 0 0 1mm 0; color: #14143a; }
 .sub { color: #555; font-size: 8pt; margin-bottom: 2.2mm; }
 h2 { font-size: 8.8pt; margin: 1.2mm 0 0.3mm 0; color: #2a2a7a; }
@@ -13,7 +13,7 @@ li { margin: 0 0 0.3mm 0; }
 table { border-collapse: collapse; width: 100%; font-size: 7.6pt; margin: 0.4mm 0 1mm 0; }
 th, td { border-bottom: 0.3pt solid #c9c9d6; padding: 0.6mm 1.2mm; text-align: left; vertical-align: top; }
 th { background: #ececf6; }
-.fig { float: right; width: 40%; margin: 0 0 1.5mm 3mm; }
+.fig { float: right; width: 37%; margin: 0 0 1.5mm 3mm; }
 .fig img { width: 100%; border: 0.3pt solid #999; }
 .cap { font-size: 7.2pt; color: #555; margin-top: 0.5mm; }
 .src { font-size: 6.8pt; color: #666; margin-top: 1.5mm; }
@@ -29,6 +29,7 @@ b { color: #14143a; }
 .card .n { font-family: Arial, Helvetica, sans-serif; font-size: 14pt; font-weight: bold; color: #b3261e; line-height: 1.05; }
 .card .l { font-size: 7pt; color: #5b6470; line-height: 1.15; }
 h2 { color: #0b6e8a !important; }
+html { zoom: 0.95; }
 </style></head><body>
 
 <div class="band"><div><div><span class="t">Nudge</span><span class="tag">a local-AI assistance dog for deaf, blind and deafblind people</span></div>
@@ -55,20 +56,27 @@ h2 { color: #0b6e8a !important; }
 <p><b>Safety is always on; everything else is learned from the owner.</b> The safety features (smoke-alarm pre-emption, the LLM watchdog, the speed cap near the owner, calling for help) are plain code that can't be switched off, overridden by the AI or downgraded by anything the owner says. On top of that, Nudge <b>remembers what the owner tells it and keeps doing it in the future</b>: rules ("don't step on the new carpet") and tasks ("every night at 10, take me to bed"), turned into structured rules and saved task programs by local Gemma, then enforced and repeated by plain code. <b>Gemma is the brain in between:</b> it understands the owner and decides what to do; plain code makes sure it is always safe.</p>
 
 <h2>System architecture</h2>
-<p>Two processes over ZeroMQ, so physics never waits for AI. <b>Simulator:</b> 500 Hz physics, head RGB-D camera (10 Hz), 36-ray 2D LiDAR, stereo 16 kHz ears with wall and distance effects. <b>Brain</b> in two layers: a <b>reflex layer</b> in plain code (smoke-alarm pre-emption, obstacle stops, speed cap near the owner, stale-command watchdog; milliseconds) and a <b>thinking layer</b> (Gemma, below), woken only on events, which picks one option from a menu of legal actions built from live perception, so it can't produce an action that isn't on the menu.</p>
+<p>Two processes over ZeroMQ, so physics never waits for AI. <b>Simulator:</b> 500 Hz physics, head RGB-D camera (10 Hz), 36-ray 2D LiDAR, stereo 16 kHz ears with wall and distance effects. <b>Brain:</b> a <b>reflex layer</b> in plain code (smoke-alarm pre-emption, obstacle stops, speed cap near the owner, watchdogs; milliseconds) and a <b>thinking layer</b>, local Gemma (below), woken only on events.</p>
 
-<h2>Gemma 4 at the core</h2>
-<p>Local <b>Gemma 4 E2B</b> (Ollama, on the laptop GPU) is the model we built Nudge around. At every event it <b>decides</b>: which room to search first, re-nudge or lead the owner out, which exit in a fire, whether to call 999, and it <b>explains</b> each decision in plain words shown on the screen. It turns the owner's <b>sentences into rules and task programs</b> and writes the short message Nudge says to the owner. Answers are JSON-schema constrained to the legal options. Measured on the recording laptop: <b>0.19 s</b> median per decision, <b>93 %</b> right on real logged decisions, 100 % inside the 4 s watchdog, so no fine-tuning was needed; every run is logged and an eval gate (90 %) re-checks Gemma after any prompt change.</p>
+<h2>How we use Gemma 4 (the core)</h2>
+<p>Local <b>Gemma 4 E2B</b> runs in Ollama on the laptop GPU, with no cloud call. We use it in three ways:</p>
+<ul>
+<li><b>Deciding, from a menu.</b> Gemma only wakes on an event (new sound, owner seen or not found, path blocked, no response, timeout). Plain code then builds a lettered <b>menu of the legal options</b> from live perception, each with its facts: the chance the owner is in each room and how far it is, each exit's walk length and distance from the fire, how many nudges went unanswered. Gemma answers through a <b>JSON schema that only allows the menu's letters</b> plus a one-line reason, so it cannot invent an action; the reason is shown on screen. Safety decides what is on the menu, Gemma decides which option: which room to search first, re-nudge or lead the owner out, which exit, whether to call 999.</li>
+<li><b>Understanding the owner.</b> A sentence like "I've got a new carpet, please don't step on it" or "every night at 10, take me to bed" becomes a <b>structured rule or task program</b> (schema with only known rooms, objects and skills); plain code stores, enforces and repeats it. Things it can't do ("call my daughter") are refused, never promised. Gemma also writes the short message Nudge says.</li>
+<li><b>Checked every time.</b> A 4 s watchdog hands slow or offline answers to deterministic rules; a Gemma exit that passes closer to the fire than the planner's is rejected; every decision is logged with what the rules would have done, and an eval gate (90 % on real logged decisions) re-checks Gemma after any prompt change.</li>
+</ul>
+<p>Measured on the recording laptop: <b>0.19 s</b> median per decision (0.26 s p95), <b>93 %</b> right on real logged decisions, 100 % inside the watchdog, so no fine-tuning was needed.</p>
 
-<h2>Where each model runs (one laptop with an RTX 5060; no cloud calls in the loop)</h2>
+<h2>Where each model runs: all local models, on one laptop with an RTX 5060, no cloud calls</h2>
 <table>
 <tr><th>Model</th><th>Job</th><th>Runs on</th><th>Latency</th></tr>
-<tr><td><b>Gemma 4 E2B (Ollama)</b></td><td><b>all decisions + explanations; owner's words → rules / tasks; camera check</b></td><td>laptop GPU</td><td>0.19 s median (0.26 s p95) per decision; ~0.6 s per sentence</td></tr>
+<tr><td><b>Gemma 4 E2B (Ollama)</b></td><td><b>all decisions + explanations; owner's words → rules / tasks</b></td><td>laptop GPU</td><td>0.19 s median (0.26 s p95) per decision; ~0.6 s per sentence</td></tr>
 <tr><td>YAMNet + spectral rules</td><td>household sounds</td><td>CPU</td><td>alert 0.5 s after a sound starts (median)</td></tr>
 <tr><td>YOLOv8n (ONNX)</td><td>owner + objects</td><td>CPU</td><td>real time at the camera's 10 Hz</td></tr>
 <tr><td>Whisper base.en</td><td>owner's voice</td><td>CPU</td><td>under a second per sentence</td></tr>
 <tr><td>Piper TTS</td><td>Nudge speaks</td><td>CPU</td><td>local, offline</td></tr>
 </table>
+<p><b>All five models are local:</b> they run on the laptop, offline, downloaded once and SHA-256 pinned; nothing in the runtime loop calls a cloud API.</p>
 
 <h2>Adapting when the scene changes</h2>
 <ul>
@@ -80,7 +88,7 @@ h2 { color: #0b6e8a !important; }
 <h2>Measured</h2>
 <ul>
 <li><b>Sounds:</b> 96 % of demo sounds detected in 1,000 random trials over 5 noise profiles; the smoke alarm was never missed; 0 % false alerts from background noise.</li>
-<li><b>Owner detection:</b> seen in 97–98 % of head-camera views. <b>Gemma:</b> right on 93 % of real logged decisions, 100 % answered inside the 4 s watchdog.</li>
+<li><b>Owner detection:</b> seen in 97–98 % of head-camera views.</li>
 <li><b>Adaptability benchmark:</b> 9 of 12 randomised, never-seen situations passed (75 %). <b>Teaching by sentence:</b> 19/19 test sentences turned into the right rule or task, or refused.</li>
 <li><b>Scenario tests (ground-truth judge):</b> default suite 14/14 PASS; robot-map mode 22/24 + 9/9 soak; apartment doorbell, smoke, kettle PASS.</li>
 </ul>
@@ -89,7 +97,7 @@ h2 { color: #0b6e8a !important; }
 <p>The critical failure is <b>a missed or late smoke alarm, or not getting the owner out</b>. The alarm is checked first, in plain code, and never gated by other rules: it pre-empts any task in <b>0.6 s</b> with a continuous haptic alert. The exit choice is fire-aware (walk length vs distance from the fire, never through the fire room, exits the LiDAR sees blocked are dropped), and a Gemma exit choice that passes closer to the fire than the planner's is rejected. Nudge asks "Shall I call 999?" while still leading the owner out and calls on "yes" or no answer; if the owner isn't found within 40 s it calls anyway.</p>
 
 <h2>Safety</h2>
-<p>The LLM only chooses from legal options; a 4 s watchdog hands any slow or offline answer to deterministic rules; speed is capped at 0.4 m/s within 1 m of the owner; nothing the owner says can downgrade a smoke alarm; if the owner doesn't respond to repeated nudges, Nudge alerts an emergency contact and stays with them.</p>
+<p>Always on, in plain code: the LLM only chooses from legal options; a 4 s watchdog hands slow or offline answers to rules; speed capped at 0.4 m/s within 1 m of the owner; nothing the owner says can downgrade a smoke alarm; no response to repeated nudges → emergency contact, and Nudge stays with them.</p>
 
 <h2>Limits (what it cannot do yet)</h2>
 <ul>
