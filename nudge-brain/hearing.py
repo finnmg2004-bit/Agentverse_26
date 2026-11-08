@@ -46,6 +46,7 @@ DUMP_DIR = Path(os.environ["NUDGE_HEARING_DUMP"]) if os.environ.get("NUDGE_HEARI
 DUMP_SOUND = os.environ.get("NUDGE_HEARING_DUMP_SOUND", "kettle")
 DUMP_MIN = float(os.environ.get("NUDGE_HEARING_DUMP_MIN", "0.4"))
 OVEN_TONAL_GATE = 8.0
+OVEN_LOCAL_GATE = 3.0  # oven peak (5.18-5.26 kHz) over the strongest bin at 5.11-5.165 kHz (doorbell bell partial)
 # Knock = short wooden bursts. Burstiness = p95 / median energy of 10 ms frames in 110-600 Hz.
 # Party music (sustained chords at 175-392 Hz, inside the knock band) used to fire the knock rule
 # in 64 % of windows with nothing knocking; real knocks are >= 279 in a quiet room. Gate at 4:
@@ -318,9 +319,15 @@ class StereoHearing:
 
         # 5. Oven timer: 5.2 kHz piezo beeps, a band no other sound uses. Same tonality test:
         #    >= 82 with the timer on anywhere in the house under every noise profile, <= 2.8 without.
+        #    The real doorbell recording has a bell partial at 5.16 kHz (tonality up to ~12000) that fired
+        #    false oven-timer starts (NUDGE_REAL_AUDIO=1). The timer beeps at 5.20 kHz: its peak must also
+        #    beat the strongest bin just below it (5.11-5.165 kHz) by OVEN_LOCAL_GATE (oven ~110, bell 0.04).
         oven_tonal = self._tonality(freqs, psd, (5050.0, 5400.0), ((4400.0, 4900.0), (5600.0, 6000.0)))
+        in_oven = (freqs >= 5180.0) & (freqs <= 5260.0)
+        below = (freqs >= 5110.0) & (freqs <= 5165.0)
+        oven_local = float(np.max(psd[in_oven]) / (np.max(psd[below]) + 1e-14))
         score_oven = 0.0
-        if oven_tonal > OVEN_TONAL_GATE:
+        if oven_tonal > OVEN_TONAL_GATE and oven_local > OVEN_LOCAL_GATE:
             oven_ratio = self._band_energy(freqs, psd, 5050.0, 5400.0) / total_energy
             score_oven = float(np.clip(max(oven_ratio * 1.1,
                                            0.55 + 0.15 * math.log10(oven_tonal / OVEN_TONAL_GATE)), 0.0, 0.97))
