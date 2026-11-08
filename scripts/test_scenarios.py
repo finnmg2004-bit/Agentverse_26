@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Dict, List
 
 USER_COMMAND_PUB = "tcp://127.0.0.1:5557"  # same endpoint as gui/nudge_control.py
+SIM_EXTRA_ARGS: List[str] = []           # set by --coco-objects (passed to sim/run_sim.py)
 SIM_STATE_SUB = "tcp://127.0.0.1:5555"     # judge reads ground truth (owner room, sim clock) from `state`
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -223,13 +224,14 @@ SCENARIOS: Dict[str, Dict] = {
 
 
 class SimProcess:
-    def __init__(self, gui: bool, noise: str, duration: float) -> None:
+    def __init__(self, gui: bool, noise: str, duration: float, extra=()) -> None:
         cmd = [sys.executable, "-u", str(ROOT / "sim" / "run_sim.py"), "--duration", str(duration),
                "--noise", noise,
                # Reproducible owner: no spontaneous wandering, fixed seed for nudge/let-go reactions.
                "--owner-static", "--owner-seed", "1"]
         if not gui:
             cmd.append("--headless")
+        cmd += list(extra)
         self.proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, encoding="utf-8", errors="replace")
         self.lines: List[str] = []
@@ -267,7 +269,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             cmd_pub.close(linger=0)
             print(f"--> {name}: FAIL (setup)")
             return False
-    sim = SimProcess(gui, noise, duration=timeout + 15)
+    sim = SimProcess(gui, noise, duration=timeout + 15, extra=SIM_EXTRA_ARGS)
     with contextlib.redirect_stdout(io.StringIO()):
         brain = brain_main.Brain(show_dashboard=False)
     # Ground truth + brain status, only for scenarios that judge on them (teach scenarios).
@@ -477,7 +479,11 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=150.0, help="per-scenario wall-clock limit (s)")
     ap.add_argument("-v", "--verbose", action="store_true", help="print the brain log live")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--coco-objects", action="store_true",
+                    help="experimental: sim with COCO-class stand-ins (bed, couch, tv) + state.objects_gt")
     args = ap.parse_args()
+    if args.coco_objects:
+        SIM_EXTRA_ARGS.append("--coco-objects")
     if args.list:
         for n, s in SCENARIOS.items():
             tag = " (experimental: run by name)" if s.get("experimental") else ""
