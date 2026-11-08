@@ -223,6 +223,33 @@ OWNER_MESH_DIR = Path(__file__).resolve().parent.parent / "assets" / "models" / 
 OWNER_DEFAULT_PACK = "rp_posed_00178_29_OBJ"  # same default as scripts/prepare_owner.py
 
 
+def _chosen_owner_dir(default: Path) -> Path:
+    """Start-up option `--owner <name>` / NUDGE_OWNER=<name>: which scanned person is the owner.
+
+    Unset / "default" = assets/models/owner/ as before. Otherwise assets/models/owners/<name>/,
+    converted on demand from the matching downloaded pack (assets/models/rp_<name>*_OBJ/) by
+    scripts/prepare_owner.py --name <name>. Never in git (Renderpeople licence; assets/ is ignored).
+    """
+    name = os.environ.get("NUDGE_OWNER", "").strip()
+    if not name or name.lower() == "default":
+        return default
+    out = default.parent / "owners" / name
+    if os.environ.get("NUDGE_AUTO_OWNER", "1") != "0" and not (out / "owner.obj").exists():
+        script = Path(__file__).resolve().parent.parent / "scripts" / "prepare_owner.py"
+        print(f"[world] converting owner {name!r} (first run only, a few seconds)...", flush=True)
+        r = subprocess.run([sys.executable, str(script), "--name", name], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"[world] owner {name!r} not available: {(r.stderr or r.stdout).strip()[-200:]}")
+    if (out / "owner.obj").exists() and (out / "owner.png").exists():
+        print(f"[world] owner: {name} ({out.relative_to(default.parent.parent.parent).as_posix()})")
+        return out
+    print(f"[world] owner {name!r} not found, using the default owner")
+    return default
+
+
+OWNER_MESH_DIR = _chosen_owner_dir(OWNER_MESH_DIR)
+
+
 def _ensure_scanned_owner() -> None:
     """Run scripts/prepare_owner.py automatically when a downloaded Renderpeople pack
     (assets/models/rp_*_OBJ/) has no converted owner yet, or the pack is newer than the conversion.
@@ -230,8 +257,8 @@ def _ensure_scanned_owner() -> None:
     Nothing to do (no cost) when the owner is up to date or no pack was downloaded; a failed
     conversion logs one line and the sim keeps the primitive owner. NUDGE_AUTO_OWNER=0 turns it off.
     """
-    if os.environ.get("NUDGE_AUTO_OWNER", "1") == "0":
-        return
+    if os.environ.get("NUDGE_AUTO_OWNER", "1") == "0" or OWNER_MESH_DIR.name != "owner":
+        return  # NUDGE_OWNER=<name>: converted by _chosen_owner_dir
     models = OWNER_MESH_DIR.parent
     packs = [p for p in models.glob("rp_*_OBJ") if p.is_dir() and any(p.glob("*.obj"))]
     if not packs:

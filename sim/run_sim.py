@@ -64,6 +64,29 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+def _start_options_to_env(argv) -> None:
+    """Start-up options that must be known before the sim modules are imported (they read env at
+    import): --owner NAME -> NUDGE_OWNER (sim/world.py), --owner-state asleep_bed|asleep_sofa ->
+    NUDGE_OWNER_IN_BED=bed|sofa (sim/owner_pose.py), --house NAME -> NUDGE_HOUSE (sim/house_layout.py).
+    Not given = env unchanged (default demo path)."""
+    def val(flag):
+        for k, a in enumerate(argv):
+            if a == flag and k + 1 < len(argv):
+                return argv[k + 1]
+            if a.startswith(flag + "="):
+                return a.split("=", 1)[1]
+        return None
+    if val("--owner"):
+        os.environ["NUDGE_OWNER"] = val("--owner")
+    state = val("--owner-state")
+    if state in ("asleep_bed", "asleep_sofa"):
+        os.environ["NUDGE_OWNER_IN_BED"] = "bed" if state == "asleep_bed" else "sofa"
+    if val("--house"):
+        os.environ["NUDGE_HOUSE"] = val("--house")
+
+
+_start_options_to_env(sys.argv[1:])
+
 from sim.house_layout import (
     AVOID_AREA_MARGIN,
     AVOID_AREAS,
@@ -95,6 +118,7 @@ from sim.charging_dock import DockStatus  # agent F: charging-dock status light
 from sim.house_layout import CHAIR_EXIT_POS
 from sim.house_layout import OWNER_VOICE
 from sim.house_layout import TV_SOURCE
+from sim.house_layout import OWNER_SPOTS  # start-up option --owner-room
 
 VIEW_NAMES = ["top", "follow", "dog"]
 
@@ -643,8 +667,23 @@ class NudgeSimulator:
         self.nudge_says = ""
         self.mission_sound = None
         self.voice.last_text = ""
+        self.apply_start_options()  # --owner-room / --owner-state (no-op by default)
         print(f"[sim] HOTKEY [R]: Scene RESET (episode {self.episode}): robot in "
               f"{get_room_at(*ROBOT_START_POSE[:2])}, owner in {ROOM_ORDER[0]}, chair stowed, sounds off")
+
+    def apply_start_options(self) -> None:
+        """Start-up options --owner-room / --owner-state (scripts/run_all.py): put the owner in their
+        start room and, if asleep, in bed / on the sofa. Called at start and on [R]. Default: no-op."""
+        room = getattr(self, "start_owner_room", None)
+        state = getattr(self, "start_owner_state", "awake")
+        if state == "asleep_bed":
+            room = "guest"  # the bed is in the guest bedroom
+        elif state == "asleep_sofa":
+            room = "living_room"
+        if room and room != ROOM_ORDER[0]:
+            self.set_owner_room(room)
+        if state in ("asleep_bed", "asleep_sofa"):
+            self.owner.set_owner_state("asleep", float(self.data.time))
 
     def status_overlay(self) -> tuple:
         """(title, detail) for the viewer's on-screen mission status (title starts with the sim clock)."""
@@ -940,6 +979,29 @@ class RealTimePacer:
             self.t0, self.steps = now, 0
 
 
+def _add_start_option_args(parser: argparse.ArgumentParser) -> None:
+    """Owner + house start-up options (one place: scripts/run_all.py passes them through)."""
+    parser.add_argument("--owner-room", choices=sorted(OWNER_SPOTS), default=None,
+                        help="Owner's start room (default: living_room); [R] puts them back there")
+    parser.add_argument("--owner-state", choices=["awake", "asleep_bed", "asleep_sofa"], default="awake",
+                        help="Owner at start: awake, asleep in the guest bed, or napping on the living-room sofa "
+                             "(= NUDGE_OWNER_IN_BED=bed / sofa)")
+    parser.add_argument("--owner", default=None,
+                        help="Which scanned person is the owner: assets/models/owners/<name>/ (= NUDGE_OWNER; "
+                             "`python scripts/prepare_owner.py --list`)")
+    parser.add_argument("--house", default=None, help="Experimental: which house (= NUDGE_HOUSE; default house)")
+
+
+def _apply_start_option_args(sim: "NudgeSimulator", args) -> None:
+    sim.start_owner_room = args.owner_room
+    sim.start_owner_state = args.owner_state
+    sim.apply_start_options()
+    print(f"[sim] START OPTIONS: house={os.environ.get('NUDGE_HOUSE') or 'house'} "
+          f"owner={os.environ.get('NUDGE_OWNER') or 'default'} "
+          f"room={args.owner_room or ROOM_ORDER[0]} state={args.owner_state} profile={args.profile} "
+          f"wander={'off' if args.owner_static else 'on'}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Nudge MuJoCo Simulator & ZMQ Server")
     parser.add_argument("--headless", action="store_true", help="Run without GUI window")
@@ -970,6 +1032,7 @@ def main() -> None:
     parser.add_argument("--profile", choices=PROFILE_NAMES, default=DEFAULT_PROFILE,
                         help="Owner profile (contract C10, sim/owner_profile.py): which robot outputs are on; "
                              "the GUI action 'profile' changes it live")
+    _add_start_option_args(parser)
     args = parser.parse_args()
 
     print("[sim] Building nerv-world house + Unitree Go2 + Owner + Chair + Sound Beacons...")
@@ -986,6 +1049,7 @@ def main() -> None:
         profile=args.profile,
         voice_endpoint=args.voice_sub,
     )
+    _apply_start_option_args(sim, args)
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
     ox, oy = sim.locomotion.get_owner_pos()
