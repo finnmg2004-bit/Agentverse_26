@@ -4,7 +4,7 @@
 - **Night lighting** (`sim/night.py`, new). Night = `NIGHT_START` 22:00 to `NIGHT_END` 07:00 (constants).
   The scene fades over `FADE_MIN` = 0.15 clock minutes (9 s of sim time) after 22:00. A clock jump
   ([R] reset, "+1 h", `--clock 23:00`) is smoothed too (tau 1.2 s).
-  The sun becomes dim blue moonlight, the 6 ceiling fill lights and the viewer headlight go down, and **5 warm ceiling
+  The sun becomes dim blue moonlight, the 6 ceiling fill lights (explicit list `DAYLIGHT_LIGHTS` = h2_sun, h2_fill_*; any other light, e.g. a later TV glow, is left alone) and the viewer headlight go down, and **5 warm ceiling
   lamps** come on (living room, entry, guest, dining, kitchen; MjSpec lights, inactive by day, so day renders
   don't change).
   The change applies to the model's lights, so both the **MuJoCo viewer** and the **GUI 3D view (`publish_view`)** go dark.
@@ -13,9 +13,9 @@
   camera image is exactly the same as by day (byte-identical, checked by `python sim/night.py`). Opt-in to a dark
   camera: `NUDGE_NIGHT_CAMERA=1`. Turn night off completely: `NUDGE_NIGHT=0`. Robot-mounted lights (light bar) are never touched.
 - **Charging station** (`sim/charging_dock.py`, new) at `LANDMARKS["robot_dock"]` (8.0, -2.7), robot_home:
-  - flat base plate (2.4 cm high, so the robot drives onto it) with copper contacts and a blue guide stripe
-  - back panel 0.6 m tall, 0.66 m south of the dock spot, with a lightning-bolt fascia and a white cap
-  - status light: **blue = standby, pulsing green = robot parked on it** (base within 0.30 m)
+  - flat base plate (2.4 cm high, so the robot drives onto it) with copper contacts and a grey guide stripe
+  - back panel 0.8 m tall, 0.66 m south of the dock spot, with a lightning-bolt fascia and a dark cap
+  - status light (flat LED bar): **warm white = standby, pulsing green = robot parked on it** (base within 0.30 m)
   - cable to a wall socket
   All parts are group 0. The plate and panel collide; the trim is visual only.
   It is added in `sim.world.load_spec()`, so it is part of the house everywhere: the sim, `check-world`, the brain's planner, and the
@@ -42,7 +42,7 @@
   byte-identical by day and at full night**. Cost: 3–9 µs per sim step.
 - `python sim/charging_dock.py`: clearance ≥ 0.6 m to every doorway, spot and landmark. A LiDAR-height ray from
   `robot_dock` going south hits the dock at 0.64 m. The nav map has clearance 0 at the panel and 0.60 m at the dock spot. The planner reaches the dock.
-  DockStatus: blue when the robot is away, green when it is on the dock.
+  DockStatus: warm white when the robot is away, green when it is on the dock.
 - GUI end to end (sim `--no-viewer` + `gui/nudge_control.py --auto "clock=21:59@3;..."`). `state.night` by GUI second:
   0.00 up to 62 s (21:59), then 22:00 at 63 s: 0.03, 0.14, 0.25, 0.36, 0.47, 0.58, 0.69, 0.80, 0.92, and **1.00 at 72 s**. The head-camera
   panel stays bright in the night screenshot.
@@ -70,3 +70,22 @@
 - Viewer: `pixi run sim --clock 21:59` (dark at 22:00), or `--clock 23:00` (dark from the start).
 - Dock: `pixi run python sim/charging_dock.py dock.png` (checks + picture). `pixi run python sim/night.py outdir` (schedule
   check, day/half/night pictures, head-camera-identical check).
+
+## Round 2: Sean's review fixes (commit 324cd88, on top of main cdb1901)
+1. `SimClock.minute_of_day(t)` is now public, in `sim/sim_clock.py` (with a self-check line). `night.py` uses it instead of `clock._abs_min`.
+2. **YOLO / HSV vs the dock** (head camera, 10 viewpoints in robot_home facing the dock, standby and charging).
+   The checks used `vision.OwnerDetector` (YOLO and the HSV fallback), `object_memory.ObjectDetector`, and the raw best score of all 80 COCO classes.
+   - The first version caused problems. The **blue glowing status sphere was taken for the OWNER by the HSV
+     fallback** (owner found 0.84–0.95 at 3 viewpoints), and YOLO scored it as a **sports ball at 0.64** when it was green.
+     From the kitchen door, the white-rimmed panel with the garden tree behind it read as a **potted plant at 0.39**,
+     above `YOLO_CONF` 0.35.
+   - Fix: a flat LED bar instead of a sphere, warm white for standby instead of blue (low saturation, never teal), a grey stripe,
+     a dark cap, and the panel raised to 0.8 m.
+   - Result: **no owner detection, no object detection, and no COCO class above 0.16 from any viewpoint**.
+     Moving the dock away gives the same result.
+3. Live night run with an alert: `sim --no-viewer --clock 23:00` + brain + GUI, doorbell at 4 s, camera on Follow robot. Results below.
+4. `night.py` dims only the explicit daylight list (see above). A failed sky upload (renderer or viewer)
+   is no longer dropped for good: it is not marked as uploaded, so it is retried on the next frame, and the error is logged once.
+
+Re-tested after the fixes: `check-world` all passed; `sim/sim_clock.py`, `sim/night.py` (head camera still
+byte-identical), and `sim/charging_dock.py` OK. The new dock picture is `agentF_dock_render_v2.png`.
