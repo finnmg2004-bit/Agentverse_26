@@ -43,6 +43,9 @@ Soak 20261108-0303: 2 rounds in 19 min, logs `~/nudge-overnight/soak/20261108-03
 
 - `kettle_during_doorbell` (still `experimental`, flagged ~50 % flaky in the TODO) passed 2/2 here; too few runs to un-flag it, worth a longer soak on integration (`python scripts/soak.py -n 5 kettle_during_doorbell`).
 
+
+Full default suite on `overnight/sean` at 04:33 (soak.py -n 1, 21 min): **14/14 PASS** (doorbell, knock, kettle, oven_timer, smoke, smoke_blocked_exit, asleep_doorbell, owner_moved, chair, reset, carpet_baseline, carpet_rule, carpet_rule_voice, demo).
+
 ## Needs from others
 - eden-mapping (E3): COCO objects for the head camera are available with `--coco-objects`; ground truth to score object memory against is `state.objects_gt` (`class`, `pos`, `room`).
 - eden-gui (E2): optional owner-state selector (awake/asleep/idle) sending `{"action": "owner_state", "state": ...}` on :5557.
@@ -67,3 +70,4 @@ Soak 20261108-0303: 2 rounds in 19 min, logs `~/nudge-overnight/soak/20261108-03
 - 03:22: S6 wider soak (kettle_during_doorbell, smoke_blocked_exit, asleep_doorbell, kettle, oven_timer x2), no code change, tested: 10/10 PASS
 - 03:53: S7 COCO stand-ins + objects_gt behind --coco-objects, 7638a26, tested: coco_standins self-check OK, check_world OK, flag on: doorbell/smoke/carpet_rule/smoke_blocked_exit/asleep_doorbell PASS, flag off: doorbell PASS
 - 04:03: STATUS reply + teach_bedtime_carpet (experimental), 7117c0d, tested: --list only (needs E1 code, run on integration)
+- 04:54: full default suite on this branch, no code change, tested: 14/14 PASS
