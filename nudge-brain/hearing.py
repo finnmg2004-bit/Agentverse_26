@@ -9,6 +9,8 @@ Performs:
      simultaneous sounds (e.g. `smoke_alarm` pre-empting `doorbell`) are both scored.
   2. Stereo ear localization via Interaural Level Difference (ILD) and GCC-PHAT
      Interaural Time Difference (ITD) to estimate relative & world azimuth of the sound.
+  3. `SoundEvents`: debounced start / stop events (contract C4, the trigger for taught tasks)
+     and the "what did I hear" log; the event shape is documented on the class.
 """
 
 from __future__ import annotations
@@ -362,15 +364,31 @@ class SoundEvents:
     and `what_did_i_hear()` need clean events instead:
       start: a registry sound scores >= START_CONF in START_WINDOWS consecutive 0.5 s windows
       stop:  it then scores < STOP_CONF in STOP_WINDOWS consecutive windows
-    Event: {"sound", "label", "tier", "phase": "start"|"stop", "confidence", "room", "t",
-            "duration_s" (stop only)}. `room` = the brain's sound-localiser estimate when it has
-    converged (else None); `expected_room` = where the registry says the source is installed.
+      (per sound: registry field `event_stop_windows`, e.g. knock = 8 because knocking comes in bursts)
+    Event (contract C4 in overnight/README.md; taught tasks fire on phase == "start"):
+        {"sound":        SOUND_SOURCES key ("kettle", "oven_timer", "doorbell", ...),
+         "label":        human label from the registry ("Kettle"),
+         "tier":         1 emergency | 2 needs action | 3 someone wants you,
+         "phase":        "start" | "stop",
+         "confidence":   score at start; on stop the max score over the whole ring,
+         "room":         the brain's sound-localiser room estimate if converged, else None,
+         "expected_room": the room the registry says the source is installed in,
+         "t":            sim time (s) of the window that produced the event,
+         "duration_s":   stop only: seconds since the start}
+    One ring = exactly one start (+ one stop when it goes quiet): checked offline by
+    `scripts/test_sound_events.py` for every sound under all 5 noise profiles.
     """
 
     START_CONF = 0.5
     START_WINDOWS = 2
     STOP_CONF = 0.25
     STOP_WINDOWS = 3
+
+    @classmethod
+    def stop_windows(cls, name: str) -> int:
+        """Quiet windows before `stop`: registry `event_stop_windows` (bursty sounds such as knocking
+        have gaps; without a longer hold one knocking spell gave several starts under fan noise)."""
+        return int(SOUND_SOURCES.get(name, {}).get("event_stop_windows", cls.STOP_WINDOWS))
 
     def __init__(self, maxlen: int = 50) -> None:
         from collections import deque
@@ -396,7 +414,7 @@ class SoundEvents:
             else:
                 self.active[name]["confidence"] = max(self.active[name]["confidence"], round(conf, 3))
                 self._below[name] = self._below.get(name, 0) + 1 if conf < self.STOP_CONF else 0
-                if self._below[name] >= self.STOP_WINDOWS:
+                if self._below[name] >= self.stop_windows(name):
                     start = self.active.pop(name)
                     ev = self._event(name, "stop", start["confidence"], result, t)
                     ev["room"] = start["room"] or ev["room"]
