@@ -64,7 +64,10 @@ WAKE_ARM_S = 6.0  # "Nudge." alone -> the next sentence within 6 s is the comman
 # whole sentences: on a very short clip ("Nudge.") Whisper can copy a sentence-style prompt back as
 # the transcript ("Nudge, take me to the kitchen." x 25 in a test) -> a command nobody gave.
 STT_PROMPT = ("Nudge. Kitchen, front door, back door, living room, bedroom, dining room, family room, "
-              "hallway, garden, carpet, stop, come here, phone, oven, kettle.")
+              "hallway, garden, carpet, stop, come here, phone, oven, kettle, "
+              # teaching tasks (overnight R3): triggers, times, reminders
+              "bed, every night, every morning, every day, remind me, when, boils, oven timer, doorbell, "
+              "forget, task, o'clock, half past, quarter past, 10 pm, 7 am.")
 MAX_WORDS_PER_S = 4.5  # fast speech is ~3-4 words/s; more than this is a Whisper hallucination
 # Whisper sometimes spells the wake word differently.
 WAKE_RE = re.compile(r"^\W*(?:(?:hey|ok|okay)\W+)?(?:nudge|nudges|nudge's|nudj|nuj|budge|nadge|nodge)\b\W*(.*)$",
@@ -232,6 +235,50 @@ class SpeechToText:
         return text, round(min(1.0, conf), 2)
 
 
+# ---------------------------------------------------------------------- time normalisation
+_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+        "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+_MIN = {"oh five": 5, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40,
+        "forty five": 45, "forty-five": 45, "fifty": 50}
+_H = r"(\d{1,2}|" + "|".join(_NUM) + r")"
+_AMPM = r"(am|pm)"
+
+
+def _hour(tok: str) -> int:
+    return int(tok) if tok.isdigit() else _NUM[tok.lower()]
+
+
+def normalize_times(text: str) -> str:
+    """Spoken times -> digits, so the brain's task parser sees one form (overnight R3):
+    'ten pm' / '10 p.m.' / '10pm' -> '10 pm'; 'half past nine' -> '9:30'; 'quarter past/to six' ->
+    '6:15' / '5:45'; 'ten o'clock' -> '10:00'; 'seven thirty am' -> '7:30 am'; '9.30' -> '9:30'.
+    Only rewrites number words next to a time cue (am/pm, o'clock, past/to), never 'take me to two rooms'."""
+    t = re.sub(r"\b([ap])\.\s?m\.?", r"\1m", text, flags=re.IGNORECASE)            # p.m. -> pm
+    t = re.sub(r"\b([ap])\s(m)\b", r"\1\2", t, flags=re.IGNORECASE)                # p m -> pm
+    t = re.sub(r"\b(\d{1,2})(am|pm)\b", r"\1 \2", t, flags=re.IGNORECASE)          # 10pm -> 10 pm
+    t = re.sub(r"\b(\d{1,2})\.(\d{2})\b", r"\1:\2", t)                            # 9.30 -> 9:30
+    t = re.sub(r"\b(AM|PM|Am|Pm)\b", lambda m: m.group(1).lower(), t)
+
+    def past(m: "re.Match[str]") -> str:
+        h, mins = _hour(m.group(2)), {"half": 30, "quarter": 15}[m.group(1).lower()]
+        return f"{h}:{mins:02d}"
+
+    def to(m: "re.Match[str]") -> str:
+        h = _hour(m.group(1))
+        return f"{12 if h == 1 else h - 1}:45"
+
+    t = re.sub(r"\b(half|quarter)\s+past\s+" + _H + r"\b", past, t, flags=re.IGNORECASE)
+    t = re.sub(r"\bquarter\s+to\s+" + _H + r"\b", to, t, flags=re.IGNORECASE)
+    mins_re = "|".join(sorted((re.escape(k) for k in _MIN), key=len, reverse=True))
+    t = re.sub(r"\b" + _H + r"\s+(" + mins_re + r")\s+" + _AMPM + r"\b",
+               lambda m: f"{_hour(m.group(1))}:{_MIN[m.group(2).lower()]:02d} {m.group(3).lower()}",
+               t, flags=re.IGNORECASE)
+    t = re.sub(r"\b" + _H + r"\s+o['’]?\s?clock\b", lambda m: f"{_hour(m.group(1))}:00", t, flags=re.IGNORECASE)
+    t = re.sub(r"\b" + _H + r"\s+" + _AMPM + r"\b",
+               lambda m: f"{_hour(m.group(1))} {m.group(2).lower()}", t, flags=re.IGNORECASE)
+    return t
+
+
 # ---------------------------------------------------------------------- sentence segmentation
 class Segmenter:
     """Feed 30 ms frames; returns a finished sentence (float32 16 kHz) when the speaker pauses."""
@@ -330,7 +377,8 @@ class VoiceCommander:
         if cmd is None:
             print(f"[voice] heard (no wake word): {raw!r}" if raw else "[voice] heard nothing intelligible")
             return None
-        msg = {"text": cmd, "source": "voice", "confidence": confidence, "raw": raw, "t": time.time()}
+        msg = {"text": normalize_times(cmd), "source": "voice", "confidence": confidence, "raw": raw,
+               "t": time.time()}
         self.on_command(msg)
         return msg
 
