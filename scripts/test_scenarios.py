@@ -283,6 +283,25 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["SAFETY PRE-EMPT", "Owner seen in guest"],
         "expect_alert": ["1_pulse", "continuous"],
     },
+    # ---- Owner profile (contract C10, sim/owner_profile.py; agent E). Unit check of the materials /
+    # speech per profile: scripts/test_profiles.py. These two prove the gui action end to end.
+    "profile_deaf": {
+        "desc": "Profile DEAF (gui action) -> doorbell: screen + light bar, NO speech; guiding unchanged",
+        "actions": [("gui", 0.3, {"action": "profile", "mode": "deaf"}), ("at", 1.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["alert_owner(doorbell", "guide_owner_to(front_door)"],
+        "expect_alert": ["1_pulse"],
+        "expect_sim": ["PROFILE: deaf: screen ON, light ON, speech off", "NUDGE SAYS:", "SPEECH OFF (profile deaf)"],
+    },
+    "profile_blind": {
+        "desc": "Profile BLIND (gui action) -> doorbell: speech, screen + light bar off; guiding unchanged",
+        "actions": [("gui", 0.3, {"action": "profile", "mode": "blind"}), ("at", 1.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["alert_owner(doorbell", "guide_owner_to(front_door)"],
+        "expect_alert": ["1_pulse"],
+        "expect_sim": ["PROFILE: blind: screen off, light off, speech ON", "NUDGE SAYS:"],
+        "forbid_sim": ["SPEECH OFF (profile"],
+    },
 }
 
 
