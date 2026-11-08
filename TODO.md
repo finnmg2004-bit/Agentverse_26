@@ -1,7 +1,7 @@
 # Nudge: open to-dos
 
 Status: overnight run merged (`d2e2f00`, 14/14). **Final day: all 5 working, plan in AGENTS.md section 12.**
-Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00–12:45, submit 13:45.
+Tick an item off when it lands on `main`. **Hard deadline 14:00.** Demo story by **12:30**, final feature pushes by **12:40**, freeze **12:45**, full suite + recording in parallel 12:45–13:15, submit 13:40–13:50.
 
 ## Today (AGENTS.md 12; numbers = the team's ideas list)
 - [ ] **Eden:** merge + suites · demo, summary, pitch, submit
@@ -10,6 +10,7 @@ Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00
 - [ ] **Finn:** owner unreachable (`finn/unreachable`) · fallen owner · refuse "call my daughter"-type teach sentences (teach parser 16/19, AGENTS.md 12.7)
   - [x] #13 999 call (ask first) · #20 no response → emergency contact · #19 getting stuck · #11 faster search (scenarios `smoke_999`, `smoke_999_timeout`, `no_response`, `stuck_chair`)
 - [ ] **Teo (his PC, merges his own branches before 11:45):** #16/#6 Gemma visual `owner_check` · agent A Option A own map (#7, #17, #18) + pitch clip · agent C fine-tune/evals · sound-eval chart
+  - [ ] Teo: owner options at start-up: start room, awake / asleep in bed (`NUDGE_OWNER_IN_BED=1`) / napping on the sofa (`NUDGE_OWNER_IN_BED=sofa`, Ricktho #8), profile, wandering on / off
   - [x] Teo: `owner_check` (C7) merged (`NUDGE_OWNER_CHECK=1`, default off), `scripts/test_owner_check.py` 9/10 · **For Finn:** review the flagged hooks in `main.py` + `agent._situation` (AGENTS.md 12.4 C7); YOLO misses a lying owner, Gemma doesn't
   - [x] Teo: hearing evaluation merged (`pixi run fetch-esc50`, `pixi run hearing-eval`; numbers in AGENTS.md 2.1, chart `docs/img/hearing-eval.png`)
 - [x] **Sean:** #4 visible nudge · #12 speech on by default · #19 repro scenarios (`stuck_*`) · reviews of agents E + F · `smoke_blocked_exit` (exit-guard review) · Gemma eval on the RTX 5060 recording laptop (decisions 0.19 s, golden set PASS)

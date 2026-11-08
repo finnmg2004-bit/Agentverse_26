@@ -284,6 +284,28 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_alert": ["1_pulse"],
         "forbid_sim": ["AVOID AREA: robot stepped ON"],
     },
+    "tv_doorbell": {
+        "desc": "Doorbell on the living-room TV [Y] (not the front door) -> the ears' direction + loudness "
+                "say TV -> no mission, Nudge says 'That was the TV, not the door.' (AGENTS.md 6.2, C9)",
+        "actions": [("at", 1.0, "Y")],
+        "expect_complete": [],
+        "run_for": 20.0,
+        "expect_log": ["SOUND CHECK: doorbell came from the TV"],
+        "expect_says": ["That was the TV"],
+        "forbid_log": ["MISSION ", "alert_owner(", "SOUND CHECK: doorbell is real"],
+        "expect_alert": [],
+    },
+    "tv_then_doorbell": {
+        "desc": "TV doorbell [Y] -> ignored ('That was the TV'); after it ends the REAL doorbell [B] rings "
+                "-> sound check says real -> normal doorbell mission to the front door",
+        "actions": [("at", 1.0, "Y"), ("on", "SOUND CHECK: doorbell came from the TV", 9.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["SOUND CHECK: doorbell came from the TV", "SOUND CHECK: doorbell is real",
+                       "alert_owner(doorbell", "guide_owner_to(front_door)"],
+        "expect_says": ["That was the TV"],
+        "expect_alert": ["1_pulse"],
+        "min_timeout": 170.0,
+    },
     "robot_map_tv": {
         "desc": "Option A (NUDGE_ROBOT_MAP=1 --coco-objects, saved explored map with objects): 'take me to the "
                 "TV' resolves through the robot's own object memory -> owner guided to the TV",
@@ -375,6 +397,22 @@ SCENARIOS: Dict[str, Dict] = {
         "stuck_s": 15.0,
         "min_timeout": 180.0,
         "experimental": True,
+    },
+    "owner_voice": {
+        "desc": "#10: owner moved to the guest room (out of sight), then says 'take me to the kitchen' -> "
+                "the robot HEARS where the voice comes from and heads for the guest room (no room scanned "
+                "before it, no false household sound from the voice) -> owner in the kitchen",
+        # The command is parsed in ~0.9-1.2 s, the voice is localised after ~1.5 s of speech: if the parse wins,
+        # the robot sets off to the living room (the prior) and turns to the guest room ~1 s later
+        # ("OWNER VOICE: searching guest instead of living_room"). Either way it never scans the living room.
+        "actions": [("at", 1.0, "O"), ("cmd", 3.0, "Nudge, please take me to the kitchen")],
+        "expect_complete": [],
+        "expect_owner_room": "kitchen",
+        "expect_log": ["OWNER VOICE: heard the owner", "probably guest", "SKILL go_to_room(guest)",
+                       "Owner seen in guest"],
+        "expect_alert": [],
+        "forbid_log": ["SKILL look_around", "SOUND start", "Owner seen in living"],
+        "min_timeout": 180.0,
     },
 }
 
