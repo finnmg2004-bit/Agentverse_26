@@ -3,6 +3,36 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Agent F `day/night-dock` (71756f9, #1 night + #2 charging station) - approve with small fixes
+
+Head camera is protected (`NightScene.protect_head_camera` renders it in daylight, then restores; the
+head-cam GL context keeps the day sky): byte-identical by day and night, so YOLO is unaffected. Cost
+3-9 us/step, thread-safe (all in `step_once` under `viewer.lock()`, texture upload correctly outside it).
+Dock: only the 2.4 cm base plate and the back panel collide; it's in `world.load_spec()`, so the planner,
+LiDAR and check-world all know it; >= 1.3 m from all routes; the robot starts in the entry, not in the dock.
+
+Fixes:
+1. Merge conflict with Sean's #4 (now on main) in `sim/run_sim.py`'s viewer loop. Keep both, in this order:
+   ```
+   with viewer.lock():
+       sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.nudge_says)
+       sim.nudge_fx.draw(viewer.user_scn, sim.data)  # visible nudge (after the label reset)
+   sim.night.upload_to_viewer(viewer)  # outside the lock
+   viewer.sync()
+   ```
+   Everything else merges cleanly (`publish_view`: `night.upload_to_renderer(r)` before `update_scene`,
+   `nudge_fx.draw(r.scene, ...)` after it).
+2. `night.py:133` reads the private `clock._abs_min(sim_t)`; please add a public
+   `SimClock.minute_of_day(t)` (float) in `sim/sim_clock.py` and use it (Sean OKs that edit).
+3. Not tested yet: YOLO looking at the dock (e.g. from (8.0, -2.0) facing south). The glowing panel might
+   be detected as tv / microwave / oven and pollute agent A's object memory. Check once; if it fires,
+   darken or simplify the fascia / status light.
+4. After the merge: a short live run at `--clock 23:00` with an alert active (night + visible nudge
+   together) plus `check-world`.
+5. Minor: `night.py:105` turns off every non-directional world-body light at night (a later TV light by
+   agent B would be dimmed too) - add a comment or an explicit list; `night.py:206` drops the sky for
+   good if one renderer upload fails.
+
 ## Sean's must-dos landed on main: #12, #4, #19
 
 - **#12 speech on by default:** live runs (`run_all`, the control GUI, plain `run_sim.py`) now speak through
