@@ -20,5 +20,5 @@
 - Pixi isn't on PATH for the headless ticks on Eden's PC; tests run with `.pixi/envs/default/python.exe` directly.
 
 ## Heartbeat log
-- 01:58: E1.2 teach/forget/can't-do parsing in rules.py + task store in main.py, 1ccabca, tested: test_tasks.py PASS (74), live Gemma 8/8, carpet_rule PASS
+- 01:38: E1.2 teach/forget/can't-do parsing in rules.py + task store in main.py, 1ccabca, tested: test_tasks.py PASS (74), live Gemma 8/8, carpet_rule PASS
 - 00:54: E1.1 tasks.py (store, validator, triggers, runner) + scripts/test_tasks.py, ea88459, tested: test_tasks.py PASS (unit only, no scenario touched)
