@@ -46,6 +46,9 @@
 - GUI end to end (sim `--no-viewer` + `gui/nudge_control.py --auto "clock=21:59@3;..."`). `state.night` by GUI second:
   0.00 up to 62 s (21:59), then 22:00 at 63 s: 0.03, 0.14, 0.25, 0.36, 0.47, 0.58, 0.69, 0.80, 0.92, and **1.00 at 72 s**. The head-camera
   panel stays bright in the night screenshot.
+- Live MuJoCo viewer: `run_sim.py --clock 21:59 --duration 40`, with the clock set to 23:30 over the GUI port partway through.
+  It ran the night path, including `viewer.update_texture` for the sky: no deadlock, no `[night]` error, **exit code 0**.
+  No viewer screenshot: the window was behind other windows, so the screen grab didn't show it.
 - Screenshots (not in git) in `C:\Users\edenu\nudge-overnight\videos\`: `agentF_day_west.png`, `agentF_day_whole.png`,
   `agentF_fade_west.png`, `agentF_night_west.png`, `agentF_night_whole.png` (GUI); `agentF_dock_render.png`,
   `agentF_offscreen_night_{top,wide}_{000,050,100}.png`, `agentF_offscreen_night_dock_100.png`,
