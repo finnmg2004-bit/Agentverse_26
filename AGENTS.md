@@ -988,3 +988,13 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   - **Defined but untested there:** TV (media room), carpet rule (its own rug area), chair hotkeys.
   - **Different / missing:** one exit only (front door), so `[E]` blocks the only way out (the fire + blocked-exit story is main-house only); no guest bedroom (no asleep-in-bed, no "take me to bed"); bare kitchen (stove / sink / hood meshes missing, no stand-ins yet); no robot map of it yet.
   - **Floor plan:** `sim/layouts/apt.py` is hand-made from the upstream apartment's layout file, like the main house's. The robot can map a new home itself (main house: 99.8 %, see the exploration clip); for the apartment that is possible now (Rescan or `test_mapping.py --mode explore` with `NUDGE_HOUSE=apt`, grid sized for it since `63ae27f`) but hasn't been run. Pitch line: "a second home works with the same code; the robot can also map a new home itself".
+- [ ] Teo → everyone (Eden writes it; everyone checks their part): **the 1-page technical summary must follow the organisers' brief** (Robotics track slides, "Deliverables"): **one page, PDF**, covering exactly these 7 things. Checked against `docs/TECHNICAL_SUMMARY.md` @ `115fd6a`:
+  1. **Your user and problem** ✓ ("The problem").
+  2. **Key features** ✓ ("How it works", "Adapting").
+  3. **System architecture** ✓ (two processes over ZeroMQ, reflex + thinking layer); a small diagram would help if it fits.
+  4. **Where each model runs, with hardware and latency** ⚠ only Gemma's latency is in; use Teo's table above (YOLO ~60 ms CPU, Whisper ~0.5 s CPU, YAMNet alert 0.5 s, Gemma 0.19 s / ~0.6 s / 1.6–2.5 s, Piper).
+  5. **Limits** ✓ ("Limitations (honest)"; still has a [TBC] for localisation, see below).
+  6. **The critical failure mode** ⚠ not named as such: say it plainly, e.g. "the critical failure is a missed or late smoke alarm / not getting the owner out" and how it's handled (tier-1 pre-emption in plain code, never gated, smoke never missed in 1,000 trials on the demo sound, 96 % on real recordings, 999 escalation after 40 s).
+  7. **Safety** ⚠ only a line inside "How it works"; give it its own short paragraph (pre-emption, 4 s LLM watchdog → rules, legal-options-only menu, speed cap near the owner, danger can't be overridden by owner rules, exit-safety check on Gemma's exit choice).
+  Also: the same brief says the **video** must show perception on screen next to the actions and one unscripted change in a single continuous take, and the **pitch** must cover what the robot can and **cannot** do.
+  **Localisation [TBC]:** Teo is testing `NUDGE_LOCALIZE=1` on the demo story now; result here shortly, then Eden can replace the [TBC] in Limitations.
