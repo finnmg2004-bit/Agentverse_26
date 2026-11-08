@@ -20,6 +20,13 @@ import time
 import cv2
 import numpy as np
 import zmq
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+for _p in (str(_ROOT), str(_ROOT / "nudge-brain")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 RES = 0.05
 ORIGIN = (-17.0, -7.0)          # covers the house footprint plus the outside exits
@@ -89,8 +96,11 @@ def main() -> None:
     ap.add_argument("--sim", default="tcp://127.0.0.1:5555")
     ap.add_argument("--pub", default="tcp://127.0.0.1:5559")
     ap.add_argument("--no-publish", action="store_true")
+    ap.add_argument("--objects", action="store_true", help="E3.2: object memory from the head camera (YOLO)")
     ap.add_argument("--save", default=None, help="write the map PNG on exit")
+    ap.add_argument("--duration", type=float, default=0.0, help="stop after N s (testing)")
     args = ap.parse_args()
+    t_end = time.time() + args.duration if args.duration else None
 
     ctx = zmq.Context.instance()
     sub = ctx.socket(zmq.SUB)
@@ -103,15 +113,31 @@ def main() -> None:
         pub.setsockopt(zmq.LINGER, 0)
         pub.bind(args.pub)
 
+    omem = odet = None
+    if args.objects:
+        from object_memory import ObjectDetector, ObjectMemory
+        sub.setsockopt_string(zmq.SUBSCRIBE, "camera")
+        odet, omem = ObjectDetector(), ObjectMemory()
+    last_det = 0.0
     grid = OccupancyGrid()
     episode, last_pub, pose = None, 0.0, (0.0, 0.0, 0.0)
     try:
-        while True:
+        while t_end is None or time.time() < t_end:
             if sub.poll(200):
                 parts = sub.recv_multipart()
+                if parts[0] == b"camera":
+                    if omem is not None and time.time() - last_det >= 0.5:   # ~2 Hz is plenty
+                        last_det = time.time()
+                        meta = json.loads(parts[1])
+                        rgb = cv2.cvtColor(cv2.imdecode(np.frombuffer(parts[2], np.uint8), 1), cv2.COLOR_BGR2RGB)
+                        depth = np.frombuffer(parts[3], np.float16).astype(np.float32).reshape(rgb.shape[:2])
+                        omem.update(odet.detect(rgb, depth, tuple(meta.get("robot_pose", pose))))
+                    continue
                 st = json.loads(parts[1] if len(parts) > 1 else parts[0].split(b" ", 1)[1])
                 if episode is not None and st.get("episode") != episode:
                     grid = OccupancyGrid()           # R reset: start a fresh map
+                    if omem is not None:
+                        omem.objects.clear()
                 episode = st.get("episode")
                 pose = tuple(st["robot_pose"])
                 grid.integrate(pose, st["lidar_ranges"])
@@ -119,10 +145,16 @@ def main() -> None:
                 last_pub = time.time()
                 ok, png = cv2.imencode(".png", grid.to_image())
                 if ok:
-                    pub.send_multipart([b"robot_map", json.dumps(grid.header(pose)).encode(), png.tobytes()])
+                    hdr = grid.header(pose)
+                    if omem is not None:
+                        hdr["objects"], hdr["rooms"] = omem.snapshot(), omem.name_rooms()
+                    pub.send_multipart([b"robot_map", json.dumps(hdr).encode(), png.tobytes()])
     except KeyboardInterrupt:
         pass
     finally:
+        if omem is not None:
+            print("[robot_map] objects:", json.dumps(omem.snapshot()))
+            print("[robot_map] rooms:", json.dumps(omem.name_rooms()))
         if args.save:
             cv2.imwrite(args.save, grid.to_image())
 
