@@ -31,4 +31,4 @@ Each tick:
 - [x] **E3.2** Object memory from YOLO detections + depth (`vision.py` helpers, read-only use) → `objects: [{id, cls, x, y, room, last_seen}]`; room names from objects (bed → bedroom, couch/tv → living room, refrigerator/oven → kitchen).
 - [x] **E3.3** `scripts/test_mapping.py`: drive a scripted tour (sim hotkeys/`cmd` only), then score the map against `sim/house_layout.py` (wall overlap %, rooms named correctly, object position error). Report numbers honestly.
 - [x] **E3.4** `gui/panels/robot_map.py`: shows the robot's map + objects (subscribes to :5559 itself).
-- [ ] **E3.5 (stretch)** Change detection: the chair `[C]` appears in a doorway → map updates, logged as a change.
+- [x] **E3.5 (stretch)** Change detection: the chair `[C]` appears in a doorway → map updates, logged as a change.
