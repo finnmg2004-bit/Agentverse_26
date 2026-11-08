@@ -282,9 +282,24 @@ _SOUND_WORDS = [  # (regex, registry key); danger words map to the smoke alarm s
     (r"door ?bell|\bbell\b|rings? the door|someone rings", "doorbell"), (r"knock", "knock"),
 ]
 _TEACH_CUE = re.compile(
-    r"\b(every|each|daily|whenever|tonight|tomorrow)\b|\bat (\d|(noon|midnight|"
+    r"\b(every|each|daily|whenever|tonight|tomorrow)\b|\b(at|around) (\d|(noon|midnight|half|quarter|"
     + "|".join(w for w in _NUM_WORDS if w not in ("a", "an")) + r")\b)"
-    r"|\bwhen(ever)? (the|i|someone|there)\b|\bif i (have ?n.?t|have not|don.?t|do not) (moved|move)", re.I)
+    r"|\bwhen(ever)? (the|i|someone|there)\b|\bif i (have ?n.?t|have not|don.?t|do not) (moved|move)"
+    # "let me know if the oven timer beeps" / "as soon as the kettle boils": a sound-triggered job
+    r"|\b(if|as soon as|every time|any time) (the|a|my|someone|somebody|there)\b", re.I)
+
+# Things Nudge cannot do, checked in plain code AFTER the parser (LLM or keywords) and BEFORE a task is
+# stored, so a parser slip can never silently promise them. Calls / messages to people come first:
+# "Every Sunday at 10 call my daughter" must be refused, not taught as a reminder.
+_CALL_PERSON = re.compile(
+    r"\b(call|phone|ring|telephone|text|message|e-?mail|facetime|skype|whatsapp)\s+(?!me\b|you\b)"
+    r"(up\s+)?(my|our|his|her|their|someone|somebody|anyone|mum|mom|dad|the (doctor|police|nurse|carer|"
+    r"ambulance)|\d{3,})\b", re.I)
+# "Remind me to phone my son" is a reminder Nudge CAN do (the owner makes the call).
+_REMIND_TO_CALL = re.compile(r"\bremind me (to |that i (need|have) to |about )?(\w+\s+)?"
+                             r"(call|phone|ring|telephone|text|message|e-?mail|facetime|skype|whatsapp)\b", re.I)
+CANT_CALL = ("Sorry, I can't do that. I can't make phone calls or send messages. "
+             "I can remind you to call them.")
 
 
 def _num(word: str) -> Optional[float]:
@@ -295,8 +310,17 @@ def _num(word: str) -> Optional[float]:
 
 
 def looks_like_teach(text: str) -> bool:
-    """A sentence about LATER (time / sound / idle / room-entry), not something to do now."""
-    return bool(_TEACH_CUE.search(text or ""))
+    """A sentence about LATER (time / sound / idle / room-entry), not something to do now.
+    "Don't wake me / don't tell me ..." is a sound PREFERENCE (alert policy), never a job to do."""
+    t = text or ""
+    if _NEGATIVE_ALERT.search(t):
+        return False
+    return bool(_TEACH_CUE.search(t))
+
+
+_NEGATIVE_ALERT = re.compile(
+    r"\b(don.?t|do not|never|no need to|stop|please don.?t)\s+(\w+\s+){0,2}"
+    r"(wake|tell|bother|disturb|alert|nudge|warn|interrupt|fetch|get)\b", re.I)
 
 
 def forget_name(text: str) -> Optional[str]:
@@ -315,13 +339,23 @@ def _clock_from_text(t: str) -> Optional[str]:
         return "00:00"
     if re.search(r"\bnoon\b|\bmidday\b", t):
         return "12:00"
-    m = re.search(r"\bat " + _NUM + r"(?:[:.](\d{2}))? ?(am|pm|a\.m\.|p\.m\.|o.?clock)?", t)
-    if not m:
+    # "at half past seven" / "at quarter past 8" / "at quarter to nine"
+    q = re.search(r"\b(?:at|around|about) (half|a quarter|quarter) (past|to) " + _NUM + r" ?(am|pm|a\.m\.|p\.m\.)?", t)
+    m = None if q else re.search(r"\b(?:at|around|about) " + _NUM + r"(?:[:.](\d{2}))? ?(am|pm|a\.m\.|p\.m\.|o.?clock)?", t)
+    if q:
+        h = _num(q.group(3))
+        if h is None or h > 23:
+            return None
+        mi = 30 if q.group(1) == "half" else (15 if q.group(2) == "past" else 45)
+        h = int(h) - (1 if q.group(2) == "to" else 0)
+        h, ampm = h % 24, (q.group(4) or "").replace(".", "")
+    elif not m:
         return None
-    h = _num(m.group(1))
-    if h is None or h > 23:
-        return None
-    h, mi, ampm = int(h), int(m.group(2) or 0), (m.group(3) or "").replace(".", "")
+    else:
+        h = _num(m.group(1))
+        if h is None or h > 23:
+            return None
+        h, mi, ampm = int(h), int(m.group(2) or 0), (m.group(3) or "").replace(".", "")
     if ampm == "pm" and h < 12:
         h += 12
     elif ampm == "am" and h == 12:
@@ -361,7 +395,7 @@ def keyword_teach(text: str) -> Dict[str, Any]:
     flat: Dict[str, Any] = {"trigger": "none", "at": "none", "repeat": "daily", "sound": "none",
                             "minutes": 0, "room": "none", "action": "unsupported", "target": "none",
                             "text": "", "name": ""}
-    idle = re.search(r"(have ?n.?t|have not|don.?t|do not) (moved|move)[a-z ]*? (for|in) "
+    idle = re.search(r"(have ?n.?t|have not|don.?t|do not) (moved|move)[a-z ]*? (for|in) (?:about |around |over |more than )?"
                      + _NUM + r"? ?(half )?(an? )?(hours?|minutes?|mins?)", t)
     when_room = re.search(r"when(ever)? i (go|come|walk|get) (in|into|to) (the |my )?([a-z ]+)", t)
     clock = _clock_from_text(t)
@@ -373,7 +407,7 @@ def keyword_teach(text: str) -> Dict[str, Any]:
     elif when_room:
         room = tasklib.place_key(re.split(r" and | then |,| remind| take| tell| bring", when_room.group(5))[0].strip())
         flat.update(trigger="event", room=room if room in ROOMS else "none")
-    elif sound != "none" and re.search(r"\bwhen|\bif\b|\bevery time", t):
+    elif sound != "none" and re.search(r"\bwhen|\bif\b|\bevery time|\bany time|\bas soon as", t):
         flat.update(trigger="sound", sound=sound)
     elif clock or re.search(r"\b(every|each) (night|evening|morning|day)\b|\bdaily\b|\btonight\b", t):
         flat.update(trigger="time", at=clock or "none")
@@ -381,6 +415,10 @@ def keyword_teach(text: str) -> Dict[str, Any]:
             and not re.search(r"\bevery\b|\beach\b|daily", t):
         flat["repeat"] = "once"
     target = _target_from_text(t)
+    if target == "none" and flat["trigger"] == "sound" and \
+            re.search(r"\b(take|bring|lead|guide|walk) me (to|over to) (it|there|that|them)\b", t):
+        # "When the kettle whistles, bring me to it": 'it' = where that sound comes from
+        target = tasklib.place_key(SOUND_SOURCES[sound].get("target_landmark")) or "none"
     rem = re.search(r"remind me (to |about |that )?(.+?)(?: and | then |,| at \S+| every | each | when| if |"
                     r" in the (morning|evening|afternoon)| daily|[.!?]|$)", t)
     if target != "none":
@@ -389,7 +427,7 @@ def keyword_teach(text: str) -> Dict[str, Any]:
         flat.update(action="remind", text=rem.group(2).strip())
     elif re.search(r"check on me|see if i.?m (ok|okay|alright|fine)|come (and )?(find|see|check)|find me", t):
         flat["action"] = "check_on"
-    elif re.search(r"\b(tell|let) me( know)?\b|\bwarn me\b|\bnudge me\b|\bwake me\b|\balert me\b", t):
+    elif re.search(r"\b(tell|let) me( know)?\b|\bwarn me\b|\bnudge me\b|\bwake me\b|\balert me\b|\bcall me\b", t):
         flat["action"] = "tell"
     if rem and target != "none":
         flat["text"] = rem.group(2).strip()
@@ -448,6 +486,8 @@ def build_task(flat: Dict[str, Any], text: str = "") -> Tuple[Optional[Dict[str,
     sound = flat.get("sound") if flat.get("sound") in SOUND_SOURCES else None
     if (sound in danger_sounds()) or (DANGER_WORDS.search(text or "") and trig_kind in ("sound", "none")):
         return None, DANGER_TEACH
+    if _CALL_PERSON.search(text or "") and not _REMIND_TO_CALL.search(text or ""):
+        return None, CANT_CALL  # never "teach" a call as a reminder: Nudge would promise a call it can't make
     action = flat.get("action")
     if action not in TEACH_ACTIONS or action == "unsupported":
         return None, tasklib.CANT_DO
@@ -479,6 +519,8 @@ def build_task(flat: Dict[str, Any], text: str = "") -> Tuple[Optional[Dict[str,
         if not words and trigger["kind"] == "time":
             words = f"It's {tasklib.spoken_time(tasklib.parse_hhmm(trigger['at']))}." + \
                     (" Time for bed." if target == "guest" else "")
+        elif not words and trigger["kind"] == "sound":  # tell the owner why they're being led
+            words = str(SOUND_SOURCES[sound].get("say") or f"I heard the {sound.replace('_', ' ')}.")
         if words:
             steps.append({"skill": "say", "args": {"text": words}})
         steps.append({"skill": "guide_owner_to", "args": {"target": target}})
@@ -655,6 +697,8 @@ def merge_teach(llm: Dict[str, Any], kw: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(kw, **{k: v for k, v in llm.items() if v not in (None, "", "none", 0)})
     if kw.get("at") not in (None, "none") and kw.get("trigger") == "time":
         out["at"] = kw["at"]  # "at 10 pm" parsed by regex beats the LLM's 24 h arithmetic
+    if kw.get("trigger") == "time" and out.get("trigger") == "time":
+        out["repeat"] = kw.get("repeat", "daily")  # "tonight" / "tomorrow" = once, unless "every"/"each"/"daily"
     if kw.get("sound") == "smoke_alarm":
         out.update(trigger="sound", sound="smoke_alarm")
     if out.get("target") == "bed":
