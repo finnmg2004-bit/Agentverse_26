@@ -183,6 +183,7 @@ class NudgeSimulator:
 
         self.locomotion = Go2Locomotion(self.model, self.data, self.nav_map)
         self.sensors = SimSensors(self.model, self.data, enable_camera=enable_camera)
+        self.clips.speaker = self.sensors.speaker_play  # played clips (dog, glass) on the speakers too
         # Night (sim/night.py): dims the scene by the sim clock; the head camera keeps daylight (YOLO).
         self.night = NightScene(self.model, self.sensors)
         self.dock = DockStatus(self.model)  # sim/charging_dock.py: blue standby / green charging

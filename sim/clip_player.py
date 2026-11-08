@@ -36,6 +36,7 @@ class ClipPlayer:
     def __init__(self) -> None:
         self.playing: List[Dict[str, Any]] = []
         self._cache: Dict[str, np.ndarray] = {}
+        self.speaker = None  # optional callback(file, clip): sim/sensors.py speaker_play (laptop speakers)
 
     def play(self, payload: dict) -> None:
         name = str(payload.get("file", ""))
@@ -63,6 +64,8 @@ class ClipPlayer:
             if len(seg) < WINDOW:
                 seg = np.pad(seg, (0, WINDOW - len(seg)))
             out.append((seg, p["pos"], p["level"]))
+            if self.speaker is not None:
+                self.speaker(p["file"], self._cache[p["file"]])
             if p["cursor"] >= len(p["clip"]):
                 self.playing.remove(p)
         return out

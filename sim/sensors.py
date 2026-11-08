@@ -661,10 +661,24 @@ class SimSensors:
         env[t >= float(pattern["give_up_s"])] = 0.0
         return env.astype(np.float32)
 
+    def speaker_play(self, key: str, clip: np.ndarray) -> None:
+        """A non-registry clip (sim/clip_player.py: dog, glass...) is in the ears this window: play it on
+        the laptop speakers too. Registered once (looped by SpeakerOut while it stays active, 0.5 s of
+        silence appended so a short clip doesn't restart audibly before the player drops it)."""
+        speaker = getattr(self, "speaker", None)
+        if speaker is None or not speaker.enabled:
+            return
+        if key not in speaker.clips:
+            pad = np.concatenate([np.asarray(clip, np.float32), np.zeros(SAMPLE_RATE // 2, np.float32)])
+            speaker.clips[key] = (0.9 * pad / max(1e-6, float(np.abs(pad).max()))).astype(np.float32)
+        if not hasattr(self, "_speaker_extra"):
+            self._speaker_extra = []
+        self._speaker_extra.append(key)
+
     def clip_window(self, name: str, cursor: int) -> np.ndarray:
         """AUDIO_WINDOW_SAMPLES of registry clip `name` starting at `cursor` (looped)."""
         clip = self.audio_clips[name]
-        self._speaker_extra = [name]  # the TV plays it: the speakers play it too (#3)
+        self._speaker_extra.append(name)  # the TV plays it: the speakers play it too (#3)
         return clip[(np.arange(AUDIO_WINDOW_SAMPLES) + cursor) % len(clip)]
 
     @staticmethod
