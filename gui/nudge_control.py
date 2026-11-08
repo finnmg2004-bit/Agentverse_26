@@ -1106,6 +1106,10 @@ class NudgeControl:
                         self.preset(what[4:])
                     elif what.lower().startswith("clock="):
                         self.send({"action": "clock", "time": what[6:]})
+                    elif what.lower().startswith("sound="):  # any registry sound by name, e.g. sound=glass_break@5
+                        self.trigger_sound(what[6:].strip())
+                    elif what.lower().startswith("gui="):  # raw sim gui action (JSON), e.g. gui={"action": "play", ...}
+                        self.send(json.loads(what[4:]))
                     elif what.lower().startswith("say="):
                         self.send_command(what[4:])
                     elif what.lower().startswith("answer="):
@@ -1139,7 +1143,7 @@ def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Nudge Control: 3D view, events and agent reasoning")
     ap.add_argument("--auto", default="",
-                    help="Scripted actions: key, cam=<preset>, clock=HH:MM, mic=on|off, profile=deaf|blind|deafblind "
+                    help="Scripted actions: key, cam=<preset>, clock=HH:MM, sound=<registry name>, gui=<json sim action>, mic=on|off, profile=deaf|blind|deafblind "
                          "or say=<sentence>, each @ seconds; separate with ';' "
                          "(or ',' when no sentence has a comma), e.g. 'say=I'm expecting a parcel@2;B@5;cam=Chase cam@6'")
     ap.add_argument("--screenshot", default="",
