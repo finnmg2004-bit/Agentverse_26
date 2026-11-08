@@ -125,6 +125,7 @@ class ObjectDetector:
                 "box_frac": round((x2 - x1) * (y2 - y1) / float(CAM_W * CAM_H), 4),
                 "edge": bool(x1 <= 1 or x2 >= CAM_W - 1),
                 "top_cut": bool(y1 <= 1),
+                "bottom_cut": bool(y2 >= CAM_H - 1),
                 "cam": [round(cam_x, 2), round(cam_y, 2)],
                 "surf_xy": [round(cam_x + surf * c - (left * surf / fwd) * s, 2),
                             round(cam_y + surf * s + (left * surf / fwd) * c, 2)]}
@@ -151,6 +152,10 @@ def plausible(d: Dict[str, Any]) -> Optional[str]:
         if w > 2.0 or z1 > 2.3:
             return "tv too big (window / glass door)"
     if cls in ("bed", "couch"):
+        # low-confidence classes only count when the whole object is in view: a box cut by the image
+        # edge / bottom is a partial view (every false bed measured was one)
+        if d.get("edge") or d.get("top_cut") or z0 < -0.1:
+            return f"{cls} only partly in view"
         if z0 > 0.35:
             return f"{cls} in the air"
         if z1 > 1.6 and not d.get("top_cut"):

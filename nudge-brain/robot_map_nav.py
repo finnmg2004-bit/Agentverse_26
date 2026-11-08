@@ -10,7 +10,8 @@ the owner, not furniture, and are ignored.
 Objects the robot found (object_memory.py) become places the owner can ask for: "take me to the sofa",
 "... to my bed", "... to the TV / fridge / dining table" resolve to a free spot next to that object
 (`robot_map_target(text)`, used by rules.py). house_layout names (rooms, landmarks) keep working as before.
-If the flag is on but no saved map exists, the brain logs it and uses the static floor plan.
+If the flag is on but no saved map exists, the brain logs it and uses the static floor plan. The only outside
+knowledge is the installer's ground-floor box (house_layout.HOUSE_BOUNDS, the explorer's geofence).
 """
 from __future__ import annotations
 
@@ -65,6 +66,10 @@ class RobotMapNav:
         self._changes_key: tuple = ()
         self._last_check = 0.0
         self.last_rebuild = 0.0
+        # The installer's "ground floor is inside this box" (same as the explorer's geofence); unseen cells
+        # outside it are garden, so evacuation routes can end outside an exit the robot saw open.
+        from sim.house_layout import HOUSE_BOUNDS as B
+        self.geofence = (B["x_min"], B["y_min"], B["x_max"], B["y_max"])
 
     # ---------------------------------------------------------------- live updates
     def observe(self, pose, lidar, owner_xy=None) -> bool:
@@ -97,6 +102,12 @@ class RobotMapNav:
         from sim.nav_map import NavMap
         g = self.grid
         occ = g.nav_occupancy(unknown_is_occupied=True, with_changes=False)
+        if self.geofence is not None:   # outside the installer's ground-floor box, unseen = open garden
+            x0, y0, x1, y1 = self.geofence
+            xs = g.origin[0] + np.arange(g.w) * g.res
+            ys = g.origin[1] + np.arange(g.h) * g.res
+            outside = ~(((ys[:, None] >= y0) & (ys[:, None] <= y1)) & ((xs[None, :] >= x0) & (xs[None, :] <= x1)))
+            occ = occ & ~(outside & ~g.occupied())
         app = g.appeared_mask()
         if self.owner_seen and app.any():
             r = int(OWNER_RADIUS / g.res)

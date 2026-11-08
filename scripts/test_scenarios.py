@@ -230,13 +230,13 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_alert": ["1_pulse"],
         "forbid_sim": ["AVOID AREA: robot stepped ON"],
     },
-    "robot_map_sofa": {
-        "desc": "Option A (run with NUDGE_ROBOT_MAP=1 --coco-objects and a saved explored map): 'take me to the "
-                "sofa' resolves through the robot's own object memory -> owner guided to the sofa",
-        "actions": [("cmd", 0.5, "Nudge, take me to the sofa")],
+    "robot_map_tv": {
+        "desc": "Option A (NUDGE_ROBOT_MAP=1 --coco-objects, saved explored map with objects): 'take me to the "
+                "TV' resolves through the robot's own object memory -> owner guided to the TV",
+        "actions": [("cmd", 0.5, "Nudge, take me to the TV")],
         "expect_complete": [],
-        "run_for": 100.0,
-        "expect_log": ["guide_owner_to(sofa", "Owner delivered to sofa"],
+        "run_for": 90.0,
+        "expect_log": ["guide_owner_to(tv", "Owner delivered to tv"],
         "expect_alert": [],
         "experimental": True,
     },

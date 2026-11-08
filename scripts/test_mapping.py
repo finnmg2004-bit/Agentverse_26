@@ -337,10 +337,17 @@ def replay(args) -> int:
             for f in sorted((rec / "frames").glob("*.npy")):
                 meta = json.loads(f.with_suffix(".json").read_text())
                 grid.integrate_depth(tuple(meta["robot_pose"]), np.load(f).astype(np.float32))
-    det, mem = ObjectDetector(), ObjectMemory()
+    det, mem = (None if args.raw_in else ObjectDetector()), ObjectMemory()
     mem.grid = grid
     raw, n_frames = [], 0
-    for k, rec in enumerate(recs):
+    if args.raw_in:     # re-score saved detections (tuning the memory's filters without re-running YOLO)
+        raw = json.loads(Path(args.raw_in).read_text())
+        for d in sorted(raw, key=lambda d: d["t"]):
+            mem.update([d], d["t"])
+        recs_frames = []
+    else:
+        recs_frames = recs
+    for k, rec in enumerate(recs_frames):
         for f in sorted((rec / "frames").glob("*.jpg")):
             rgb = cv2.cvtColor(cv2.imread(str(f)), cv2.COLOR_BGR2RGB)
             depth = np.load(f.with_suffix(".npy")).astype(np.float32)
@@ -351,7 +358,7 @@ def replay(args) -> int:
                 raw.append(dict(d, t=t, pose=meta["robot_pose"]))
             mem.update(dets, t)
             n_frames += 1
-    if args.raw:
+    if args.raw and not args.raw_in:
         (recs[-1] / "raw_detections.json").write_text(json.dumps(raw))
     objs = mem.confirmed()
     out = {"frames": n_frames, "raw_detections": len(raw),
@@ -379,6 +386,7 @@ def main() -> int:
     ap.add_argument("--record", default=None, help="record states + camera frames (2 Hz) into this directory")
     ap.add_argument("--replay", default=None, help="offline: objects + rooms on a recording")
     ap.add_argument("--raw", action="store_true", help="replay: also write raw_detections.json")
+    ap.add_argument("--raw-in", default=None, help="replay: re-score a saved raw_detections.json instead of YOLO")
     ap.add_argument("--time-cap", type=float, default=600.0)
     ap.add_argument("--gui", action="store_true")
     ap.add_argument("--port-base", type=int, default=5555,
