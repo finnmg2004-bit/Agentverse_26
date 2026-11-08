@@ -27,7 +27,7 @@ ignore it. This module:
 
 Brain status `unknown_event`: {"label", "category", "room", "action", "by": "llm"|"rules"|"safety",
 "reason", "say", "t", "classes"} or null. Every decision also goes into `agent.decisions` (event
-`unknown_sound`) so the control GUI's Agent reasoning tab shows it. On by default: NUDGE_UNKNOWN_EVENTS=0 = off.
+`unknown_sound`) so the control GUI's Agent reasoning tab shows it. Off by default: NUDGE_UNKNOWN_EVENTS=1 = on.
 Haptic for a danger alert = `continuous` (tier 1); the sim light bar maps `continuous` to the smoke-alarm
 look (no separate non-fire tier-1 look yet).
 """
@@ -46,7 +46,7 @@ import numpy as np
 import safety
 from sim.house_layout import ROOMS, SOUND_SOURCES, get_room_at
 
-ENABLED = os.environ.get("NUDGE_UNKNOWN_EVENTS", "1") not in ("0", "", "off", "false")  # ON by default (Ricktho, 13:20); NUDGE_UNKNOWN_EVENTS=0 = off
+ENABLED = os.environ.get("NUDGE_UNKNOWN_EVENTS", "0") not in ("0", "", "off", "false")  # off by default
 DETECT_CONF = float(os.environ.get("NUDGE_UNKNOWN_CONF", "0.45"))
 DEBOUNCE_WINDOWS = 2       # hits within DEBOUNCE_SPAN windows (crying / barking has pauses)
 DEBOUNCE_SPAN = 3

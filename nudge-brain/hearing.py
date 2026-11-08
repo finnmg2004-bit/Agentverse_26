@@ -63,7 +63,7 @@ KNOCK_BURST_GATE = 4.0
 SPEECH_CLASSES = ("Speech", "Male speech, man speaking", "Female speech, woman speaking",
                   "Narration, monologue", "Conversation", "Speech synthesizer")
 SPEECH_GATE = 0.5 if os.environ.get("NUDGE_SPEECH_GATE", "1") != "0" else 9.9  # NUDGE_SPEECH_GATE=0 = off
-SPEECH_SPECTRAL_MIN = {"doorbell": 0.72, "oven_timer": 0.70, "knock": 1.01}  # doorbell 0.60 -> 0.72: the owner voice reaches 0.67 (Sean, night_task clip)
+SPEECH_SPECTRAL_MIN = {"doorbell": 0.60, "oven_timer": 0.70, "knock": 1.01}
 SPEECH_CAP = 0.40
 # Real dog barks and a crying baby (CC0 test clips; the baby clip was later removed from the repo) fired the spectral doorbell rule
 # up to 0.98 (doorbell event in 58-128 of 128 trials per noise profile), plus oven 0.74 / kettle 0.66: a false
