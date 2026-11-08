@@ -42,4 +42,4 @@
 - 01:20: R2 sound triggers C4, e23638c, tested: test_sound_events sweep (kettle/oven 400/400 exactly-one), kettle PASS, oven_timer PASS, knock PASS; found R2b (false kettle start once in oven_timer)
 - 01:46: R2b false kettle/smoke starts at the stove, 33e7522, tested: test_sound_events PASS, oven_timer PASS, kettle PASS x3, smoke PASS; found R2c (smoke masked by the kettle at the stove)
 - 02:24: R2c sim ear AGC (smoke deaf spot in the kitchen), 1ade7e8, tested: offline smoke sweep 136/400 missed -> 0/400, test_sound_events PASS, smoke/kettle/doorbell/demo PASS, kettle_then_smoke (one-off) PASS
-- 02:44: R3 teaching by voice, 12a32d5, tested: test_voice_clips teach 5/5 + commands 3/3, voice --selftest PASS, carpet_rule_voice PASS
+- 02:34: R3 teaching by voice, 12a32d5, tested: test_voice_clips teach 5/5 + commands 3/3, voice --selftest PASS, carpet_rule_voice PASS
