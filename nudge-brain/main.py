@@ -41,6 +41,7 @@ from sound_check import SoundCheck  # noqa: E402  ("Is the sound real?" TV vs fr
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
 from tasks import OwnerActivity, TaskRunner, TaskStore, confirmation  # noqa: E402
 from ask import AnswerListener, AskOwner  # noqa: E402
+from scan_mode import ScanMode  # noqa: E402  ("Rescan house": GUI brain_cmd -> explore + rebuild the robot map)
 from sim.house_layout import ALERT_SOUNDS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
 
 LOOP_HZ = 20.0
@@ -209,6 +210,7 @@ class Brain:
         self.fire_guiding_since = None  # wall time the owner took the handle in this fire
         self.task_runner = TaskRunner(self.task_store, self.task_adapter,
                                       log=lambda text: self.world.log(text))
+        self.scan = ScanMode()  # "Rescan house" (scan_mode.py); idle unless the GUI sends brain_cmd scan
         self.new_sound_events: list = []  # SoundEvents since the last task tick (sound triggers)
         self.owner_activity = OwnerActivity()  # idle / owner_entered_room triggers (E1.6)
         self.owner_spoke = False  # a sentence from the owner since the last task tick (= activity)
@@ -651,6 +653,8 @@ class Brain:
         self.tick_ask()
         self.tick_fire_999()
         self.tick_tasks()
+        if self.scan.tick(self, upd):  # scan mode drove this tick (it ends itself on any mission / tier-1 sound)
+            return True
 
         # LiDAR doorway check: re-plan around a blocked doorway (e.g. the chair).
         door = self.nav.check_doorways(self.world.robot_pose, self.world.lidar_ranges,
@@ -796,6 +800,8 @@ class Brain:
             "fallen": self.fallen.status() if self.fallen else None,  # owner lying on the floor (fallen.py)
             # C9: last "Is the sound real?" verdict {"sound", "verdict": "real"|"tv", "reason", "t"} or None
             "sound_check": self.sound_check.status(),
+            # "Rescan house" (scan_mode.py): {"active", "state", "text", "known_frac", "elapsed_s", ...}
+            "scan": self.scan.status(),
         }
 
     def run(self, duration: float = 0.0) -> None:
@@ -815,6 +821,7 @@ class Brain:
             self.bridge.send_cmd(0.0, 0.0, 0.0)
             self.bridge.close()
             self.cmd_listener.close()
+            self.scan.close()
             if self.answer_listener is not None:
                 self.answer_listener.close()
             if self.dashboard is not None:

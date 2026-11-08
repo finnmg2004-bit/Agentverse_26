@@ -16,10 +16,12 @@ import numpy as np
 TITLE = "Robot map"
 
 ENDPOINT = "tcp://127.0.0.1:5559"
+SCAN_ENDPOINT = "tcp://127.0.0.1:5560"   # the brain's live "Rescan house" map (nudge-brain/scan_mode.py)
+SCAN_CAP_S = 600.0
 VIEW = 560            # drawn size in pixels (square, grid is scaled to fit)
 
 _lock = threading.Lock()
-_latest = {"hdr": None, "img": None, "rx": 0.0}
+_latest = {"hdr": None, "img": None, "rx": 0.0, "scan_rx": 0.0}
 _started = False
 _tex_shape = None
 _last_rx = 0.0
@@ -33,6 +35,7 @@ def _listener():
         sock.setsockopt(zmq.SUBSCRIBE, b"robot_map")
         sock.setsockopt(zmq.RCVTIMEO, 500)
         sock.connect(ENDPOINT)
+        sock.connect(SCAN_ENDPOINT)
     except Exception as e:  # missing dep: leave the panel on "waiting"
         print("[robot_map panel] cannot subscribe:", e)
         return
@@ -46,8 +49,13 @@ def _listener():
             continue
         try:
             img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE)
+            h = json.loads(hdr)
             with _lock:
-                _latest.update(hdr=json.loads(hdr), img=img, rx=time.time())
+                if "scan" in h:                       # live rescan map wins while it streams
+                    _latest["scan_rx"] = time.time()
+                elif time.time() - _latest["scan_rx"] < 5.0:
+                    continue
+                _latest.update(hdr=h, img=img, rx=time.time())
         except Exception:
             pass
 
@@ -57,6 +65,22 @@ def build(ctx):
     if not _started:
         _started = True
         threading.Thread(target=_listener, daemon=True).start()
+    def _send(action):
+        payload = {"action": action, "source": "gui"}
+        if action == "scan":
+            payload["cap_s"] = float(dpg.get_value("robotmap_scan_cap") or SCAN_CAP_S)
+        try:
+            ctx._app.pub.send_multipart([b"brain_cmd", json.dumps(payload).encode("utf-8")])
+            dpg.set_value("robotmap_scan_status", "Sent: " + action)
+        except Exception as e:  # noqa: BLE001
+            dpg.set_value("robotmap_scan_status", f"Could not send {action}: {e}")
+
+    with dpg.group(horizontal=True):
+        dpg.add_button(label="Rescan house", callback=lambda: _send("scan"))
+        dpg.add_button(label="Stop scan", callback=lambda: _send("scan_stop"))
+        dpg.add_input_float(label="time cap (s)", tag="robotmap_scan_cap", default_value=SCAN_CAP_S, width=90,
+                            step=0)
+        dpg.add_text("", tag="robotmap_scan_status", color=(120, 220, 140, 255))
     dpg.add_text("Waiting for the robot map (run: pixi run python nudge-brain/robot_map.py --objects)",
                  tag="robotmap_status", color=(150, 150, 155, 255))
     with dpg.group(horizontal=True):
@@ -102,8 +126,38 @@ def _load_saved():
         print("[robot_map panel] saved map:", e)
 
 
+_t_build = time.time()
+_auto_done = {"tab": False, "scan": False}
+
+
+def _auto(ctx):
+    """Screenshot / demo helpers (env, off by default): NUDGE_GUI_TAB="Robot map" opens this tab,
+    NUDGE_GUI_AUTOSCAN=<s> presses "Rescan house" <s> seconds after start."""
+    import os
+    if not _auto_done["tab"] and os.environ.get("NUDGE_GUI_TAB") == TITLE:
+        _auto_done["tab"] = True
+        try:
+            tab = dpg.get_item_parent("robotmap_status")
+            while tab and dpg.get_item_type(tab) != "mvAppItemType::mvTab":
+                tab = dpg.get_item_parent(tab)
+            if tab:
+                dpg.set_value(dpg.get_item_parent(tab), tab)
+        except Exception as e:  # noqa: BLE001
+            print("[robot_map panel] tab select:", e)
+    t = os.environ.get("NUDGE_GUI_AUTOSCAN")
+    if t and not _auto_done["scan"] and time.time() - _t_build > float(t):
+        _auto_done["scan"] = True
+        payload = {"action": "scan", "source": "gui",
+                   "cap_s": float(dpg.get_value("robotmap_scan_cap") or SCAN_CAP_S)}
+        ctx._app.pub.send_multipart([b"brain_cmd", json.dumps(payload).encode("utf-8")])
+
+
 def update(ctx):
     global _tex_shape, _last_rx
+    _auto(ctx)
+    sc = (ctx.brain or {}).get("scan") or {}
+    if sc.get("text") and dpg.does_item_exist("robotmap_scan_status"):
+        dpg.set_value("robotmap_scan_status", ("" if sc.get("active") else f"[{sc.get('state')}] ") + sc["text"])
     with _lock:
         hdr, img, rx = _latest["hdr"], _latest["img"], _latest["rx"]
     if (hdr is None or img is None) and not _file_tried:
@@ -140,6 +194,9 @@ def update(ctx):
         px, py = _w2p(hdr, c["x"], c["y"])
         dpg.draw_circle((px, py), 9, color=(255, 60, 60, 255), thickness=2, parent="robotmap_draw")
         dpg.draw_text((px + 10, py + 2), "new", color=(255, 90, 90, 255), size=13, parent="robotmap_draw")
+    path = hdr.get("path") or []
+    for a, b in zip(path, path[1:]):
+        dpg.draw_line(_w2p(hdr, *a), _w2p(hdr, *b), color=(80, 255, 120, 255), thickness=2, parent="robotmap_draw")
     pose = hdr.get("pose")
     if pose:
         px, py = _w2p(hdr, pose[0], pose[1])
@@ -149,6 +206,8 @@ def update(ctx):
                       color=(255, 255, 255, 255), thickness=2, parent="robotmap_draw")
 
     src = f"saved map {hdr['saved']}" if hdr.get("saved") else f"live, {(time.time() - rx):.0f}s old"
+    if hdr.get("scan"):
+        src = "RESCAN: " + (hdr["scan"].get("text") or hdr["scan"].get("state", ""))
     dpg.set_value("robotmap_status",
                   f"Robot's own map: {hdr.get('known_frac', 0) * 100:.1f}% of the grid known, {len(objs)} objects, "
                   f"{len(hdr.get('changes') or [])} changes ({src})")
