@@ -1,8 +1,20 @@
 # Nudge: open to-dos
 
-Status after `baf3de5` (rules + carpet + voice merged). Tick an item off when it lands on `main`.
-Owners follow AGENTS.md section 9.1. **This session only Sean, Ricktho and Eden are working: Finn's and Teo's
-open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
+Status: overnight run merged (`d2e2f00`, 14/14). **Final day: all 5 working, plan in AGENTS.md section 12.**
+Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00–12:45, submit 13:45.
+
+## Today (AGENTS.md 12; numbers = the team's ideas list)
+- [ ] **Eden:** #9 GUI mic button · merge + suites at 10:45 / 11:45 · then #15 GUI Deaf/Blind switch, demo, summary, pitch, submit
+- [ ] **Finn:** #13 999 call (ask first) · #20 no response → emergency contact · then #19 getting stuck, #11 search/paths
+- [ ] **Teo:** #16/#6 Gemma visual owner check (`owner_check`) + deeper reasoning · steer agents A + C (Modal + Gemma licence by 10:00)
+- [ ] **Sean:** #4 visible nudge · #12 speech on by default · #19 repro scenarios · then #15 modes on the robot, #1 night, #2 charging station
+- [ ] **Ricktho:** #3 audible sounds · YOLO check of the scanned owner · review agents B + D · then #8 owner in bed / on the sofa
+- [ ] **Agent A** `day/own-map`: Option A, 10.8 steps 1–5 (#7, #17, #18) + pitch clip
+- [ ] **Agent B** `day/sound-real`: TV doorbell vs real door, scenario `tv_doorbell`
+- [ ] **Agent C** `day/finetune`: eval + data + Modal LoRA + GGUF (Teo trains)
+- [ ] **Agent D** `day/owner-voice`: #10 Nudge knows where the owner is from their voice, scenario `owner_voice`
+- [ ] Remove the overnight push guard on every PC: `pixi run python scripts/overnight_check.py --uninstall-hook`
+- Not today: #21 LED colours (kept as they are)
 
 ## Verify
 - [x] Full `pixi run test-scenarios` green on the merged code (all 9 scenarios, incl. `carpet_rule`, at `2ae9978`, Gemma live, 0 watchdog fallbacks)

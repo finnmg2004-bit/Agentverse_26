@@ -599,3 +599,52 @@ Fast-forwarded scan with rooms/objects appearing on the GUI map -> owner teaches
   - `scripts/overnight_check.py`: the pre-sleep check
   - `scripts/locked_test.py`: the per-PC test lock
 - **Morning:** Eden reads `STATUS.md` and the reports, then merges into `main` and runs `pixi run test-scenarios`. Everyone removes the guard with `pixi run python scripts/overnight_check.py --uninstall-hook`.
+- **Done:** merged into `main` as `d2e2f00` at 08:45 (full default suite 14/14 PASS). Push guards must be removed on every PC.
+
+---
+
+## 12. Final day plan, 2026-11-08 09:30 → submit 13:45 (agreed; all 5 working; Eden = merge captain)
+**Goal:** the ideas list from the team's notes, built by 5 people + 4 agents on Eden's laptop. **Feature freeze 11:45.** The demo story is decided at ~11:45 from what works (12.5).
+
+### 12.1 Timeline
+| Time | What |
+|---|---|
+| 09:30–10:45 | Build block 1 |
+| **10:45** | **Checkpoint 1:** everyone pushes what works; Eden runs `doorbell smoke carpet_rule demo` and posts green/red |
+| 10:45–11:45 | Build block 2 |
+| **11:45** | **Feature freeze.** Last feature push; Eden merges the agent branches that are green and runs the full suite (~20 min); choose the demo story |
+| 12:00–12:45 | Rehearse 3× in a row, then **record** the ≤ 60 s one-take video (Eden runs the GUI; nobody runs tests on Eden's laptop) |
+| 12:45 | Everyone sends Eden 2–3 lines on their part (summary + pitch) |
+| 12:45–13:30 | Technical summary + pitch final (Eden) |
+| **13:30–13:45** | **Submit** (deadline 15:00) |
+
+### 12.2 People (stay in your files; changes elsewhere: small, additive, tell the owner)
+| Person | Must do (demo) | Then, if time | Files |
+|---|---|---|---|
+| **Eden** | merge captain + suites; **#9 GUI mic button** (starts/stops `voice.py`, shows its status); steer agents A–D | **#15 GUI Deaf/Blind/Deafblind switch** (with Sean, 12.4); demo choice, recording, summary, pitch, submission | `gui/`, `docs/`, `TODO.md`, AGENTS.md 12 |
+| **Finn** | **#13 999 call:** smoke alarm + owner found → ask "Shall I call 999?" (`ask` C5) → yes / no / timeout → "Calling 999…" on screen, by voice, in the GUI. **#20 No response:** owner doesn't respond after N nudges → alert the emergency contact (uses Teo's `owner_check`) | **#19 getting stuck** (Sean supplies repro scenarios), **#11 more efficient search/paths** | `nudge-brain/agent.py`, `safety.py`, `skills.py`, `navigator.py`, `world_model.py`, `main.py` |
+| **Teo** | **#16 / #6 more Gemma, all local:** Gemma 4 visual check of the owner from the head camera (`owner_check`, 12.4; behind a flag) + deeper reasoning shown in the GUI; re-measure latency | steer agent A (Option A) and agent C (fine-tune: needs **your Modal payment method + Gemma licence on Hugging Face by ~10:00**, else C is dropped); "models" paragraph for the summary | `speech/`, `nudge-brain/gemma_vision.py` (new), `robot_map.py`, `object_memory.py` |
+| **Sean** | **#4 visible nudge** (the robot visibly touches/pushes the owner, owner reacts); **#12 speech on by default** in `run_all` / GUI runs (audible in the recording); repro scenarios for #19 | **#15 Deaf/Blind modes on the robot** (which outputs fire per mode); **#1 night** (scene dims by `sim_clock`; viewer only, head camera unchanged so YOLO still works); **#2 charging station** at `robot_dock` | `sim/run_sim.py`, `sim/robot_*.py`, `sim/lightbar.py`, `sim/owner_behavior.py`, `scripts/test_scenarios.py` |
+| **Ricktho** | **#3 audible sounds** (doorbell / kettle / alarm play on the laptop speakers when triggered; off in `test_scenarios`); review agent D's hearing + ear changes; **check YOLO detects the scanned owner** | **#8 owner sleeping in bed / on the sofa** (poses of the scanned model); review agent B | `nudge-brain/hearing.py`, `voice.py`, `sim/sensors.py` (audio), `assets/audio/`, owner model scripts |
+
+### 12.3 Agents on Eden's laptop (own branch + worktree each, report in `day/reports/<agent>.md` on the branch; Eden merges only green work at 10:45 / 11:45)
+| Agent | Branch | Builds | Reviewer |
+|---|---|---|---|
+| **A** Option A | `day/own-map` | The 5 steps of 10.8: real objects (`--coco-objects`), room naming, live change detection, frontier exploration + saved map, robot uses its own map behind `NUDGE_ROBOT_MAP=1`; plus a fast-forwarded scan clip for the pitch | Teo |
+| **B** "Is the sound real?" | `day/sound-real` | TV in the living room as a sound source (hotkey + GUI button) that can play a doorbell; the brain checks direction + loudness against the real front door and says "That was the TV" instead of starting a mission; new scenario `tv_doorbell` | Ricktho |
+| **C** Fine-tune | `day/finetune` | Eval set + training data from the deterministic policy, Modal LoRA script for a small Gemma, GGUF + `Modelfile`, eval harness; **Teo runs the Modal training** on his account. Ships only if ≥ 90 % correct (base: 97.8 %) and < 1 s | Teo |
+| **D** Owner voice (#10) | `day/owner-voice` | Finish "Nudge knows where the owner is when they speak": sim plays the voice from the owner (done), hearing speech score (done), localiser + owner belief + `main.py` hook, GUI map shows it, scenario `owner_voice` | Ricktho (hearing), Finn (`main.py`) |
+
+Agents share the test lock (`scripts/locked_test.py`) and stop at 11:35 (final push + report). Teo / Ricktho: send review notes to Eden, who relays them to the agent.
+
+### 12.4 Contracts for today (only ever add fields)
+- **C6 `owner_voice`** (brain status, agent D): `{"room", "p", "xy", "t"}` = where the owner's voice came from, last utterance.
+- **C7 `owner_check`** (brain status, Teo → Finn): `{"state": "standing"|"sitting"|"lying_down"|"not_visible", "confidence", "t", "source": "gemma"}`.
+- **C8 `escalation`** (brain status, Finn → GUI, sim screen + voice): `{"reason": "no_response"|"fire", "contact": "999"|"emergency_contact", "asked": bool, "answer": "yes"|"no"|"timeout"|null, "t"}` or null.
+- **C9 `sound_check`** (brain status, agent B): `{"sound", "verdict": "real"|"tv", "reason", "t"}`.
+- **C10 owner profile** (Eden GUI → sim, Sean): gui action `{"action": "profile", "mode": "deaf"|"blind"|"deafblind"}`; `state.profile`; the sim enables only that profile's outputs (2.2); demo default `deafblind` = all on.
+- Owner voice in the sim: every `user_command` (GUI box, tests, voice mic) plays `assets/audio/owner_voice.wav` from the owner's position; `"spoken": false` = typed silently.
+
+### 12.5 Demo (decide at 11:45)
+Proposal using today's features: the owner (guest bedroom, out of sight) says "Nudge, I'm expecting a parcel" → Nudge hears where they are → doorbell (audible) → goes straight to the guest room, nudges, speaks, starts guiding → **unscripted:** smoke alarm → pre-empts, evacuates, asks "Shall I call 999?". Fallbacks: test videos A / B from the overnight run (`docs/DEMO_STORYBOARD.md`).
+Not today: **#21 LED colours** (kept as they are, team decision).
