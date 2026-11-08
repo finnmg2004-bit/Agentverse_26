@@ -71,3 +71,4 @@ Full default suite on `overnight/sean` at 04:33 (soak.py -n 1, 21 min): **14/14 
 - 03:53: S7 COCO stand-ins + objects_gt behind --coco-objects, 7638a26, tested: coco_standins self-check OK, check_world OK, flag on: doorbell/smoke/carpet_rule/smoke_blocked_exit/asleep_doorbell PASS, flag off: doorbell PASS
 - 04:03: STATUS reply + teach_bedtime_carpet (experimental), 7117c0d, tested: --list only (needs E1 code, run on integration)
 - 04:54: full default suite on this branch, no code change, tested: 14/14 PASS
+- 05:03: idle tick (queue done, STATUS 04:57 has nothing for sean; teach_bedtime_carpet still waiting for an E0 run)
