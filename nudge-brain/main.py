@@ -41,6 +41,7 @@ from sound_check import SoundCheck  # noqa: E402  ("Is the sound real?" TV vs fr
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
 from tasks import OwnerActivity, TaskRunner, TaskStore, confirmation  # noqa: E402
 from ask import AnswerListener, AskOwner  # noqa: E402
+import localizer_pf  # noqa: E402  (P11 particle-filter localisation; NUDGE_LOCALIZE=1, default off)
 from sim.house_layout import ALERT_SOUNDS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
 
 LOOP_HZ = 20.0
@@ -186,6 +187,8 @@ class Brain:
         self.agent = NudgeAgent()
         # Gemma looks at the owner (C7, gemma_vision.py): None unless NUDGE_OWNER_CHECK=1
         self.owner_check = OwnerChecker.from_env(busy=lambda: self.agent.pending_info() is not None)
+        # P11: own pose from odometry + LiDAR on the saved map instead of the sim's pose (NUDGE_LOCALIZE=1)
+        self.pf = localizer_pf.ParticleLocalizer() if localizer_pf.enabled() else None
         self.localizer = SoundLocalizer()
         # Owner lying on the floor (fallen.py): None unless NUDGE_FALLEN_CHECK=1 / NUDGE_OWNER_CHECK=1
         self.fallen = FallenWatch.from_env(self.nav.planner, self.owner_check,
@@ -260,6 +263,8 @@ class Brain:
             self.owner_check.reset()
         if self.fallen:
             self.fallen.reset()
+        if self.pf:
+            self.pf.reset()
         self.episode = episode
         self.world.log(f"RESET by sim (episode {episode}) - ready")
 
@@ -369,6 +374,8 @@ class Brain:
     def on_camera(self) -> None:
         meta, rgb, depth = self.bridge.latest_camera
         pose = meta.get("robot_pose", self.world.robot_pose)
+        if self.pf:  # P11: project detections with the estimated pose, not the sim's
+            pose = self.world.robot_pose
         det = self.vision.detect(rgb, depth, (float(pose[0]), float(pose[1]), float(pose[2])))
         self.world.update_owner_detection(det)
         if self.owner_check:  # latest frame only; the check itself runs in its own thread
@@ -639,7 +646,10 @@ class Brain:
             elif episode != self.episode:
                 self.reset(episode)
             RUN_LOG.set_episode(self.episode, run=id(self))  # new file per brain run / episode, else no-op
-            self.world.update_state(self.bridge.latest_state)
+            st = self.bridge.latest_state
+            if self.pf:  # P11: the brain acts on its own estimate (sim pose = error measurement only)
+                st = dict(st, robot_pose=list(self.pf.update(st)), robot_room=self.pf.room())
+            self.world.update_state(st)
         if upd["audio"]:
             self.on_audio()
         if upd["camera"]:
@@ -722,6 +732,8 @@ class Brain:
         m = self.world.mission
         if m is not None and m.get("alert_sound") and self.alerts.mode == "1_pulse":
             self.alerts.set_for_sound(m["alert_sound"])  # taught sound task (TaskAdapter.start_job)
+        if self.pf:  # P11: odometry for the next predict = what we just told the legs
+            self.pf.set_cmd(vx, vy, wz, guiding=out.guiding)
         self.bridge.send_cmd(vx, vy, wz, alert_mode=self.alerts.mode, guiding=out.guiding,
                              mission_status=status, mission_text=status_text, episode=self.episode)
         now = time.monotonic()
@@ -755,6 +767,8 @@ class Brain:
                         if w.mission else ""},
             # What the owner told the robot, as enforced (rules.py), and the latest message for the owner
             "rules": w.rules.status(),
+            # P11 particle filter: {pose, std_xy, err_xy (vs the sim pose, display only), n_eff, ...} or None
+            "localization": self.pf.status() if self.pf else None,
             "nudge_says": w.nudge_says,
             "ask": self.ask.status(),  # C5: open question to the owner, or None
             # C8: who Nudge called and why (fire 999 ask / no response), or None
