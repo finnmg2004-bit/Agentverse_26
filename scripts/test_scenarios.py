@@ -158,7 +158,7 @@ SCENARIOS: Dict[str, Dict] = {
                 "no answer -> 999 (C8 reason fallen) -> stays with them (no nudging onto them, no guiding)",
         # fallen check is off by default in the brain; the sim must render the real head camera (EGL):
         # the headless pinhole fallback draws every owner upright, so nobody could ever lie down in it
-        "env": {"NUDGE_FALLEN_CHECK": "1", "MUJOCO_GL": "egl"},
+        "env": {"NUDGE_FALLEN_CHECK": "1", **({} if sys.platform == "win32" else {"MUJOCO_GL": "egl"})},  # egl crashes mujoco on Windows (Sean)
         "sim_args": ["--render-camera"],  # real head-camera renders, not the headless pinhole fallback
         "actions": [("gui", 0.5, {"action": "owner_state", "state": "fallen", "yaw": 3.14159}), ("at", 2.0, "B")],
         "expect_complete": [],
