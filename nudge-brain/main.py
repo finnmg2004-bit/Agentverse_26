@@ -679,6 +679,10 @@ class Brain:
         self.tick_tasks()
         if self.scan.tick(self, upd):  # scan mode drove this tick (it ends itself on any mission / tier-1 sound)
             return True
+        new_map, self.scan.saved_map = self.scan.saved_map, None  # NUDGE_ROBOT_MAP=1: use a rescan at once
+        if new_map is not None and self.nav.swap_robot_map(new_map, self.world.robot_pose):
+            i = self.nav.robot_map_info
+            self.world.log(f"ROBOT MAP: switched to the new scan ({i['file']}, {i['known_frac']:.0%} known)")
 
         # LiDAR doorway check: re-plan around a blocked doorway (e.g. the chair).
         door = self.nav.check_doorways(self.world.robot_pose, self.world.lidar_ranges,
@@ -833,6 +837,9 @@ class Brain:
             "unknown_event": self.unknown.status,
             # "Rescan house" (scan_mode.py): {"active", "state", "text", "known_frac", "elapsed_s", ...}
             "scan": self.scan.status(),
+            # NUDGE_ROBOT_MAP=1: the map the planner uses {"source": "startup"|"rescan", "file", "loaded_at",
+            # "known_frac", "objects", "exits"}; null with the flag off
+            "robot_map": self.nav.robot_map_info,
         }
 
     def run(self, duration: float = 0.0) -> None:
