@@ -287,6 +287,19 @@ DANGER_SOUNDS = tuple(n for n, t in SOUND_TIERS.items() if t == 1)
 # Sounds that start an ordinary (non-emergency) mission, highest priority first.
 ALERT_SOUNDS = tuple(sorted((n for n, t in SOUND_TIERS.items() if t > 1), key=lambda n: SOUND_TIERS[n]))
 
+# The owner's own voice. Not a registry sound (it never starts a mission): whenever the owner talks to
+# Nudge (voice mic or GUI text box) the sim plays this clip from the owner's position into the robot's
+# ears, and the brain localises it like any other sound to work out WHERE the owner is.
+OWNER_VOICE: Dict[str, object] = {
+    "file": "owner_voice.wav",      # scripts/make_owner_voice.py
+    "level": 0.8,                   # normal speech, a bit quieter than the doorbell
+    "yamnet": ("Speech", "Male speech, man speaking", "Female speech, woman speaking",
+               "Narration, monologue", "Conversation", "Speech synthesizer"),
+    "words_per_s": 2.5,             # how long the owner talks for a sentence of N words
+    "min_s": 2.0,
+    "max_s": 6.0,
+}
+
 # --------------------------------------------------------------------------- #
 # Movable chair obstacle (hotkey [C]): blocks the guest <-> living_room door,
 # forcing a reroute through the entry hall.
