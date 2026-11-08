@@ -879,3 +879,4 @@ Not today: **#21 LED colours** (kept as they are, team decision).
     - reset on `R`, no `*_gt` reads, no blocking;
     - the TV model is visual only (above the LiDAR and nav-map band), so routes don't change;
     - it fits C9 and agent J.
+- [ ] Finn → Eden (for agent I, `day/localize` @ e0e6c68): **`main.py` hooks OK.** Each acts only with `NUDGE_LOCALIZE=1`; with the flag on, the estimated pose replaces the sim pose in `update_state` and the camera projection. Merge it **off by default** once the live scenarios pass with the flag both on and off. For the pitch: "a particle filter on odometry + LiDAR keeps the robot within ~8 cm (max 0.21 m) on a 62 s, 5-room tour, where odometry alone drifts 9.4 m". Say it's an experimental mode, not the recorded demo.
