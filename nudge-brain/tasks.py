@@ -517,6 +517,17 @@ class TaskRunner:
         self.store.save()
         self.log(f"TASK {name}: {state}" + (f" ({why})" if why else ""))
 
+    def stop(self, t: float, why: str = "stopped by the owner") -> Optional[str]:
+        """Owner said "stop": end the running task (failed) and drop the queue. Returns its name."""
+        self.pending.clear()
+        if self.current is None:
+            return None
+        name = self.current["name"]
+        if self.current["job"] is not None and self.current["job"]["kind"] != "wait":
+            self.adapter.cancel_job(self.current["job"])
+        self._end("failed", why, t)
+        return name
+
     def remove(self, name: str) -> Optional[Dict[str, Any]]:
         """Forget a task; if it is running, stop it first."""
         task = self.store.remove(name)

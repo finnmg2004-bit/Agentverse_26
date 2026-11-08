@@ -11,6 +11,7 @@ Nudge Brain orchestrator (`nudge-brain/main.py`) — run with `pixi run brain`.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -26,13 +27,13 @@ from alerts import HapticAlerts  # noqa: E402
 from bridge import BrainBridge  # noqa: E402
 from hearing import SoundEvents, StereoHearing  # noqa: E402
 from navigator import Navigator  # noqa: E402
-from skills import Skill, SkillExecutor  # noqa: E402
+from skills import GoToRoom, Skill, SkillExecutor  # noqa: E402
 from vision import OwnerDetector  # noqa: E402
 from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
 from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
-from tasks import TaskStore  # noqa: E402
+from tasks import TaskRunner, TaskStore  # noqa: E402
 from sim.house_layout import ALERT_SOUNDS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
 
 LOOP_HZ = 20.0
@@ -41,6 +42,86 @@ NEW_SOUND_CONF = 0.5
 SILENCE_WINDOWS_TO_UNLATCH = 3  # 1.5 s of silence before the same sound can start a new mission
 UNLATCH_BELOW = 0.25
 OWNER_SEEN_COOLDOWN = 3.0
+SAY_HOLD_S = 20.0  # top-level `say` in the brain status: how long a reply stays on the robot screen
+
+
+class TaskAdapter:
+    """Runs taught-task jobs (tasks.TaskRunner, contract C1) through the brain's mission machinery.
+
+    "mission" (find owner -> nudge -> guide to X) is an owner-request mission, exactly like
+    "take me to X". "find_alert" (find owner -> nudge -> tell them, no guiding) is the same mission
+    ended by plain code once the owner is alerted. "say" just speaks; "go_to_room" walks there.
+    A task mission is never started over another mission (busy) and a smoke alarm replaces it
+    (start_mission) - the runner then fails the task.
+    """
+
+    def __init__(self, brain: "Brain") -> None:
+        self.brain = brain
+        self.mission = None  # the mission dict this adapter started (identity check)
+        self.kind = None
+        self.result = None  # "ok" / "failed" once known
+
+    def reset(self) -> None:
+        self.mission, self.kind, self.result = None, None, None
+
+    def busy(self) -> bool:
+        w = self.brain.world
+        return w.mission is not None and w.mission is not self.mission
+
+    def emergency(self) -> bool:
+        return self.brain.world.is_emergency()
+
+    def start_job(self, job: dict, task: dict) -> None:
+        b, w = self.brain, self.brain.world
+        self.mission, self.kind, self.result = None, job["kind"], None
+        say = job.get("say") or job.get("text") or ""
+        if job["kind"] == "find_alert" and (w.guiding_active or w.dist_to_owner() < 1.6):
+            # already with the owner: just tell them
+            w.say(say or f"Reminder: {task['name']}.", "task")
+            self.result = "ok"
+        elif job["kind"] in ("mission", "find_alert"):
+            b.agent.cancel()
+            target = job.get("target") or w.best_search_room()
+            w.start_request(target, f"task {task['name']}")
+            w.mission.update(task=task["name"], task_kind=job["kind"])
+            if say:
+                w.mission["say"] = say
+            self.mission = w.mission
+            b.agent.submit("user_command", w)
+        elif job["kind"] == "say":
+            w.say(say, "task")
+            self.result = "ok"
+        elif job["kind"] == "go_to_room":
+            b.executor.execute({"tool": "go_to_room", "args": {"room": job["room"]}}, w)
+        else:
+            self.result = "failed"
+
+    def job_status(self, job: dict) -> str:
+        if self.result is not None:
+            return self.result
+        if self.kind == "go_to_room":
+            return "running" if isinstance(self.brain.executor.skill, GoToRoom) else "ok"
+        w = self.brain.world
+        return "running" if (self.mission is not None and w.mission is self.mission) else "failed"
+
+    def finished(self, mission) -> None:
+        """The brain completed `mission` (owner delivered / alerted): the job is done."""
+        if mission is not None and mission is self.mission:
+            self.result = "ok"
+
+    def cancel_job(self, job: dict) -> None:
+        b, w = self.brain, self.brain.world
+        if self.mission is not None and w.mission is self.mission:  # never touches a smoke mission
+            b.agent.cancel()
+            b.nav.clear()
+            b.executor.skill = Skill()
+            b.alerts.clear()
+            w.mission = None
+            w.phase = "idle"
+        elif self.kind == "go_to_room" and isinstance(b.executor.skill, GoToRoom):
+            b.nav.clear()
+            b.executor.skill = Skill()
+        self.mission, self.result = None, "failed"
 
 
 class Brain:
@@ -59,7 +140,15 @@ class Brain:
         # What the owner tells the robot (GUI text box / voice): rules.py
         self.cmd_listener = CommandListener()
         self.cmd_parser = CommandParser(self.agent)
-        self.task_store = TaskStore()  # taught jobs (assets/tasks.json); runner + triggers: E1.3
+        # Taught jobs (tasks.py): assets/tasks.json, emptied at brain start unless NUDGE_TASKS_KEEP=1
+        # (so a task taught in one test run never leaks into the next).
+        self.task_store = TaskStore()
+        if os.environ.get("NUDGE_TASKS_KEEP", "0") != "1" and len(self.task_store):
+            self.task_store.clear()
+        self.task_adapter = TaskAdapter(self)
+        self.task_runner = TaskRunner(self.task_store, self.task_adapter,
+                                      log=lambda text: self.world.log(text))
+        self.new_sound_events: list = []  # SoundEvents since the last task tick (sound triggers)
         # The owner's no-go areas; read self.world at call time (reset() replaces the world).
         self.nav.avoid_provider = lambda: self.world.avoid_for_planning()
         self.last_tick = time.monotonic()
@@ -90,6 +179,9 @@ class Brain:
         self.latched = {}
         self.deferred = set()
         self.sound_events.reset()
+        self.new_sound_events = []
+        self.task_runner.reset()
+        self.task_adapter.reset()
         self.last_owner_seen_event = 0.0
         self.episode = episode
         self.world.log(f"RESET by sim (episode {episode}) - ready")
@@ -111,6 +203,7 @@ class Brain:
         res["estimated_room"] = est["room"] if est and est["converged"] else None
         self.world.update_sound(res)
         for ev in self.sound_events.update(res, self.world.t_sim):
+            self.new_sound_events.append(ev)
             extra = f" after {ev['duration_s']:.1f}s" if ev["phase"] == "stop" else f" ({ev['confidence']:.2f})"
             self.world.log(f"SOUND {ev['phase']}: {ev['label']}{extra}")
 
@@ -224,14 +317,17 @@ class Brain:
                 w.mission["say"] = say
                 self.agent.submit("user_command", w)
             elif kind == "teach":
-                task = self.task_store.add(dict(instr["task"], source=msg.get("source", "")))
+                task = self.task_runner.store.add(dict(instr["task"], source=msg.get("source", "")))
                 w.log(f"TASK taught: {task['name']} {task['trigger']} -> {[st['skill'] for st in task['steps']]}")
             elif kind == "forget_task":
-                removed = self.task_store.remove(instr["name"])
+                removed = self.task_runner.remove(instr["name"])
                 say = forget_reply(removed, instr["name"])
                 if removed is not None:
                     w.log(f"TASK forgotten: {removed['name']}")
             elif kind == "stop":
+                stopped = self.task_runner.stop(w.t_sim)
+                if stopped:
+                    w.log(f"Task {stopped} STOPPED by the owner")
                 self.agent.cancel()
                 self.nav.clear()
                 self.executor.skill = Skill()
@@ -241,6 +337,15 @@ class Brain:
                     w.mission = None
                     w.phase = "idle"
         w.say(say, "confirm")
+
+    # ------------------------------------------------------------------ taught tasks
+    def tick_tasks(self) -> None:
+        """Trigger watcher + runner (tasks.py). Runs a task only when no other mission is active."""
+        st = self.bridge.latest_state or {}
+        events, self.new_sound_events = self.new_sound_events, []
+        # idle / owner_entered_room triggers: no brain-side owner tracking for them yet (E1.6)
+        self.task_runner.tick(self.world.t_sim, clock=st.get("sim_clock"), day=st.get("sim_day"),
+                              sound_events=events)
 
     # ------------------------------------------------------------------ emergency
     def plan_evacuation(self, why: str) -> bool:
@@ -293,6 +398,7 @@ class Brain:
             self.on_user_command(msg)
         for result in self.cmd_parser.poll():
             self.apply_command(result)
+        self.tick_tasks()
 
         # LiDAR doorway check: re-plan around a blocked doorway (e.g. the chair).
         door = self.nav.check_doorways(self.world.robot_pose, self.world.lidar_ranges,
@@ -309,9 +415,18 @@ class Brain:
 
         out = self.executor.step(self.world)
         if out.event:
+            m = self.world.mission
             if out.event == "guide_complete":
                 if self.world.mission:
                     self.world.log(f"Owner delivered to {self.world.mission['target']}")
+                self.task_adapter.finished(m)
+                self.world.finish_mission()
+                self.alerts.clear()
+            elif (m is not None and m.get("task_kind") == "find_alert"
+                  and out.event in ("owner_alerted", "handle_taken")):
+                # taught "find me and tell me": the owner has been nudged and told -> done, no guiding
+                self.world.say(m.get("say") or f"Reminder: {m['task']}.", "task")
+                self.task_adapter.finished(m)
                 self.world.finish_mission()
                 self.alerts.clear()
             elif self.world.mission is not None:
@@ -370,6 +485,11 @@ class Brain:
             # What the owner told the robot, as enforced (rules.py), and the latest message for the owner
             "rules": w.rules.status(),
             "nudge_says": w.nudge_says,
+            # the same reply as plain text for the robot screen / speaker outside a mission (sim reads
+            # `say` when no mission message is active: "Sorry, I can't do that yet...", task reminders,
+            # rule confirmations); cleared after SAY_HOLD_S so the screen doesn't show it forever
+            "say": (w.nudge_says or {}).get("text", "")
+            if w.nudge_says and w.t_sim - float(w.nudge_says.get("t", 0.0)) <= SAY_HOLD_S else "",
             "phase": w.phase,
             "skill": self.executor.skill.label(),
             "alert_mode": self.alerts.mode,
@@ -391,6 +511,8 @@ class Brain:
             # debounced sound start/stop events + what Nudge heard in the last 5 min (hearing.SoundEvents)
             "sound_events": list(self.sound_events.log)[-10:],
             "heard_sounds": self.sound_events.what_did_i_hear(since_t=w.t_sim - 300.0),
+            # taught tasks (contract C3, + "summary" / "queued")
+            "tasks": self.task_runner.status(),
         }
 
     def run(self, duration: float = 0.0) -> None:
