@@ -105,6 +105,36 @@ class LookAround(Skill):
         self.room = world.robot_room
         self.turned = 0.0
         self.last_yaw = world.robot_pose[2]
+        self.direction = self._best_direction(world)
+
+    @staticmethod
+    def _best_direction(world) -> float:
+        """Spin towards where the owner most likely is (owner_belief): +1 = left, -1 = right.
+        Still a full turn either way; this only makes a present owner come into view sooner."""
+        try:
+            from owner_belief import CAM_FORWARD, CAM_HFOV, CAM_RANGE
+            from sim.house_layout import count_walls_crossed
+            b = world.belief
+            x, y, yaw = world.robot_pose
+            cx, cy = x + CAM_FORWARD * math.cos(yaw), y + CAM_FORWARD * math.sin(yaw)
+            cost = {1.0: 0.0, -1.0: 0.0}  # probability-weighted angle to turn before each spot is in view
+            for room, p in b.p.items():
+                if p < 0.02:
+                    continue
+                for (px, py), w in b.samples[room]:
+                    d = math.hypot(px - cx, py - cy)
+                    if d > CAM_RANGE or d < 0.3 or count_walls_crossed((cx, cy), (px, py)) > 0:
+                        continue
+                    bearing = wrap(math.atan2(py - cy, px - cx) - yaw)
+                    if abs(bearing) <= CAM_HFOV / 2:
+                        continue  # already in view
+                    left = (bearing if bearing > 0 else bearing + 2 * math.pi) - CAM_HFOV / 2
+                    right = (-bearing if bearing < 0 else 2 * math.pi - bearing) - CAM_HFOV / 2
+                    cost[1.0] += p * w * left
+                    cost[-1.0] += p * w * right
+            return -1.0 if cost[-1.0] < cost[1.0] else 1.0
+        except Exception:
+            return 1.0
 
     def step(self, world, nav, alerts) -> SkillOutput:
         yaw = world.robot_pose[2]
@@ -115,7 +145,7 @@ class LookAround(Skill):
             if world.mission is not None and not world.owner_visible:
                 return SkillOutput(event="owner_not_found", done=True)
             return SkillOutput(done=True)
-        return SkillOutput(wz=self.RATE)
+        return SkillOutput(wz=self.RATE * self.direction)
 
 
 class ApproachAndAlert(Skill):

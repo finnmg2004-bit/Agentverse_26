@@ -191,9 +191,11 @@ class WorldModel:
 
     def best_search_room(self) -> str:
         """Most probable owner room, discounted by how far away it is (owner_belief.py).
-        The room the robot is standing in is skipped once it has looked around it."""
+        The room the robot is standing in is skipped once it has looked around it, or once the
+        camera has already ruled it out on the way in (owner_belief.cleared)."""
         blocked = set(self.blocked_doors)
-        exclude = {self.robot_room} if self.robot_room in self.searched_rooms else set()
+        here = self.robot_room
+        exclude = {here} if (here in self.searched_rooms or self.belief.cleared(here)) else set()
         return self.belief.best_room(self.robot_room, lambda a, b: room_hops(a, b, blocked), exclude)
 
     # ------------------------------------------------------------------ mission
