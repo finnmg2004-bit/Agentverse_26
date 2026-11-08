@@ -448,6 +448,12 @@ class NudgeControl:
                 with dpg.group(horizontal=True):
                     for label, k in SCENE_CONTROLS[i:i + 7]:
                         dpg.add_button(label=f"{label}  [{k}]", callback=(lambda kk: (lambda: self.key(kk)))(k))
+            # Sim clock (contract C2: state.sim_clock "HH:MM"); the sim ignores the action until it supports it
+            with dpg.group(horizontal=True):
+                dpg.add_text("Clock:")
+                dpg.add_text("--:--", tag="clock_txt", color=DIM)
+                dpg.add_button(label="Jump to 21:59", callback=lambda: self.send({"action": "clock", "time": "21:59"}))
+                dpg.add_button(label="+1 h", callback=self.clock_plus_hour)
             dpg.add_text("", tag="scene_txt", color=DIM)
 
             # Tell Nudge: commands, sound preferences and place rules (AGENTS.md 9.3)
@@ -542,6 +548,14 @@ class NudgeControl:
             if name in ("front_door", "back_exit_outside"):
                 dpg.draw_text((p[0] + 7, p[1] - 7), name, color=AMBER, size=11)
 
+    def clock_plus_hour(self) -> None:
+        clk = str(self.state.get("sim_clock") or "")
+        try:
+            h, m = (int(x) for x in clk.split(":")[:2])
+        except ValueError:
+            return  # sim sends no clock yet
+        self.send({"action": "clock", "time": f"{(h + 1) % 24:02d}:{m:02d}"})
+
     # ------------------------------------------------------------------ per-frame updates
     def update(self) -> None:
         now = time.monotonic()
@@ -583,6 +597,17 @@ class NudgeControl:
                                    parent="view_overlay")
                 dpg.draw_text((20, 44), f'Nudge says: "{ns["text"]}"', color=(150, 230, 255, 255), size=17,
                               parent="view_overlay")
+
+        # Sim clock (absent until the sim implements C2)
+        clk = st.get("sim_clock") if sim_ok else None
+        if clk:
+            dpg.set_value("clock_txt", f"{clk}" + (f"  (day {st['sim_day']})" if st.get("sim_day") else ""))
+            dpg.configure_item("clock_txt", color=TEXT)
+            if mstatus not in ("active", "complete"):
+                dpg.draw_text((VIEW_W - 90, 12), str(clk), color=TEXT, size=22, parent="view_overlay")
+        else:
+            dpg.set_value("clock_txt", "--:--  (sim sends no clock)")
+            dpg.configure_item("clock_txt", color=DIM)
 
         # Scene line
         if sim_ok:
