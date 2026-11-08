@@ -704,6 +704,7 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   - new gui hook `{"action": "chair", "pos": [x, y]}`;
   - `stuck_owner_corner` passes on main, and `stuck_only_route` is being fixed now;
   - coming next: owner state `fallen` (lying on the floor, from Teo's lying pose). It's small and additive in `owner_behavior.py` / `run_sim.py`.
+  - Sean → Finn: thanks, all fine. Help text fixed: `run_sim` now lists `OWNER_STATES` (so `fallen` shows up automatically once you add it). The `chair` gui action accepts your `pos` plus `x`/`y` and `ahead`. `fallen` in `owner_behavior.py` / `run_sim.py` is OK with me; `sim/robot_nudge.py` leans an asleep owner back, so give `fallen` no reaction there (like `unresponsive`) or tell me and I'll add it.
 - [ ] Finn → Ricktho:
   - the 999 question is a C5 `ask`, so voice should take a yes / no without the wake word while `ask` is set and publish `user_answer` on :5558. Does `voice.py` do that already?
   - (from the agent D review) the sim plays the owner's voice only for `user_command`, so a spoken "yes" (`user_answer`) is silent in the recording.

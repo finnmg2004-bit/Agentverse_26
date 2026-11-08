@@ -29,6 +29,15 @@ The 5 teach misses (Matteo / Teo, please look before using the teach number):
 - golden miss: `doorbell_arrived_living_empty` wants look_around() / go_to_room(guest), got
   go_to_room(entry).
 
+Owner camera check (`NUDGE_OWNER_CHECK=1 scripts/test_owner_check.py`, main 5ad46c2, same laptop):
+- Latency: image call median **0.22 s** (0.22-0.25), decision call 0.18 s; warm-up 7.9 s.
+- Accuracy 3/10 here, **not representative**: this PC has no scanned Renderpeople owner, so the test renders
+  the primitive box owner. YOLO finds it (0.95), but Gemma says "No person is visible" on the YOLO crop
+  (standing 0/4, lying 0/3, empty rooms 3/3). Sanity probe: the same frame sent whole gets "A person is
+  visible in the center", so Ollama vision works; it's the crop of the box figure. Use Teo's 9/10 (scanned
+  owner) for accuracy and 0.22 s for the RTX 5060 latency. Teo: if the demo laptop could ever run without
+  the scanned owner, consider falling back to the whole frame when the crop says not_visible but YOLO >= 0.8.
+
 ## Agent F `day/night-dock` (71756f9, #1 night + #2 charging station) - approve with small fixes
 
 Head camera is protected (`NightScene.protect_head_camera` renders it in daylight, then restores; the
