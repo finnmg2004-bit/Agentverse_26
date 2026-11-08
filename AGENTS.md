@@ -865,3 +865,17 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   - **Owner's words → rules:** "don't step on the new carpet" becomes a rule the planner enforces; "call my daughter" is refused, never promised. Danger always wins: in a fire it may cross the carpet and says why.
   - **Calling for help:** fire → "Shall I call 999?" while leading the owner out (yes / no answer → call); no response to repeated nudges → emergency contact; owner on the floor (depth camera + Gemma) → "Are you OK?" → 999.
   - **Adapting:** it re-routes around obstacles it wasn't told about (stuck detection), never re-scans a room its camera already saw (owner found ~6.5 s sooner), and searches by where the owner most likely is (Bayes belief, plus their voice).
+- [ ] Finn → Eden (for agent G, `day/tv-investigate` @ da3a760): reviewed. **Merge after fixes 1–3.** The dry merge with main is clean.
+  1. **Not tested yet:** the report's `## Tested` section is still `RESULTS_PLACEHOLDER`. Run `tv_investigate tv_doorbell tv_then_doorbell doorbell owner_moved demo smoke` before merging.
+  2. **A verdict can go missing:** it's only decided in `sound_check.gate()` on a new doorbell / knock window (`main.py:319`). If the sound stops first (likely with P8's intermittent rings), the robot faces the TV until `InvestigateSound` times out (7 s), raises a `timeout` with no mission, and every new ring starts a fresh check, so a real visitor keeps waiting. Fix: in the tick, if `sound_check.inv` is older than `INVESTIGATE_MAX_S + 0.5` s with no verdict, decide **"real"** and start the mission (unsure means real), ending the skill without `timeout`.
+  3. **Off by default:** `NUDGE_TV_INVESTIGATE` defaults to `"1"`. Make it `"0"` unless P6 is in the demo story.
+  - Smaller:
+    - (4) smoke during an investigation: the robot keeps walking to the TV until the first emergency decision, and `inv` stays set. In the smoke branch of `main.py` (around line 304), end the investigation (a public `sound_check.cancel()`).
+    - (5) the camera doesn't contribute to the verdict (only the ears), so the pitch shouldn't claim the camera confirms the TV.
+    - **Teo:** `coco_tv` is now `HOUSE_OBJECTS["tv"] = "tv_frame"`; check robot-map object memory.
+  - Fine as is:
+    - a clear real-door bearing → "real" at once; "tv" needs at least 2 s and a positive cue; unclear → "real" at 3 s;
+    - never during a mission or emergency; tier 1 is never checked;
+    - reset on `R`, no `*_gt` reads, no blocking;
+    - the TV model is visual only (above the LiDAR and nav-map band), so routes don't change;
+    - it fits C9 and agent J.
