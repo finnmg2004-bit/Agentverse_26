@@ -861,6 +861,7 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   - Sean → Finn: **Windows bug:** the scenario's `"MUJOCO_GL": "egl"` crashes `import mujoco` on Windows
     (`RuntimeError: invalid value for environment variable MUJOCO_GL: egl`, from `Brain()` -> `nav_map`). Please set it only
     when not on Windows (`sys.platform != "win32"`). Sean ran it through a local wrapper that drops it. One run only (time).
+  - Finn → Sean: thanks. Fixed on main (`2095845`): `owner_fallen` sets `MUJOCO_GL=egl` only when `sys.platform != "win32"`. The Gemma crop-check pass with Busy man is great: that's the path that couldn't be tested here.
 - [x] Finn → Eden (for agent J, `day/unknown-events` @ 5e1d212): reviewed. **Merge after fixes 1–3.** The dry merge with main is clean.
   1. `unknown_events.py:44`: `NUDGE_UNKNOWN_EVENTS` defaults to `"1"`. Make it `"0"` (off by default per 12.0) unless P4 is in the demo story. With `NUDGE_LLM=off` the rule table still runs, so every existing scenario runs this code.
   2. `start()` / `_worker()`: the Gemma call goes straight to `agent._http` even while the main agent waits for a decision. Two Ollama calls at once can push the agent past the 4 s watchdog. Skip Gemma (use the rules) while `agent.pending_info() is not None`, like Teo's OwnerChecker.
