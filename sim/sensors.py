@@ -421,6 +421,7 @@ class SimSensors:
         self.rng = np.random.default_rng(123)
         self.noise = AmbientNoise(self.rng)  # background-noise test profile ([N] hotkey / --noise)
         self.speaker = SpeakerOut(self.audio_clips)  # room sounds on the laptop speakers (#3)
+        self._speaker_extra: List[str] = []  # clips the TV played this window (clip_window)
 
         # LiDAR ray angles in body frame: [-90 deg, +90 deg]
         self.lidar_angles = np.linspace(
@@ -588,7 +589,9 @@ class SimSensors:
             self._mix_source(clip[idx], (sx, sy), level, robot_pose, left_ch, right_ch)
 
         self.audio_cursor = (self.audio_cursor + AUDIO_WINDOW_SAMPLES) % (SAMPLE_RATE * 2)
-        self.speaker.update(active_list)  # people in the room hear it too (no-op outside run_sim.py)
+        # people in the room hear it too (no-op outside run_sim.py), incl. a doorbell on the TV (clip_window)
+        self.speaker.update(active_list + (self._speaker_extra if extra_sources else []))
+        self._speaker_extra = []
 
         voice_on = voice_pos is not None and self.voice_clip is not None
         if voice_on:
@@ -629,6 +632,7 @@ class SimSensors:
     def clip_window(self, name: str, cursor: int) -> np.ndarray:
         """AUDIO_WINDOW_SAMPLES of registry clip `name` starting at `cursor` (looped)."""
         clip = self.audio_clips[name]
+        self._speaker_extra = [name]  # the TV plays it: the speakers play it too (#3)
         return clip[(np.arange(AUDIO_WINDOW_SAMPLES) + cursor) % len(clip)]
 
     @staticmethod
