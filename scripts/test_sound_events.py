@@ -42,6 +42,11 @@ SPOTS = {
     "living_room": (-8.5, 4.6),
 }
 HEADINGS = (0.0, math.pi / 2, math.pi, -math.pi / 2)
+
+
+def ears(pcm: bytes) -> np.ndarray:
+    """Sim PCM -> what the brain's bridge hands to hearing: float32 stereo in [-1, 1]."""
+    return np.frombuffer(pcm, np.int16).reshape(-1, 2).astype(np.float32) / 32768.0
 WIN_S = 0.5
 
 
@@ -76,13 +81,13 @@ def main() -> int:
                     t = 0.0
                     for _ in range(6):  # flush the rolling buffer with silence
                         pcm, _ = sensors.synthesize_stereo_audio(pose, {})
-                        hearing.process_audio(np.frombuffer(pcm, np.int16).reshape(-1, 2), pose)
+                        hearing.process_audio(ears(pcm), pose)
                     for _ring in range(args.rings):
                         starts = 0
                         for phase, dur in (("on", args.on_s), ("off", args.off_s)):
                             for _w in range(int(dur / WIN_S)):
                                 pcm, _ = sensors.synthesize_stereo_audio(pose, {sound: phase == "on"})
-                                res = hearing.process_audio(np.frombuffer(pcm, np.int16).reshape(-1, 2), pose)
+                                res = hearing.process_audio(ears(pcm), pose)
                                 for e in ev.update(res, t):
                                     if e["sound"] != sound:
                                         if e["phase"] == "start":

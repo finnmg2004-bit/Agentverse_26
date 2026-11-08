@@ -56,6 +56,10 @@ KNOCK_BURST_GATE = 4.0
 # spectral kettle rule fires and the spectral smoke rule does NOT confirm a 3.1 kHz alarm, YAMNet's
 # smoke score is capped below the 0.6 pre-emption threshold. A real smoke alarm (also with the kettle
 # on) is still caught by the spectral smoke rule.
+# ...but only when there is no separate alarm tone at 2.6-3.6 kHz (tonality > ALARM_TONE_UNCAP): the real
+# smoke-alarm recording has a 2.2-2.4 kHz component that fires the kettle rule on every other window,
+# and the cap then pushed a REAL alarm down to 0.45 (NUDGE_REAL_AUDIO=1). Kettle (+ oven) alone <= 65.
+ALARM_TONE_UNCAP = 150.0
 YAMNET_SMOKE_CAP_WITH_KETTLE = 0.45  # < SoundEvents.START_CONF (0.5): a capped score is no smoke start event
 
 
@@ -290,6 +294,7 @@ class StereoHearing:
         kettle_tonal = self._tonality(freqs, psd, (2150.0, 2400.0), ((1700.0, 2100.0), (2450.0, 2900.0)))
         kettle_ratio = self._band_energy(freqs, psd, 2150.0, 2400.0) / total_energy
         kettle_gate = kettle_tonal > KETTLE_TONAL_GATE and kettle_ratio >= KETTLE_MIN_RATIO
+        alarm_tonal = self._tonality(freqs, psd, (2600.0, 3600.0), ((1700.0, 2100.0), (3700.0, 4400.0)))
         score_kettle = 0.0
         if kettle_gate:
             score_kettle = float(np.clip(max(kettle_ratio * 1.1,
@@ -322,7 +327,8 @@ class StereoHearing:
             yamnet_scores, top_name, top_score = self._yamnet()
             yamnet_top = (top_name, round(top_score, 3))
             scores = {}
-            if kettle_gate and spectral["smoke_alarm"] < 0.3 and "smoke_alarm" in yamnet_scores:
+            if (kettle_gate and spectral["smoke_alarm"] < 0.3 and alarm_tonal < ALARM_TONE_UNCAP
+                    and "smoke_alarm" in yamnet_scores):
                 yamnet_scores["smoke_alarm"] = min(yamnet_scores["smoke_alarm"], YAMNET_SMOKE_CAP_WITH_KETTLE)
             for sound in SOUNDS:
                 y = yamnet_scores.get(sound, 0.0)
