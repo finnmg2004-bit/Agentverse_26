@@ -83,7 +83,12 @@
      a dark cap, and the panel raised to 0.8 m.
    - Result: **no owner detection, no object detection, and no COCO class above 0.16 from any viewpoint**.
      Moving the dock away gives the same result.
-3. Live night run with an alert: `sim --no-viewer --clock 23:00` + brain + GUI, doorbell at 4 s, camera on Follow robot. Results below.
+3. Live night run with an alert: `sim --no-viewer --clock 23:00` + brain + GUI, doorbell at 4 s, camera on Follow robot.
+   `state.night` = 1.0 for the whole run.
+   - The brain heard the doorbell (0.98), went to the living room, and **saw the owner at 10.4 s with YOLOv8n**: the head camera keeps daylight.
+   - It delivered the visible nudge. The owner felt it and acknowledged with a handle tap at 28.9 s, and guiding started at about 30 s.
+   - The GUI shows the dark house, the warm lamps, the "Nudge says" banner and the nudge effect together.
+   - Screenshots: `agentF_nightalert_{10,25,35,45,60}.png`. The run stopped at 60 s, during guiding, which is why it isn't marked as resolved.
 4. `night.py` dims only the explicit daylight list (see above). A failed sky upload (renderer or viewer)
    is no longer dropped for good: it is not marked as uploaded, so it is retried on the next frame, and the error is logged once.
 
