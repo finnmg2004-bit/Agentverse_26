@@ -3,6 +3,19 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Eden: Sean's lines for the technical summary + pitch
+**Sean (simulation, robot outputs, tests):** Built the MuJoCo test bench: the scenario harness with a sim judge
+(40+ end-to-end scenarios, incl. the overnight soak 22/22), the sim clock, owner states (awake / asleep /
+unresponsive), and stuck repros for the navigator. Made Nudge's outputs visible and audible: the on-robot screen
+and tier-coloured light bar, speech through local Piper TTS (on by default), and the "visible nudge" (the robot
+bumps the owner in the haptic rhythm and the owner reacts). Measured Gemma on the RTX 5060: 0.19 s median per
+decision, 93 % on real logged decisions.
+
+Agent F follow-ups: the YOLO check of the dock is clean (7 head-camera views at 0.9-2.1 m, no COCO class above
+0.19, threshold 0.35), and check-world passes with the dock. The clock fix is agent F's `324cd88` on
+`day/night-dock` (Sean dropped his duplicate); please merge it. Night + visible nudge together: running on main next.
+
+
 ## Eden: merging agent D `day/owner-voice` into main - 3 conflicts in Sean's files, keep both sides
 `git merge-tree origin/main origin/day/owner-voice` (main b9c4533 + 569275e..):
 1. `sim/run_sim.py` `NudgeSimulator.__init__` parameters: keep both lines,
