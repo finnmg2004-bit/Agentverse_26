@@ -35,7 +35,7 @@ BUMPER_RANGE = 0.30
 EVACUATION_TARGET = "back_exit_outside"  # default only; evacuation.py picks the safest exit per fire
 
 TOOLS = ("get_state", "go_to_room", "look_around", "alert_owner", "offer_handle",
-         "guide_owner_to", "investigate_sound")
+         "guide_owner_to", "investigate_sound", "stay_with_owner")
 
 
 class LLMWatchdog:
@@ -92,6 +92,11 @@ def validate_action(action: Dict[str, Any], world) -> Tuple[bool, str]:
         return False, f"unknown tool {tool!r}"
     if tool == "get_state" and world.mission is not None:
         return False, "mission active: must act, state is already in the prompt"
+    if tool == "stay_with_owner":  # #20: owner not responding, emergency contact alerted
+        if world.is_emergency():
+            return False, "fire: lead the owner out, never just stay"
+        if world.owner_pos is None:
+            return False, "owner location unknown"
     if tool == "go_to_room" and args.get("room") not in ROOMS:
         return False, f"bad room {args.get('room')!r}"
     if tool == "guide_owner_to":
