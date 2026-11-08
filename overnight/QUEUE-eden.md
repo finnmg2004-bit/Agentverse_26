@@ -19,7 +19,7 @@ Each tick:
 - [ ] **E1.6 (stretch)** `idle` trigger: "If I haven't moved for two hours, come and check on me" (needs the owner tracking in `world_model`).
 
 ## E2. GUI + test videos + docs (worktree `../AV26-gui`, branch `overnight/eden-gui`, Sonnet is fine)
-- [ ] **E2.1** `gui/panels/tasks.py`: taught-task list from brain `tasks` (name, trigger in words, next run, state), "Forget" button (sends the "forget the <name> task" sentence), example teach sentences as one-click buttons.
+- [x] **E2.1** `gui/panels/tasks.py`: taught-task list from brain `tasks` (name, trigger in words, next run, state), "Forget" button (sends the "forget the <name> task" sentence), example teach sentences as one-click buttons.
 - [ ] **E2.2** Clock in the GUI: show `state.sim_clock` in the banner; buttons "Jump to 21:59" and "+1 h" (gui action `clock`, contract C2). Must not break when the sim doesn't send a clock yet.
 - [ ] **E2.3** Video capture: `--record <file.mp4>` in `gui/nudge_control.py` (frame buffer → `cv2.VideoWriter`, 15 fps, whole window). If frames come out black on an unattended PC, fall back to `scripts/render_video.py` composing the sim `view` JPEGs + brain status text with OpenCV. Videos go to `~/nudge-overnight/videos/` (never git: `*.mp4` is ignored).
 - [ ] **E2.4 Test video A (slot ~02:00):** today's rehearsed take from `docs/DEMO_STORYBOARD.md` ★ (carpet rule → doorbell around the carpet → smoke at the "guiding" cue) via `--auto`, ≤ 60 s, under the test lock. **The demo isn't decided yet**: this is a dry run so the team can compare in the morning.
