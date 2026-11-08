@@ -36,7 +36,20 @@ Branch `day/sound-real` (based on `day/owner-voice`, agent D's WIP). Reviewer: R
   {real, TV} x noise profiles.
 
 ## Tested
-RESULTS_PLACEHOLDER
+All via `scripts/locked_test.py`, noise quiet, with Gemma online:
+- `tv_doorbell` **PASS** (20 s): `SOUND CHECK: doorbell came from the TV ... margin 22.97`, sim
+  `NUDGE SAYS: That was the TV, not the door.`, no mission, 0 decisions.
+- `tv_then_doorbell` **PASS** (70 s): TV ignored, then the real [B] gives `SOUND CHECK: doorbell is real
+  (it came from the right, where the front door is ...), margin -23.02` -> normal mission, SCENARIO COMPLETE.
+- Regression: `doorbell` PASS (59 s), `knock` PASS (60 s), `owner_moved` PASS (73 s), `demo` PASS (86 s),
+  `smoke` PASS (50 s).
+- `pixi run check-world`: all checks passed (with the new `beacon_tv` geom).
+- Offline `scripts/test_sound_check.py --noise quiet tv fan vacuum party`: **0 real doors called TV**
+  (450 real cases incl. unheard). TV caught: quiet 75 % (doorbell 35/45, knock 33/45); fan doorbell 25/45;
+  in heavy noise (tv/vacuum/party) many TV sounds default to "real" (by design: never miss a visitor).
+  From the demo start pose the TV doorbell is caught in every noise profile except party.
+- Delay: all 243 real-door cases (quiet/tv/fan) decided on the **first** window, so a real doorbell
+  starts its mission exactly as before.
 
 ## Not done
 - No late correction: if the first verdict is "real" (ambiguous position) and the localiser later
