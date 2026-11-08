@@ -33,13 +33,24 @@
 - **`gui/nudge_control.py`** (additive only): on the Clock row, `Owner: (o) Deaf ( ) Blind ( ) Deafblind`
   radio -> gui action; text `sim: <profile> | on: screen, light bar, ...` from `state.profile/outputs`
   (radio follows the sim, e.g. after `--profile`). `--auto "profile=blind@3"` for scripted runs.
-- **Tests**: `scripts/test_profiles.py` (new, in-process sim, own ports 5565-5567) and two scenarios in
+- **Tests**: `scripts/test_profiles.py` (new, in-process sim, own ports 5565-5567, no test lock needed, speech + sound muted) and two scenarios in
   `scripts/test_scenarios.py`: `profile_deaf`, `profile_blind`.
 - Brain: **not changed** (wording per profile would need the brain to read `state.profile`; not trivial
   enough to be worth the risk today).
 
-## Tested
-(see below; filled in after the runs)
+## Tested (after the rebase onto main 9bc974f and Sean's review fixes, 2026-11-08 ~10:15)
+- `pixi run python scripts/test_profiles.py` -> **PASS** (0 failed). For each of deaf / blind / deafblind,
+  set through the same `gui` handler the GUI uses, it checks screen material lit or dark, the floating label,
+  the light-bar centre lens, the danger strobe, speech calls, handle up, and that `state.nudge_says` is kept.
+  It also checks: smoke alarm turns every output on in every profile; in deaf mode the stale doorbell
+  message is **not** spoken when the fire starts; outputs go back to the profile's set after the emergency;
+  deaf -> blind mid-message speaks the current message once; `[R]` keeps the profile; unknown modes are ignored.
+- `locked_test.py profile_deaf profile_blind doorbell smoke demo` -> **5/5 PASS** (60.1 / 59.8 / 60.6 /
+  52.7 / 86.3 s). Default profile is deafblind, so doorbell, smoke and demo are unchanged.
+- GUI end to end (sim `--no-viewer` + brain + `gui/nudge_control.py --auto "profile=blind@3;B@5;profile=deaf@26"`,
+  screenshots): the radio follows the sim. The status line reads `sim: blind | on: speech, haptic, guiding`,
+  then `sim: deaf | on: screen, light bar, haptic, guiding`. Sim log: `PROFILE: blind ...`,
+  `NUDGE SAYS: Doorbell. Hold my handle...`, `PROFILE: deaf ...`.
 
 ## Not done
 - Brain wording per profile ("Take my handle" vs screen text): the brain can read `state.profile` later.
