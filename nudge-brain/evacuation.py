@@ -11,6 +11,10 @@ Replaces the fixed "always the back door" rule with a decision:
      planner + a penalty for passing near the fire. Exits in the fire room and exits LiDAR
      has seen blocked are excluded.
   4. Re-planned whenever a doorway or exit is found blocked mid-evacuation.
+  5. Hysteresis: while hearing refines the fire estimate the scores wobble, so the chosen exit
+     only changes when another exit is clearly better (SWITCH_MARGIN_M / SWITCH_MARGIN_FRAC) and
+     has stayed better for SWITCH_HOLD_S. An exit that becomes unusable (LiDAR blocked, in the
+     fire room, no route) is dropped at once. `NUDGE_EVAC_HYSTERESIS=0` turns this off.
 Escalation: if the owner hasn't been found within ESCALATE_AFTER_S of the alarm, the robot
 raises an emergency-services call (simulated: dashboard + viewer overlay + log).
 """
@@ -18,6 +22,8 @@ raises an emergency-services call (simulated: dashboard + viewer overlay + log).
 from __future__ import annotations
 
 import math
+import os
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sim.house_layout import (
@@ -40,6 +46,11 @@ MIN_FIRE_MEAS = 4          # trust the ears' fire location only after this many 
 MAX_FIRE_STD = 4.5         # ...and once it has narrowed down to this spread (m)
 HEARD_OVERRIDE_MAX_P = 0.15  # hearing overrides the installed alarm's room only if that room has < 15 %
 HEARD_OVERRIDE_MIN_P = 0.5   # ...of the posterior mass and another room has >= 50 %
+SWITCH_MARGIN_M = 2.0        # hysteresis: a new exit must be this many metres of cost better...
+SWITCH_MARGIN_FRAC = 0.10    # ...or this fraction of the current exit's cost, whichever is larger...
+SWITCH_HOLD_S = 2.0          # ...and stay that much better for this long before the exit changes
+NEW_EMERGENCY_GAP_S = 30.0   # no choose() call for this long = a new emergency: forget the old exit
+HYSTERESIS = os.environ.get("NUDGE_EVAC_HYSTERESIS", "1") != "0"
 
 
 def hazard_doors(fire_room: Optional[str]) -> Set[str]:
@@ -69,6 +80,43 @@ def _min_dist_to(point: Tuple[float, float], start: Tuple[float, float], wps) ->
 class EvacuationPlanner:
     def __init__(self, planner) -> None:
         self.planner = planner  # sim.nav_map.GridPlanner (shared with the navigator)
+        self.reset()
+
+    def reset(self) -> None:
+        """Forget the held exit (new emergency / sim reset)."""
+        self._held: Optional[str] = None          # exit target currently chosen
+        self._cand: Optional[str] = None          # better exit waiting out SWITCH_HOLD_S
+        self._cand_since = 0.0
+        self._last_call = -1e9
+        self._context: Any = None                 # (blocked doors, fire room): a change = re-choose at once
+
+    def _hold(self, best: str, valid: Dict[str, float], now: float, context: Any) -> Tuple[str, str]:
+        """Hysteresis on the exit choice. Returns (target, why) where why is '' or a note.
+        Only hearing noise is damped: a new blocked doorway or a different fire room is a real change
+        and re-chooses at once (plan_evacuation is called once for it, so a hold would never end)."""
+        if now - self._last_call > NEW_EMERGENCY_GAP_S:
+            self._held, self._cand = None, None
+        self._last_call = now
+        changed, self._context = context != self._context, context
+        held = self._held
+        if not HYSTERESIS or held is None or held not in valid or changed:
+            self._held, self._cand = best, None
+            if held is None or held == best:
+                return best, ""
+            return best, f"{held} no longer usable" if held not in valid else "situation changed"
+        if best == held:
+            self._cand = None
+            return held, ""
+        margin = max(SWITCH_MARGIN_M, SWITCH_MARGIN_FRAC * valid[held])
+        if valid[held] - valid[best] < margin:  # not clearly better: keep the exit we are using
+            self._cand = None
+            return held, f"kept ({best} only {valid[held] - valid[best]:.1f} m better)"
+        if self._cand != best:
+            self._cand, self._cand_since = best, now
+        if now - self._cand_since < SWITCH_HOLD_S:
+            return held, f"kept ({best} better for {now - self._cand_since:.1f}s < {SWITCH_HOLD_S:.0f}s)"
+        self._held, self._cand = best, None
+        return best, f"switched ({valid[held] - valid[best]:.1f} m better for {SWITCH_HOLD_S:.0f}s)"
 
     def fire_estimate(self, localizer) -> Dict[str, Any]:
         """Where the fire is: the installed alarm's room unless hearing clearly disagrees.
@@ -92,7 +140,8 @@ class EvacuationPlanner:
         return dict(installed, std=est["std"], source=f"installed alarm (by ear P={p_inst:.2f})")
 
     def choose(self, start: Tuple[float, float], fire: Dict[str, Any], blocked: Set[str],
-               avoid: Optional[List[Tuple[float, float, float, float]]] = None) -> Dict[str, Any]:
+               avoid: Optional[List[Tuple[float, float, float, float]]] = None,
+               now: Optional[float] = None) -> Dict[str, Any]:
         """Pick the safest exit for someone standing at `start`. Returns the decision + scores.
         `avoid`: the owner's no-go areas. Routes keep off them; if crossing one would save at least
         CROSS_MIN_SAVING_M, that variant is recorded too (`cross_length`) so the agent can decide to
@@ -140,12 +189,17 @@ class EvacuationPlanner:
             scores[target] = cost
             details[target] = d
         valid = {k: v for k, v in scores.items() if v is not None}
+        hold_note = ""
         if valid:
-            target = min(valid, key=valid.get)
-            reason = f"shortest safe exit ({valid[target]:.0f} m)"
+            best = min(valid, key=valid.get)
+            target, hold_note = self._hold(best, valid, time.monotonic() if now is None else now,
+                                           (frozenset(blocked), fire_room))
+            reason = (f"shortest safe exit ({valid[target]:.0f} m)" if target == best
+                      else f"safe exit ({valid[target]:.0f} m), kept to avoid flip-flopping")
         else:
+            self._held, self._cand = None, None
             target = SMOKE_EVACUATION_TARGET
             reason = "no safe route found: default exit"
         via = details.get(target, {}).get("via", "around")
         return {"target": target, "via": via, "scores": scores, "details": details, "hazard_doors": hazards,
-                "reason": reason}
+                "reason": reason, "hysteresis": hold_note}

@@ -9,6 +9,8 @@ Performs:
      simultaneous sounds (e.g. `smoke_alarm` pre-empting `doorbell`) are both scored.
   2. Stereo ear localization via Interaural Level Difference (ILD) and GCC-PHAT
      Interaural Time Difference (ITD) to estimate relative & world azimuth of the sound.
+  3. `SoundEvents`: debounced start / stop events (contract C4, the trigger for taught tasks)
+     and the "what did I hear" log; the event shape is documented on the class.
 """
 
 from __future__ import annotations
@@ -37,6 +39,12 @@ YAMNET_CLASSES: Dict[str, Tuple[str, ...]] = {
 }
 SOUNDS: Tuple[str, ...] = tuple(SOUND_SOURCES)
 KETTLE_TONAL_GATE = 8.0
+KETTLE_MIN_RATIO = 1e-3  # share of the window's energy in the whistle band (see the kettle rule)
+# Debug: NUDGE_HEARING_DUMP=<dir> saves every window whose NUDGE_HEARING_DUMP_SOUND (default kettle)
+# score is >= NUDGE_HEARING_DUMP_MIN (default 0.4): stereo PCM + YAMNet buffer (.npz) + result (.json).
+DUMP_DIR = Path(os.environ["NUDGE_HEARING_DUMP"]) if os.environ.get("NUDGE_HEARING_DUMP") else None
+DUMP_SOUND = os.environ.get("NUDGE_HEARING_DUMP_SOUND", "kettle")
+DUMP_MIN = float(os.environ.get("NUDGE_HEARING_DUMP_MIN", "0.4"))
 OVEN_TONAL_GATE = 8.0
 # Knock = short wooden bursts. Burstiness = p95 / median energy of 10 ms frames in 110-600 Hz.
 # Party music (sustained chords at 175-392 Hz, inside the knock band) used to fire the knock rule
@@ -48,7 +56,7 @@ KNOCK_BURST_GATE = 4.0
 # spectral kettle rule fires and the spectral smoke rule does NOT confirm a 3.1 kHz alarm, YAMNet's
 # smoke score is capped below the 0.6 pre-emption threshold. A real smoke alarm (also with the kettle
 # on) is still caught by the spectral smoke rule.
-YAMNET_SMOKE_CAP_WITH_KETTLE = 0.5
+YAMNET_SMOKE_CAP_WITH_KETTLE = 0.45  # < SoundEvents.START_CONF (0.5): a capped score is no smoke start event
 
 
 def zero_scores() -> Dict[str, float]:
@@ -275,9 +283,13 @@ class StereoHearing:
         #    over the median bin of the neighbouring 1.7-2.9 kHz: >= 19 with the kettle on anywhere in
         #    the house under every noise profile (tv / vacuum / party included), <= 3.3 without it
         #    (doorbell, knock, smoke alarm, noise). Gate at 8; confidence grows with log tonality.
+        #    The whistle must also carry real energy (KETTLE_MIN_RATIO of the window): right next to the
+        #    stove the very loud oven-timer beep clips and leaves a ~1e-6 spur at 2.2 kHz that is
+        #    "tonal" (the test is scale-free) and gave a false kettle start in the oven_timer scenario.
+        #    Real kettle >= 4.5e-2 everywhere (also with smoke alarm / oven timer on), spur <= 7e-6.
         kettle_tonal = self._tonality(freqs, psd, (2150.0, 2400.0), ((1700.0, 2100.0), (2450.0, 2900.0)))
-        kettle_gate = kettle_tonal > KETTLE_TONAL_GATE
         kettle_ratio = self._band_energy(freqs, psd, 2150.0, 2400.0) / total_energy
+        kettle_gate = kettle_tonal > KETTLE_TONAL_GATE and kettle_ratio >= KETTLE_MIN_RATIO
         score_kettle = 0.0
         if kettle_gate:
             score_kettle = float(np.clip(max(kettle_ratio * 1.1,
@@ -338,7 +350,7 @@ class StereoHearing:
         if best_label in SOUND_SOURCES:
             estimated_room = str(SOUND_SOURCES[best_label]["room"])
 
-        return {
+        result = {
             "label": best_label,
             "confidence": round(float(best_conf), 3),
             "scores": scores,
@@ -353,6 +365,22 @@ class StereoHearing:
             "rms": round(rms, 4),
             "backend": self.backend_name,
         }
+        if DUMP_DIR is not None and scores.get(DUMP_SOUND, 0.0) >= DUMP_MIN:
+            self._dump(stereo_pcm, robot_pose, result)
+        return result
+
+    def _dump(self, stereo_pcm: np.ndarray, robot_pose, result: Dict[str, Any]) -> None:
+        """Debug (NUDGE_HEARING_DUMP=<dir>): save a window that scored DUMP_SOUND >= DUMP_MIN."""
+        import json
+        import time as _time
+
+        DUMP_DIR.mkdir(parents=True, exist_ok=True)
+        self._dump_n = getattr(self, "_dump_n", 0) + 1
+        if self._dump_n > 200:
+            return
+        stem = DUMP_DIR / f"{DUMP_SOUND}_{_time.strftime('%H%M%S')}_{self._dump_n:03d}"
+        np.savez_compressed(str(stem) + ".npz", stereo=stereo_pcm, yamnet_buf=self._buf, pose=np.array(robot_pose))
+        (Path(str(stem) + ".json")).write_text(json.dumps(result, default=str, indent=1))
 
 
 class SoundEvents:
@@ -362,15 +390,31 @@ class SoundEvents:
     and `what_did_i_hear()` need clean events instead:
       start: a registry sound scores >= START_CONF in START_WINDOWS consecutive 0.5 s windows
       stop:  it then scores < STOP_CONF in STOP_WINDOWS consecutive windows
-    Event: {"sound", "label", "tier", "phase": "start"|"stop", "confidence", "room", "t",
-            "duration_s" (stop only)}. `room` = the brain's sound-localiser estimate when it has
-    converged (else None); `expected_room` = where the registry says the source is installed.
+      (per sound: registry field `event_stop_windows`, e.g. knock = 8 because knocking comes in bursts)
+    Event (contract C4 in overnight/README.md; taught tasks fire on phase == "start"):
+        {"sound":        SOUND_SOURCES key ("kettle", "oven_timer", "doorbell", ...),
+         "label":        human label from the registry ("Kettle"),
+         "tier":         1 emergency | 2 needs action | 3 someone wants you,
+         "phase":        "start" | "stop",
+         "confidence":   score at start; on stop the max score over the whole ring,
+         "room":         the brain's sound-localiser room estimate if converged, else None,
+         "expected_room": the room the registry says the source is installed in,
+         "t":            sim time (s) of the window that produced the event,
+         "duration_s":   stop only: seconds since the start}
+    One ring = exactly one start (+ one stop when it goes quiet): checked offline by
+    `scripts/test_sound_events.py` for every sound under all 5 noise profiles.
     """
 
     START_CONF = 0.5
     START_WINDOWS = 2
     STOP_CONF = 0.25
     STOP_WINDOWS = 3
+
+    @classmethod
+    def stop_windows(cls, name: str) -> int:
+        """Quiet windows before `stop`: registry `event_stop_windows` (bursty sounds such as knocking
+        have gaps; without a longer hold one knocking spell gave several starts under fan noise)."""
+        return int(SOUND_SOURCES.get(name, {}).get("event_stop_windows", cls.STOP_WINDOWS))
 
     def __init__(self, maxlen: int = 50) -> None:
         from collections import deque
@@ -396,7 +440,7 @@ class SoundEvents:
             else:
                 self.active[name]["confidence"] = max(self.active[name]["confidence"], round(conf, 3))
                 self._below[name] = self._below.get(name, 0) + 1 if conf < self.STOP_CONF else 0
-                if self._below[name] >= self.STOP_WINDOWS:
+                if self._below[name] >= self.stop_windows(name):
                     start = self.active.pop(name)
                     ev = self._event(name, "stop", start["confidence"], result, t)
                     ev["room"] = start["room"] or ev["room"]
