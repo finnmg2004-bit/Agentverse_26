@@ -49,3 +49,6 @@ assets/*
 
 # Brain decision logs (nudge-brain/run_log.py), one file per run/episode
 runs/
+
+# Renderpeople scans (licence: never in git, wherever they are unzipped)
+rp_*_OBJ/
