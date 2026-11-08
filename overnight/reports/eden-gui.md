@@ -16,3 +16,4 @@
 ## Heartbeat log
 - 01:15: E2.1 tasks panel, tested: stub ctx script PASS
 01:40: E2.2 clock UI, fc6e16a, tested: GUI --screenshot start PASS
+02:15: E2.3 --record/--record-seconds in gui/nudge_control.py (dpg frame buffer -> cv2.VideoWriter mp4v ~13-15 fps; fixed mvBuffer read via np.frombuffer; prints black-frame warning), tested: 6 s GUI-only recording, 77 frames, mean brightness 26 (not black) PASS; no scenarios (GUI-only change)
