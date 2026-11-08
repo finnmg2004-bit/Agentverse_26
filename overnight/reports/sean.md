@@ -1,24 +1,24 @@
 # Overnight report: lane `sean` (branch `overnight/sean`)
 
-## Morning notes (keep current: what Eden needs to know to merge)
-- Done and tested:
-  - S1 sim clock (C2): `state.sim_clock` "HH:MM" + `state.sim_day` (0 = start day), `--clock HH:MM` (default 08:00), [R] resets to start time, gui action `{"action": "clock", "time": "21:59"}` (keeps the current day), clock shown at the start of the viewer overlay title. Logic in new `sim/sim_clock.py`.
-  - S2 `smoke_blocked_exit` scenario (in the default suite): [E] chair in the back exit + smoke alarm -> owner OUTSIDE via `exit_front` in 85 s, robot never closer than 14.1 m to the fire. Sim judge: with [E] only OUTSIDE counts; completion line names the exit + closest fire distance; new judge-only `FIRE PROXIMITY` log (< 3 m).
-  - What the exit guard did (S2 log): `EVAC (smoke alarm heard) -> exit front_door_outside`, then `EVAC (fire location refined by hearing) -> exit back_exit_outside` (picks the blocked back exit again, it can't know about the chair yet), `LiDAR: exit_back BLOCKED -> re-planned route`, `EVAC (exit_back blocked) -> exit front_door_outside`. Correct end result; the flip to the back exit costs some seconds.
-  - S4 owner states: `state.owner_state_gt` = `awake|asleep|idle` (judge only); gui action `{"action": "owner_state", "state": "asleep"}`. Asleep = moved to the guest bed, still, wakes only on a `1_pulse`+ nudge (slower reaction), then awake. Idle = awake, no wandering. [R] -> awake. New scenario `asleep_doorbell` (default suite) PASS: robot searches, nudge wakes the owner, front door after 72 s.
-  - S5 `scripts/soak.py` (N rounds through `locked_test.py`, pass-rate table, failure lines for flaky ones). Tonight's run on this branch: all green, no flaky scenarios (table under "Soak results").
+## Morning notes (final, 05:35: what Eden needs to know to merge)
+**Summary:** queue S1-S7 all done. Full default suite on `overnight/sean` at 04:33: 14/14 PASS. Soaks: 22/22 PASS, nothing flaky. Already merged cleanly into integration (STATUS 04:57: doorbell, smoke, carpet_rule, demo, teach_bedtime PASS).
+
+- Done and tested (default behaviour):
+  - **S1 sim clock (C2):** `state.sim_clock` "HH:MM" + `state.sim_day` (0 = start day), `--clock HH:MM` (default 08:00), [R] resets to the start time, gui action `{"action": "clock", "time": "21:59"}` (keeps the day), clock at the start of the viewer overlay title. New `sim/sim_clock.py`; check: `python scripts/locked_test.py --cmd python scripts/check_clock.py`.
+  - **S2 `smoke_blocked_exit`** (default suite): [E] chair in the back exit + smoke -> owner OUTSIDE via `exit_front` (~85 s), robot never within 3 m of the fire. Sim judge: with [E] only OUTSIDE counts; completion line names the exit and the closest fire distance; judge-only `FIRE PROXIMITY` log. Exit guard log: front -> back (after hearing refines the fire; it can't know about the chair yet) -> LiDAR sees `exit_back` BLOCKED -> front. Correct result, a few seconds of detour.
+  - **S4 owner states:** `state.owner_state_gt` = `awake|asleep|idle`; gui action `{"action": "owner_state", "state": "asleep"}`. Asleep = in the guest room, still, wakes only on a `1_pulse`+ nudge (slower). Idle = no wandering. [R] -> awake. `asleep_doorbell` (default suite) PASS.
+  - **S5 `scripts/soak.py`:** N rounds through `locked_test.py`, pass-rate table, failure lines. S6: nothing to fix.
+  - Sim shows/speaks a top-level brain status `say` as `NUDGE SAYS:` when no mission is active (for "Sorry, I can't..." and taught "just tell me" replies).
 - Behind a flag / experimental:
-  - S7 COCO stand-ins, `run_sim.py --coco-objects` / `test_scenarios.py --coco-objects`: bed (guest NW corner), couch (living room SW corner), wall TV (living room north wall, above LiDAR height) added via MjSpec in new `sim/coco_standins.py` (group 0; `worlds/nerv-world/` and `sim/world.py` untouched). `state.objects_gt` lists them + the house's dining table and fridge (judge only; `[]` without the flag). Nav map stays the plain house. With the flag: doorbell, smoke, carpet_rule, smoke_blocked_exit, asleep_doorbell PASS; check_world passes.
-  - S3 teach scenarios `teach_bedtime`, `cant_do_that`, `teach_kettle` (`experimental`, run by name). They FAIL on this branch on purpose (no E1 code here); E0 runs them on integration. Harness additions (only used by these): `("clock", t|"task", "HH:MM")`, `("on_task", delay, key)`, `expect_task`, `expect_owner_room`, `run_for`, `expect_says`/`forbid_says`, `forbid_log`. Brain status is captured by wrapping `bridge.send_status` in-process; owner room from `state.owner_pos_gt` (:5555).
-- S6: nothing to fix - both soaks (core x3, wider set x2) were 22/22 PASS on this branch.
-- Not done: nothing left in the queue (S1-S7 done).
-- Reply to STATUS 03:50 (carpet in `teach_bedtime`): that scenario teaches no carpet rule and rules aren't persisted, so crossing the carpet is the normal no-rule route (same as `carpet_baseline`), not a bug. New experimental `teach_bedtime_carpet` (carpet rule + bedtime task, forbids `AVOID AREA: robot stepped ON`) checks what matters: a taught task respecting an active rule. Needs E1 code, so E0 please run it on integration: `python scripts/locked_test.py teach_bedtime_carpet`.
+  - **S3 teach scenarios** `teach_bedtime`, `cant_do_that`, `teach_kettle`, `teach_bedtime_carpet` (`experimental`, run by name; need E1 code, i.e. integration). teach_bedtime + cant_do_that PASS on integration per E0. **Not yet run anywhere: `teach_kettle`, `teach_bedtime_carpet`** (carpet rule + bedtime task, forbids stepping on the carpet). Harness additions: `("clock", t|"task", "HH:MM")`, `("gui", t, payload)`, `("on_task", delay, key)`, `expect_task`, `expect_owner_room`, `run_for`, `expect_says`/`forbid_says`, `forbid_log`.
+  - **S7 COCO stand-ins** `run_sim.py --coco-objects` / `test_scenarios.py --coco-objects`: bed (guest), couch (living room SW), wall TV (living room) via MjSpec in new `sim/coco_standins.py`; `state.objects_gt` lists them + dining table + fridge (`[]` without the flag). Nav map stays the plain house. With the flag: doorbell, smoke, carpet_rule, smoke_blocked_exit, asleep_doorbell PASS; check_world passes.
+- Not done: nothing in the queue.
 - Merge risks (files, contract assumptions):
-  - `state.owner_state_gt` changed meaning (activity -> awake/asleep/idle, as AGENTS.md describes); the old activity value is now `state.owner_activity_gt`. Nothing outside `run_sim.py` read it on integration at 02:05.
-  - New files `sim/sim_clock.py`, `scripts/check_clock.py` (not in the lane file list, but sim-side/new; nobody else touches them).
-  - `run_sim.py`: two new `state` fields, new CLI flag, new gui action; nothing removed.
-- How to see it working (teach, on integration): `python scripts/locked_test.py teach_bedtime cant_do_that teach_kettle -v`
-- How to see it working: `python scripts/locked_test.py --cmd python scripts/check_clock.py` (headless sim, ~70 s).
+  - `state.owner_state_gt` changed meaning (activity -> awake/asleep/idle, as AGENTS.md describes); the old activity value is now `state.owner_activity_gt`. Nobody else read it.
+  - New files: `sim/sim_clock.py`, `sim/coco_standins.py`, `scripts/check_clock.py`, `scripts/soak.py`.
+  - `run_sim.py`: only additions (state fields `sim_clock`, `sim_day`, `objects_gt`, `owner_activity_gt`; flags `--clock`, `--coco-objects`; gui actions `clock`, `owner_state`; status `say` fallback) plus the evacuation judge change above.
+  - This PC has no pixi: everything was tested with `C:\dev\hackathon\.venv\Scripts\python.exe`.
+- How to see it working: `python scripts/locked_test.py smoke_blocked_exit asleep_doorbell`; on integration `python scripts/locked_test.py teach_bedtime cant_do_that teach_kettle teach_bedtime_carpet -v`.
 
 ## Soak results
 Soak 20261108-0233: 3 rounds in 16 min, logs `~/nudge-overnight/soak/20261108-0233`
@@ -72,3 +72,4 @@ Full default suite on `overnight/sean` at 04:33 (soak.py -n 1, 21 min): **14/14 
 - 04:03: STATUS reply + teach_bedtime_carpet (experimental), 7117c0d, tested: --list only (needs E1 code, run on integration)
 - 04:54: full default suite on this branch, no code change, tested: 14/14 PASS
 - 05:03: idle tick (queue done, STATUS 04:57 has nothing for sean; teach_bedtime_carpet still waiting for an E0 run)
+- 05:33: final morning notes written (queue done, nothing new in STATUS)
