@@ -138,6 +138,23 @@ def _strip_missing_assets(spec: mujoco.MjSpec, verbose: bool) -> None:
         )
 
 
+def _remove_layout_geoms(spec: mujoco.MjSpec, verbose: bool) -> None:
+    """Geoms a non-default layout (sim/layouts/<name>.py, NUDGE_HOUSE) drops / adds at load (the apt's
+    front doorway + lift lobby). The house layout defines neither, so this does nothing by default."""
+    names = set(getattr(H, "REMOVE_GEOMS", ()))
+    if not names:
+        return
+    gone = [g for g in list(spec.geoms) if g.name in names]
+    for g in gone:
+        spec.delete(g)
+    for name, half, pos, rgba in getattr(H, "ADD_GEOMS", ()):
+        spec.worldbody.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_BOX, size=list(half), pos=list(pos),
+                                rgba=list(rgba), group=0)
+    if verbose:
+        print(f"[world] layout: removed {len(gone)} geoms ({', '.join(sorted(names))}), "
+              f"added {len(getattr(H, 'ADD_GEOMS', ()))}")
+
+
 def load_spec(verbose: bool = True) -> mujoco.MjSpec:
     if not SCENE_XML.exists():
         raise FileNotFoundError(
@@ -146,6 +163,7 @@ def load_spec(verbose: bool = True) -> mujoco.MjSpec:
         )
     spec = mujoco.MjSpec.from_file(str(SCENE_XML))
     _strip_missing_assets(spec, verbose)
+    _remove_layout_geoms(spec, verbose)  # experimental other house (--house): no-op for the house
     add_charging_dock(spec)  # sim/charging_dock.py: furniture at robot_dock (nav map, LiDAR, camera see it)
     return spec
 

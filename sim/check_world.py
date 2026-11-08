@@ -97,6 +97,8 @@ def check_navigation(model, data) -> None:
             failures.append(f"path to {name} ends {miss:.2f} m from the goal")
         print(f"  [{'ok ' if ok else 'BAD'}] {name:<28} {length:5.1f} m, {len(wps)} waypoints")
     # Chair blocking door_guest_living must still leave a route living_room -> guest.
+    if "door_guest_living" not in H.DOORWAY_INFO or "guest" not in H.OWNER_SPOTS:
+        return  # another house (NUDGE_HOUSE, sim/layouts/): the house's reroute check doesn't apply
     wps = planner.plan(H.ROOMS["living_room"]["center"], H.OWNER_SPOTS["guest"], ["door_guest_living"])
     doors = [w[2] for w in (wps or []) if w[2]]
     reroute_ok = wps is not None and "door_guest_living" not in doors
