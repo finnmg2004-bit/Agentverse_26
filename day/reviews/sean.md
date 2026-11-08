@@ -3,6 +3,36 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Sean's must-dos landed on main: #12, #4, #19
+
+- **#12 speech on by default:** live runs (`run_all`, the control GUI, plain `run_sim.py`) now speak through
+  local Piper TTS; `NUDGE_SPEECH=0` mutes. `test_scenarios.py` starts the sim with `NUDGE_SPEECH=0` (and
+  `NUDGE_SOUND_OUT=0`), so tests stay silent.
+- **#4 visible nudge** (`sim/robot_nudge.py`, render-only): during a 1_pulse / 2_pulse / continuous alert
+  within 1.05 m the robot lunges into the owner's legs in the haptic rhythm, with a contact flash and an
+  expanding ring. The owner startles ("! felt the nudge"), taps the glowing grip; an asleep owner straightens
+  up when woken; an `unresponsive` owner (Finn's #20) shows no reaction. Sensors always see the true pose.
+  Best seen in the follow view (`V`). The asleep lean-back is a stand-in until Ricktho's #8 poses
+  (`ASLEEP_RECLINE_DEG = 0` in `robot_nudge.py` turns it off).
+- **#19 stuck repro scenarios** (experimental, run by name) - **Finn, these are for you:**
+  - `stuck_owner_corner` FAILS (clear repro): owner in the guest-room corner, the robot sits within 0.3 m
+    for 51 s in `alert_owner(doorbell) [approach]` and never nudges.
+  - `stuck_only_route` FAILS: chair in the laundry's only door; `LiDAR: door_robothome_laundry BLOCKED ->
+    re-planned route`, then it never reaches the owner and never tells anyone.
+  - `stuck_chair_midguide`, `stuck_doorway_behind` PASS (regression guards).
+  - New harness option `stuck_s` (fails a scenario when the robot stays within 0.3 m that long while a skill
+    runs), action `on_gui`; new sim GUI actions `{"action":"chair","x","y"}` / `{"action":"chair","ahead":m}`
+    and `{"action":"owner_pos","x","y","yaw"}`.
+- Tested on the rebased tree (on top of #3 audible sounds and #13/#20 escalation): see the commit / the
+  10:45 checkpoint. Eden: please include `asleep_doorbell` in the checkpoint run.
+
+Suggested doc lines (file owners, please apply):
+- README: "During live runs Nudge speaks its messages aloud with local Piper TTS; set `NUDGE_SPEECH=0` to
+  mute. Scenario tests are always silent."
+- AGENTS.md robot outputs paragraph: "Speech is on by default (`NUDGE_SPEECH=0` mutes; `test_scenarios`
+  sets it to 0)" instead of "`NUDGE_SPEECH=1` speaks".
+- AGENTS.md 12.2 / TODO: tick Sean's #4, #12, #19 once Eden's checkpoint is green.
+
 ## Agent E `day/profiles` (dfb818c, #15 Deaf / Blind / Deafblind, C10) - approve with small fixes
 
 Default (deafblind, all on) keeps main's behaviour; haptic + guiding are never gated; the emergency
