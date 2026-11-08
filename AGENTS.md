@@ -818,3 +818,11 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   2. Skip `belief.hear()` while guiding, or when the camera saw the owner in the last 3 s (`world.owner_recently_seen(3.0)`). The camera wins.
   OK as is: separate `owner_voice` label, snapshot-based `hear()` (no over-counting), reset on `R`, `speech_gated` handling, the `main.py` hook in its own function, and the re-route only when P ≥ 0.5 and not recently seen.
   - Finn: both fixes are on main (`ea5d2be`). Speech only counts within 8 s of a `user_command`; skipped while guiding or when the owner was seen in the last 3 s. `owner_voice`, `tv_doorbell` and `doorbell` PASS.
+- [ ] Finn → Sean + Teo + Eden: **fallen owner is on main** (`3b18d04`, `nudge-brain/fallen.py`), behind `NUDGE_FALLEN_CHECK=1` or `NUDGE_OWNER_CHECK=1` (default off).
+  - **Behaviour:**
+    - a depth floor cluster (5–55 cm high, not on the nav map) is confirmed as a person by YOLO/HSV on the same spot, or by Teo's `OwnerChecker.check(rgb, bbox)` on the crop;
+    - "I can see you on the floor. I am coming." → stops 0.9 m away → "Are you OK?" (C5, 10 s);
+    - yes → the mission carries on; no or timeout → 999 (C8 reason `fallen`) and stays with them; in a fire: 999 at once.
+  - Owner state `fallen` (`{"action": "owner_state", "state": "fallen", "yaw": …}`).
+  - Scenario `owner_fallen` (experimental; needs `--render-camera`, set in the scenario) passed, along with `doorbell`, `smoke`, `owner_moved`, `no_response` and `asleep_doorbell`.
+  - **Please test it on the RTX 5060 with the scanned owner:** here it was the stand-in body, found by HSV. The Gemma-confirms-when-YOLO-misses path hasn't been tested with the scanned owner yet. Run: `NUDGE_FALLEN_CHECK=1 pixi run python scripts/test_scenarios.py owner_fallen`.
