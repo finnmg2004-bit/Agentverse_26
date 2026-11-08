@@ -38,7 +38,31 @@ kinematics + wall clamping and real `mj_ray` LiDAR, with no ZMQ. The controller 
 | smoke (living room -> back door -> outside, 27 s) | 0.086 / 0.144 / 0.152 m | 1.4 / 4.2 deg | 2.6 m off at the end |
 | long (5 rooms, 62 s) | 0.084 / 0.161 / 0.206 m | 1.2 / 5.3 deg | **9.4 m** off at the end |
 
-Live (whole brain + sim process, flag on): see "Live scenarios" below.
+**Live** (whole brain + sim process, flag on, `test_localize.py --live`). This first live run, 11:25 under the lock,
+used the earlier **cmd-odometry** version:
+| scenario | result | PF error mean / p95 / max | heading mean / max |
+|---|---|---|---|
+| doorbell | **PASS** 58.9 s | 0.042 / 0.072 / 0.089 m | 0.9 / 4.2 deg |
+| smoke | **FAIL** (owner 13 m short of the back exit after 120 s) | 2.83 / 4.15 / 4.40 m | 8.7 / 27.6 deg |
+
+The smoke failure is the reason the default became leg odometry (`delta`). With cmd-odometry the robot gets held
+up behind the owner in the long living room, the filter believes the commands, and it slides 2 m along the
+featureless x-axis (the west wall is beyond the 4 m LiDAR range). The same route reproduced offline: FAIL with
+`--odom cmd`, PASS with the default (table above).
+**Live re-run with the default (`delta`)**, 12:04 under the lock, on top of main d26e427:
+| scenario | result | PF error mean / p95 / max | heading mean / max | odometry alone |
+|---|---|---|---|---|
+| doorbell | **PASS** 60.2 s | 0.078 / 0.138 / 0.156 m | 1.1 / 5.7 deg | max 4.05 m off |
+| smoke | **PASS** 47.9 s (owner evacuated at the back door) | 0.095 / 0.167 / 0.205 m | 2.1 / 5.8 deg | max 2.60 m off |
+
+**Flag off (default), same run:** doorbell **PASS** 59.7 s, smoke **PASS** 50.6 s, so behaviour is unchanged.
+
+Pitch line: *"Nudge localises itself with LiDAR on its saved map. Its odometry alone would be up to 4 m off after
+one doorbell mission; with the particle filter it stays within 16 cm (mean 8 cm)."*
+
+**GUI screenshot** (flag on, doorbell, guiding phase, sim t=39 s): `day/reports/agent-i-localize.jpg`, with the
+map crop in `day/reports/agent-i-localize-map.png`. The map shows the orange estimate on top of the white truth,
+labelled "self-localised (err 0.08 m)". The two are only 8 cm apart, so they overlap at this scale.
 
 ## Not working / limits
 - **Kidnapped robot / global init** (`NUDGE_LOCALIZE_GLOBAL=1`, `--kidnap`): FAILS. It does not converge in this
