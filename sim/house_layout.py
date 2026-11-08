@@ -287,6 +287,33 @@ DANGER_SOUNDS = tuple(n for n, t in SOUND_TIERS.items() if t == 1)
 # Sounds that start an ordinary (non-emergency) mission, highest priority first.
 ALERT_SOUNDS = tuple(sorted((n for n, t in SOUND_TIERS.items() if t > 1), key=lambda n: SOUND_TIERS[n]))
 
+# The owner's own voice. Not a registry sound (it never starts a mission): whenever the owner talks to
+# Nudge (voice mic or GUI text box) the sim plays this clip from the owner's position into the robot's
+# ears, and the brain localises it like any other sound to work out WHERE the owner is.
+OWNER_VOICE: Dict[str, object] = {
+    "file": "owner_voice.wav",      # scripts/make_owner_voice.py
+    "level": 0.8,                   # normal speech, a bit quieter than the doorbell
+    "yamnet": ("Speech", "Male speech, man speaking", "Female speech, woman speaking",
+               "Narration, monologue", "Conversation", "Speech synthesizer"),
+    "words_per_s": 2.5,             # how long the owner talks for a sentence of N words
+    "min_s": 2.0,
+    "max_s": 6.0,
+}
+
+# The living-room TV (AGENTS.md 6.2 "Is the sound real?"): a programme on it can play a doorbell or a
+# knock. Not a registry sound: the sim plays the registry clip FROM THE TV (hotkey [Y] / gui action
+# {"action": "tv", "play": "doorbell"|"knock"|"off"}), the brain hears "doorbell" and must work out from
+# direction + loudness that it came from the TV, not the front door (nudge-brain/sound_check.py).
+# Position = Sean's wall-mounted TV stand-in (sim/coco_standins.py `coco_tv`, north wall of the
+# living room), 0.1 m in front of the screen so it is on the living-room side of the wall.
+TV_SOURCE: Dict[str, object] = {
+    "pos": (-9.0, 5.9, 1.35),
+    "room": "living_room",
+    "level": 0.8,                    # TV volume: a bit quieter than the real doorbell (1.0)
+    "plays": ("doorbell", "knock"),  # sounds the TV can play (and the brain double-checks)
+    "duration_s": 6.0,               # one TV doorbell lasts this long, then the programme moves on
+}
+
 # --------------------------------------------------------------------------- #
 # Movable chair obstacle (hotkey [C]): blocks the guest <-> living_room door,
 # forcing a reroute through the entry hall.

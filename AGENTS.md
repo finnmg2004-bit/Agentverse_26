@@ -299,6 +299,7 @@ Reasoning to add, best demo value first:
 - **`E`**: Chair falls into the **back exit** (`CHAIR_EXIT_POS`) — LiDAR marks `exit_back` blocked and the evacuation re-chooses an exit. Press again to stow.
 - **`R`**: **Reset** the scene (robot to the entry-hall start pose, owner to living room, chair stowed, sounds off). Bumps the `episode` counter in `state`; the brain sees the change and drops its mission, plan, alerts and owner belief. Also works from the dashboard window.
 - **`N` or `6`**: Cycle **background noise** for hearing robustness tests: `quiet` → `fan` → `tv` → `vacuum` → `party` (start with `--noise NAME`)
+- **`Y`**: the living-room **TV** plays a doorbell for 6 s (toggle; GUI "TV doorbell", gui action `{"action": "tv", "play": "doorbell"|"knock"|"off"}`) from `TV_SOURCE` (-9.0, 5.9). The brain's `nudge-brain/sound_check.py` compares the ears' direction + loudness with the front door and the TV: TV → no mission, "That was the TV, not the door." (brain status C9 `sound_check`, GUI "Sound check:" row); a real doorbell is decided on the first audio window (no delay). Judge-only `state.tv_playing_gt`. Scenarios `tv_doorbell`, `tv_then_doorbell`.
 - **`V`**: Cycle **viewer camera**: `top` dollhouse view → `follow` (chase the robot) → `dog` (the head RGB-D camera = exactly what YOLO sees) (start with `--view NAME`)
 - **Scenario end condition** (sim ground truth): owner held ≥1 s within 1.4 m of the sound's target (front door for doorbell/knock, the stove for the kettle) ends it (sound stops, `SCENARIO COMPLETE`; 1.4 m because the owner lags ~1.2 m behind the handle); owner at the back door or outside ends the smoke alarm (all alarms clear). Unresolved after 120 s → `SCENARIO FAILED`.
 - Prefer **letters** in the MuJoCo window: its built-in number-key shortcuts may also toggle geom-group visibility.
@@ -642,20 +643,19 @@ NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorb
 
 ---
 
-## 12. Final day plan, 2026-11-08 09:30 → submit 13:45 (agreed; all 5 working; Eden = merge captain)
-**Goal:** the ideas list from the team's notes, built by 5 people + 4 agents on Eden's laptop. **Feature freeze 11:45.** The demo story is decided at ~11:45 from what works (12.5).
+## 12. Final day plan, 2026-11-08 09:30 → submit 13:50 (agreed; all 5 working; Eden = merge captain)
+**Goal:** the ideas list from the team's notes, built by 5 people + 4 agents on Eden's laptop. **Hard deadline now 14:00 (no 15:00 buffer). Feature freeze moved to 12:45.** The demo story is chosen by **12:30**, from features already on `main` and tested (12.5).
 
-### 12.1 Timeline
+### 12.1 Timeline (updated ~11:05)
 | Time | What |
 |---|---|
-| 09:30–10:45 | Build block 1 |
-| **10:45** | **Checkpoint 1:** everyone pushes what works; Eden runs `doorbell smoke carpet_rule demo` and posts green/red |
-| 10:45–11:45 | Build block 2 |
-| **11:45** | **Feature freeze.** Last feature push; Eden merges the agent branches that are green and runs the full suite (~20 min); choose the demo story |
-| 12:00–12:45 | Rehearse 3× in a row, then **record** the ≤ 60 s one-take video (Eden runs the GUI; nobody runs tests on Eden's laptop) |
-| 12:45 | Everyone sends Eden 2–3 lines on their part (summary + pitch) |
-| 12:45–13:30 | Technical summary + pitch final (Eden) |
-| **13:30–13:45** | **Submit** (deadline 15:00) |
+| 09:30–11:00 | Build blocks 1+2 (done: agents B, D, E, F merged; see TODO.md) |
+| now – **12:40** | Build + merge. **Final feature pushes by 12:40.** Whoever isn't coding: write the technical summary + pitch drafts now (`docs/`); everyone sends Eden 2–3 lines on their part by 12:30 |
+| **12:30** | **Demo story chosen** (only features on `main` + tested) |
+| **12:45** | **Feature freeze**; everyone pulls the frozen `main` |
+| 12:45–13:15 | **In parallel:** Eden's laptop runs the full suite (nobody else runs tests/sims there) **and** the recording laptop (RTX 5060) rehearses + **records** the ≤ 60 s take on the frozen code (fallback: overnight test videos A / B) |
+| 13:15–13:40 | Technical summary + pitch final (from the drafts); pick the best take |
+| **13:40–13:50** | **Submit** (hard deadline 14:00) |
 
 ### 12.2 People (stay in your files; changes elsewhere: small, additive, tell the owner)
 | Person | Must do (demo) | Then, if time | Files |

@@ -28,16 +28,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from sim.house_layout import HOUSE_BOUNDS, ROOMS, SOUND_SOURCES, WALL_SEGMENTS_2D, get_room_at
+from sim.house_layout import HOUSE_BOUNDS, OWNER_VOICE, ROOMS, SOUND_SOURCES, WALL_SEGMENTS_2D, get_room_at
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GRID_RES = 0.5
 SIGMA_SIN = 0.18          # direction cue noise (in sin(azimuth) units)
 SIGMA_LOG_LEVEL = 0.45    # loudness cue noise (natural-log units, ~ +-55 %)
+SIGMA_LOG_LEVEL_VOICE = 0.7  # speech has pauses: 0.5 s window RMS varies 0.35-1.1x the clip's (offline check)
 MIN_MEAS = 3
 CONVERGED_STD = 1.5       # metres
 MAX_MEAS = 40
 OTHER_SOUND_MAX = 0.35    # skip windows where another sound is also loud (mixed cues)
+# The owner's voice (#10) is localised like a sound (main.py feeds it as this label) to find WHERE the
+# owner is; its level / reference clip come from house_layout.OWNER_VOICE, not the sound registry.
+OWNER_VOICE_LABEL = "owner_voice"
+LOCALISABLE = tuple(SOUND_SOURCES) + (OWNER_VOICE_LABEL,)
 
 
 def _clip_rms() -> Dict[str, float]:
@@ -45,8 +50,10 @@ def _clip_rms() -> Dict[str, float]:
     from scipy.io import wavfile
 
     out: Dict[str, float] = {}
-    for name in SOUND_SOURCES:
-        path = PROJECT_ROOT / "assets" / "audio" / f"{name}.wav"
+    files = {name: f"{name}.wav" for name in SOUND_SOURCES}
+    files[OWNER_VOICE_LABEL] = str(OWNER_VOICE["file"])
+    for name, fname in files.items():
+        path = PROJECT_ROOT / "assets" / "audio" / fname
         try:
             _, data = wavfile.read(str(path))
             if data.ndim > 1:
@@ -103,7 +110,8 @@ class SoundLocalizer:
     def _expected_rms(self, sound: str, robot_xy: Tuple[float, float]) -> np.ndarray:
         d = np.maximum(0.25, np.hypot(self.grid[:, 0] - robot_xy[0], self.grid[:, 1] - robot_xy[1]))
         walls = np.minimum(_walls_crossed(robot_xy, self.grid, self.segs), 3)
-        level = float(SOUND_SOURCES[sound].get("level", 1.0))
+        spec = OWNER_VOICE if sound == OWNER_VOICE_LABEL else SOUND_SOURCES[sound]
+        level = float(spec.get("level", 1.0))
         gain = level * np.maximum(0.12, (1.0 / (1.0 + 0.22 * d)) * (0.45 ** walls))
         return gain * self.ref_rms[sound]
 
@@ -111,7 +119,7 @@ class SoundLocalizer:
     def update(self, res: Dict[str, Any], pose: Tuple[float, float, float]) -> Optional[str]:
         """Feed one hearing result. Returns the sound name if its estimate changed."""
         label = res.get("label")
-        if label not in SOUND_SOURCES or float(res.get("confidence", 0.0)) < 0.5:
+        if label not in LOCALISABLE or float(res.get("confidence", 0.0)) < 0.5:
             return None
         scores = res.get("scores", {})
         if any(float(v) > OTHER_SOUND_MAX for k, v in scores.items() if k != label):
@@ -133,7 +141,8 @@ class SoundLocalizer:
         ll_dir = -0.5 * ((np.sin(ang) - math.sin(rel_meas)) / SIGMA_SIN) ** 2
         # Loudness likelihood.
         exp_rms = self._expected_rms(label, (x, y))
-        ll_lvl = -0.5 * ((np.log(rms) - np.log(exp_rms)) / SIGMA_LOG_LEVEL) ** 2
+        sig_lvl = SIGMA_LOG_LEVEL_VOICE if label == OWNER_VOICE_LABEL else SIGMA_LOG_LEVEL
+        ll_lvl = -0.5 * ((np.log(rms) - np.log(exp_rms)) / sig_lvl) ** 2
         track.ll += ll_dir + ll_lvl
         track.meas.append({"pose": (x, y, yaw), "rel_az_deg": math.degrees(rel_meas), "rms": rms})
 

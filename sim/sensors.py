@@ -27,7 +27,7 @@ import numpy as np
 from scipy import signal as sps
 from scipy.io import wavfile
 
-from sim.house_layout import SOUND_SOURCES, count_walls_crossed
+from sim.house_layout import OWNER_VOICE, SOUND_SOURCES, count_walls_crossed
 
 # mj_ray geom groups: house (0, 1, 4, 5) + owner/chair (0); skip robot visual/collision (2, 3)
 LIDAR_GEOMGROUP = np.array([1, 1, 0, 0, 1, 1], dtype=np.uint8)
@@ -408,6 +408,15 @@ class SimSensors:
         self.data = data
         self.audio_clips = ensure_audio_assets()
         self.audio_cursor: int = 0
+        # The owner's voice (house_layout.OWNER_VOICE), played from the owner's position while they talk.
+        self.voice_clip: Optional[np.ndarray] = None
+        self.voice_cursor: int = 0
+        try:
+            sr, d = wavfile.read(str(AUDIO_DIR / str(OWNER_VOICE["file"])))
+            if sr == SAMPLE_RATE:
+                self.voice_clip = (d[:, 0] if d.ndim > 1 else d).astype(np.float32) / 32768.0
+        except Exception as exc:  # noqa: BLE001
+            print(f"[sensors] owner voice clip unavailable ({exc}); the owner's voice won't be heard")
         self.ear_gain: float = 1.0  # AGC gain carried across windows (EAR_AGC)
         self.rng = np.random.default_rng(123)
         self.noise = AmbientNoise(self.rng)  # background-noise test profile ([N] hotkey / --noise)
@@ -549,19 +558,18 @@ class SimSensors:
         self,
         robot_pose: Tuple[float, float, float],
         active_sounds: Dict[str, bool],
+        voice_pos: Optional[Tuple[float, float]] = None,
+        extra_sources: Optional[List[Tuple[np.ndarray, Tuple[float, float], float]]] = None,
     ) -> Tuple[bytes, Dict[str, object]]:
         """
         Synthesize 0.5s (8000 samples x 2 channels) of 16 kHz stereo int16 PCM audio
         as heard by the robot's Left `(0.22, +0.08, 0.15)` and Right `(0.22, -0.08, 0.15)` ears.
         Includes distance attenuation, wall occlusion (0.45x/wall), ILD, and ITD.
+        `voice_pos`: the owner is talking from (x, y) this window (their voice is mixed in like any sound).
+        `extra_sources`: more emitters this window, each `(mono_window, (x, y), level)` with
+        `mono_window` = AUDIO_WINDOW_SAMPLES samples (e.g. a doorbell clip played by the TV).
         """
         rx, ry, ryaw = robot_pose
-        cos_y = math.cos(ryaw)
-        sin_y = math.sin(ryaw)
-
-        # Left and right ear positions in world frame
-        ear_l = (rx + 0.22 * cos_y - 0.08 * sin_y, ry + 0.22 * sin_y + 0.08 * cos_y)
-        ear_r = (rx + 0.22 * cos_y + 0.08 * sin_y, ry + 0.22 * sin_y - 0.08 * cos_y)
 
         # Ambient background noise (default "quiet" = the original 0.002 hiss floor)
         left_ch, right_ch = self.noise.generate(AUDIO_WINDOW_SAMPLES)
@@ -574,50 +582,25 @@ class SimSensors:
             active_list.append(sound_name)
             clip = self.audio_clips[sound_name]
             idx = (np.arange(AUDIO_WINDOW_SAMPLES) + self.audio_cursor) % len(clip)
-            mono = clip[idx]
-
             sx, sy, _sz = SOUND_SOURCES[sound_name]["pos"]
-            dx = sx - rx
-            dy = sy - ry
-            dist = max(0.25, math.hypot(dx, dy))
-
-            # Azimuth of sound source in robot body frame: +left is positive, -right is negative
-            world_angle = math.atan2(dy, dx)
-            rel_azimuth = math.atan2(math.sin(world_angle - ryaw), math.cos(world_angle - ryaw))
-
-            # Distance + wall occlusion attenuation. Occlusion is capped at 3 walls: in the
-            # open-plan house sound also reaches the robot around walls through the archways.
-            walls = count_walls_crossed((rx, ry), (sx, sy))
-            dist_atten = 1.0 / (1.0 + 0.22 * dist)
-            wall_atten = (0.45 ** min(walls, 3))
             # Source loudness: a smoke alarm (~85 dB @ 3 m) is far louder than a doorbell chime.
             level = float(SOUND_SOURCES[sound_name].get("level", 1.0))
-            base_gain = level * max(0.12, dist_atten * wall_atten)
-
-            # Interaural Level Difference (ILD): sound on left (+rel_azimuth) is louder in Left ear
-            ild = 0.38 * math.sin(rel_azimuth)
-            gain_l = base_gain * (1.0 + ild)
-            gain_r = base_gain * (1.0 - ild)
-
-            # Interaural Time Difference (ITD): sample shift between ears
-            # Physical + horn-baffle effective ear baseline gives up to +-6 samples at 16 kHz
-            delay_samples = int(round(6.0 * math.sin(rel_azimuth)))
-            if delay_samples > 0:
-                # Closer to left ear -> left leads, right lags
-                mono_l = mono
-                mono_r = np.roll(mono, delay_samples)
-            elif delay_samples < 0:
-                mono_l = np.roll(mono, -delay_samples)
-                mono_r = mono
-            else:
-                mono_l = mono
-                mono_r = mono
-
-            left_ch += (gain_l * mono_l).astype(np.float32)
-            right_ch += (gain_r * mono_r).astype(np.float32)
+            self._mix_source(clip[idx], (sx, sy), level, robot_pose, left_ch, right_ch)
 
         self.audio_cursor = (self.audio_cursor + AUDIO_WINDOW_SAMPLES) % (SAMPLE_RATE * 2)
         self.speaker.update(active_list)  # people in the room hear it too (no-op outside run_sim.py)
+
+        voice_on = voice_pos is not None and self.voice_clip is not None
+        if voice_on:
+            idx = (np.arange(AUDIO_WINDOW_SAMPLES) + self.voice_cursor) % len(self.voice_clip)
+            self._mix_source(self.voice_clip[idx], voice_pos, float(OWNER_VOICE["level"]), robot_pose,
+                             left_ch, right_ch)
+            self.voice_cursor = (self.voice_cursor + AUDIO_WINDOW_SAMPLES) % len(self.voice_clip)
+        else:
+            self.voice_cursor = 0  # every new sentence starts at the beginning of the clip
+
+        for mono, src_xy, level in extra_sources or ():
+            self._mix_source(mono, src_xy, float(level), robot_pose, left_ch, right_ch)
 
         stereo = np.stack([left_ch, right_ch], axis=-1)
         if EAR_AGC:
@@ -638,6 +621,55 @@ class SimSensors:
             "channels": 2,
             "samples": AUDIO_WINDOW_SAMPLES,
             "active_gt": active_list,
+            "owner_voice_gt": voice_on,  # judge/debug only, like active_gt
             "noise": self.noise.profile["name"],
         }
         return pcm_int16.tobytes(), meta
+
+    def clip_window(self, name: str, cursor: int) -> np.ndarray:
+        """AUDIO_WINDOW_SAMPLES of registry clip `name` starting at `cursor` (looped)."""
+        clip = self.audio_clips[name]
+        return clip[(np.arange(AUDIO_WINDOW_SAMPLES) + cursor) % len(clip)]
+
+    @staticmethod
+    def _mix_source(mono: np.ndarray, src_xy: Tuple[float, float], level: float,
+                    robot_pose: Tuple[float, float, float], left_ch: np.ndarray, right_ch: np.ndarray) -> None:
+        """Add one source at src_xy to both ear channels (in place): distance + walls, ILD, ITD."""
+        rx, ry, ryaw = robot_pose
+        sx, sy = src_xy
+        dx = sx - rx
+        dy = sy - ry
+        dist = max(0.25, math.hypot(dx, dy))
+
+        # Azimuth of sound source in robot body frame: +left is positive, -right is negative
+        world_angle = math.atan2(dy, dx)
+        rel_azimuth = math.atan2(math.sin(world_angle - ryaw), math.cos(world_angle - ryaw))
+
+        # Distance + wall occlusion attenuation. Occlusion is capped at 3 walls: in the
+        # open-plan house sound also reaches the robot around walls through the archways.
+        walls = count_walls_crossed((rx, ry), (sx, sy))
+        dist_atten = 1.0 / (1.0 + 0.22 * dist)
+        wall_atten = (0.45 ** min(walls, 3))
+        base_gain = level * max(0.12, dist_atten * wall_atten)
+
+        # Interaural Level Difference (ILD): sound on left (+rel_azimuth) is louder in Left ear
+        ild = 0.38 * math.sin(rel_azimuth)
+        gain_l = base_gain * (1.0 + ild)
+        gain_r = base_gain * (1.0 - ild)
+
+        # Interaural Time Difference (ITD): sample shift between ears
+        # Physical + horn-baffle effective ear baseline gives up to +-6 samples at 16 kHz
+        delay_samples = int(round(6.0 * math.sin(rel_azimuth)))
+        if delay_samples > 0:
+            # Closer to left ear -> left leads, right lags
+            mono_l = mono
+            mono_r = np.roll(mono, delay_samples)
+        elif delay_samples < 0:
+            mono_l = np.roll(mono, -delay_samples)
+            mono_r = mono
+        else:
+            mono_l = mono
+            mono_r = mono
+
+        left_ch += (gain_l * mono_l).astype(np.float32)
+        right_ch += (gain_r * mono_r).astype(np.float32)

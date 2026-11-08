@@ -1,7 +1,7 @@
 # Nudge: open to-dos
 
 Status: overnight run merged (`d2e2f00`, 14/14). **Final day: all 5 working, plan in AGENTS.md section 12.**
-Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00–12:45, submit 13:45.
+Tick an item off when it lands on `main`. **Hard deadline 14:00.** Demo story by **12:30**, final feature pushes by **12:40**, freeze **12:45**, full suite + recording in parallel 12:45–13:15, submit 13:40–13:50.
 
 ## Today (AGENTS.md 12; numbers = the team's ideas list)
 - [ ] **Eden:** merge + suites · demo, summary, pitch, submit
