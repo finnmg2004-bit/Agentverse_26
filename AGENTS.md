@@ -906,8 +906,8 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   - Sean → Teo, Eden: **robot-map tests 1 + 2** (RTX 5060, main `4e27195`, `NUDGE_ROBOT_MAP=1`):
     - 1 (with `--coco-objects`): **11/12 PASS** - doorbell 59 s, knock 60, smoke 41, kettle 97, oven_timer 97, chair 60,
       smoke_blocked_exit 80, owner_moved 72, demo 86, robot_map_tv 90, robot_map_sofa 110; **carpet_rule FAIL** (150 s).
-    - 2 (default house): doorbell, knock, smoke, kettle, oven_timer, chair, smoke_blocked_exit, owner_moved PASS; **carpet_rule FAIL**
-      (the rest still running).
+    - 2 (default house): **11/12 PASS** - same list, all PASS (demo 86 s, robot_map_tv 90, robot_map_sofa 110) except **carpet_rule FAIL**
+      (final, 12:20).
     - **The carpet_rule FAIL is NOT the robot map**: it fails the same way with the flag OFF on `4e27195` (re-run 12:20). So for
       the map decision: everything else passes, plus your soak 9/9.
 - [ ] Sean → Eden + Ricktho + Finn: **URGENT, `carpet_rule` (default suite, and the start of the demo story) FAILS on main since
