@@ -125,6 +125,22 @@ SCENARIOS: Dict[str, Dict] = {
         "min_timeout": 240.0,  # 60 s until 22:00 + find the owner + walk to the guest room
         "experimental": True,
     },
+    "teach_bedtime_carpet": {
+        "desc": "Carpet rule + taught bedtime task -> at 22:00 the robot takes the owner to the guest "
+                "bedroom WITHOUT stepping on the carpet (a taught task must respect place rules)",
+        # teach_bedtime alone has no carpet rule, so crossing the carpet there is the normal route
+        # (like carpet_baseline); this one checks the rule holds on a task-driven mission.
+        "actions": [("cmd", 0.5, "Nudge, I've got a new carpet in the living room, please don't step on it."),
+                    ("cmd", 4.0, "Every night at 10 pm take me to bed"), ("clock", "task", "21:59")],
+        "expect_complete": [],
+        "expect_task": {"kind": "time"},
+        "expect_owner_room": "guest",
+        "expect_log": ["RULE #"],
+        "expect_alert": [],
+        "forbid_sim": ["AVOID AREA: robot stepped ON"],
+        "min_timeout": 240.0,
+        "experimental": True,
+    },
     "cant_do_that": {
         "desc": "Owner asks for something no skill can do ('Please do the washing up') -> robot says it "
                 "can't (C1 fallback sentence) and starts no mission",
