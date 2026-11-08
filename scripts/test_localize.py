@@ -133,6 +133,15 @@ def main() -> int:
     msg = {"t": t, "robot_pose": list(pose), "lidar_ranges": lidar(model, data, base_id, pose)}
     pf.update(msg)
     errs = []
+    if args.kidnap:  # lost: first turn on the spot (two full turns) so the LiDAR sees all around
+        for _ in range(int(10.5 / STATE_DT)):
+            pf.set_cmd(0.0, 0.0, 1.2)
+            for _ in range(int(STATE_DT / PHYS_DT)):
+                loco.step(0.0, 0.0, 1.2, guiding=False, dt=PHYS_DT)
+            t += STATE_DT
+            pose = loco.get_pose()
+            pf.update({"t": t, "robot_pose": list(pose), "lidar_ranges": lidar(model, data, base_id, pose)})
+        print(f"  after the spin: pf err {pf.err_xy:.2f} m  std {pf.std_xy():.2f} m  particles {len(pf.p)}")
     for goal_name in TOURS[args.tour]:
         goal = H.LANDMARKS.get(goal_name) or H.ROOMS[goal_name]["owner_spot"]
         wps = planner.plan(pose[:2], goal) or []
