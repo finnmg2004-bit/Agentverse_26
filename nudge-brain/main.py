@@ -316,7 +316,8 @@ class Brain:
         deferred_ready = label in self.deferred and self.world.mission is None
         if label in ALERT_SOUNDS and conf >= NEW_SOUND_CONF and (label not in self.latched or deferred_ready):
             # "Is the sound real?" (sound_check.py): a doorbell / knock from the TV starts nothing.
-            if label not in self.latched and self.sound_check.gate(label, res, self.world, self.latched):
+            if label not in self.latched and self.sound_check.gate(label, res, self.world, self.latched,
+                                                                   executor=self.executor):
                 return
             self.latched[label] = 0
             self.deferred.discard(label)

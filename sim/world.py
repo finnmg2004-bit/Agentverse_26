@@ -289,9 +289,10 @@ def add_nudge_entities(spec: mujoco.MjSpec) -> None:
     for name, src in H.SOUND_SOURCES.items():
         wb.add_geom(name=f"{BEACON_PREFIX}{name}", type=G.mjGEOM_SPHERE, pos=list(src["pos"]), size=[0.14, 0, 0],
                     rgba=list(src["rgba_idle"]), contype=0, conaffinity=0, group=0)
-    # The living-room TV as a sound source (AGENTS.md 6.2): a beacon on the screen, lit while it plays
-    wb.add_geom(name=f"{BEACON_PREFIX}tv", type=G.mjGEOM_SPHERE, pos=list(H.TV_SOURCE["pos"]), size=[0.10, 0, 0],
-                rgba=[0.45, 0.3, 0.6, 0.3], contype=0, conaffinity=0, group=0)
+    # The living-room TV (AGENTS.md 6.2, 12.0 P6): a visible flat screen at TV_SOURCE, always loaded;
+    # the screen glows while it plays (sim/tv_model.py, driven by run_sim.py)
+    from sim.tv_model import add_tv
+    add_tv(spec)
 
     # Owner: humanoid mocap body (teal jacket for the HSV detector; legs/hips at LiDAR height)
     ox, oy = H.ROOMS[H.OWNER_START_ROOM]["owner_spot"]

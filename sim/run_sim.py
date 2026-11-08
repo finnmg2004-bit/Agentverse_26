@@ -178,6 +178,8 @@ class NudgeSimulator:
             for name in SOUND_SOURCES
         }
         self.tv_beacon_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "beacon_tv")
+        from sim.tv_model import TvScreen
+        self.tv_screen = TvScreen(self.model)  # the TV's screen glows while it plays (sim/tv_model.py)
 
         # Latest command from nudge-brain
         self.cmd_vx: float = 0.0
@@ -749,6 +751,9 @@ class NudgeSimulator:
                 r, g, b, a = spec["rgba_idle"]
                 self.model.geom_rgba[gid] = [r, g, b, a]
                 self.model.geom_size[gid][0] = 0.12
+        noise = getattr(getattr(self, "sensors", None), "noise", None)  # --noise tv: the TV is on (dim)
+        ambient_tv = noise is not None and str(noise.profile.get("name")) == "tv"
+        self.tv_screen.update(t, self.tv_playing is not None, ambient_tv)
         if self.tv_beacon_id >= 0:  # the TV: purple pulse while it plays a doorbell / knock
             on = self.tv_playing is not None
             pulse = 0.65 + 0.35 * np.sin(t * 14.0) if on else 0.0

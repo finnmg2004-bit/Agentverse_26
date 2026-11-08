@@ -314,6 +314,19 @@ SCENARIOS: Dict[str, Dict] = {
         "forbid_log": ["MISSION ", "alert_owner(", "SOUND CHECK: doorbell is real"],
         "expect_alert": [],
     },
+    "tv_investigate": {
+        "desc": "TV doorbell [Y] while Nudge is free -> not sure from the first window -> Nudge walks toward "
+                "the TV and looks at it with the camera, listening as it goes -> THEN 'That was the TV' "
+                "(AGENTS.md 12.0 P6)",
+        "actions": [("at", 1.0, "Y")],
+        "expect_complete": [],
+        "run_for": 20.0,
+        "expect_log": ["SOUND CHECK: investigating doorbell", "SKILL investigate(doorbell",
+                       "moved toward the TV", "SOUND CHECK: doorbell came from the TV"],
+        "expect_says": ["That was the TV"],
+        "forbid_log": ["MISSION ", "alert_owner(", "SOUND CHECK: doorbell is real"],
+        "expect_alert": [],
+    },
     "tv_then_doorbell": {
         "desc": "TV doorbell [Y] -> ignored ('That was the TV'); after it ends the REAL doorbell [B] rings "
                 "-> sound check says real -> normal doorbell mission to the front door",
