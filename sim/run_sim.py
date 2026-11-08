@@ -112,6 +112,12 @@ SCENARIO_TIMEOUT_S = 120.0
 FIRE_TOO_CLOSE_M = 3.0  # judge only: the robot should never route this close to the fire (smoke alarm)
 
 
+# P9 (AGENTS.md 12.0): Nudge speaks only when the owner is within this distance of the robot; farther away the
+# message is on the screens only and is spoken on arrival (if it's still current). The smoke alarm is always
+# spoken at once. NUDGE_SPEAK_NEAR_M=0 turns the hold off (always speak, the old behaviour).
+SPEAK_NEAR_M = float(os.environ.get("NUDGE_SPEAK_NEAR_M", "3.5"))
+
+
 class NudgeSimulator:
     """Manages MuJoCo state, hotkeys, sensors, and ZeroMQ PUB/SUB sockets."""
 
@@ -254,6 +260,7 @@ class NudgeSimulator:
         # message (viewer label + overlay + log) and speech (on by default, NUDGE_SPEECH=0 = off, sim/robot_voice.py).
         self.screen = RobotScreen(self.model)
         self.voice = RobotVoice()
+        self.held_say: str = ""  # P9: message waiting until the robot is near the owner
         # Visible nudge (TODO #4): robot bump + contact ripple + owner reaction, render-only.
         self.nudge_fx = NudgeFX(self.model)
         self.nudge_says: str = ""
@@ -351,9 +358,41 @@ class NudgeSimulator:
                 print(f"[sim] NUDGE SAYS: {say}")
             self.refresh_outputs()  # owner profile (C10): may this message be spoken?
             if self.outputs["speech"] or not say:
-                self.voice.say_if_changed(say, urgent=self.mission_sound == "smoke_alarm")
+                self.say_near_owner(say, urgent=self.mission_sound == "smoke_alarm")
             else:
                 print(f"[sim] SPEECH OFF (profile {self.profile}): {say}")
+
+    def owner_distance(self) -> float:
+        rx, ry, _ = self.locomotion.get_pose()
+        ox, oy = self.locomotion.get_owner_pos()
+        return math.hypot(rx - ox, ry - oy)
+
+    def say_near_owner(self, text: str, urgent: bool = False) -> None:
+        """P9: speak `text` now if the owner is close (or it's urgent), else hold it for arrival."""
+        if not text:
+            self.held_say = ""
+            self.voice.say_if_changed(text, urgent=urgent)  # silence resets the voice
+            return
+        d = self.owner_distance()
+        if urgent or SPEAK_NEAR_M <= 0 or d <= SPEAK_NEAR_M:
+            self.held_say = ""
+            self.voice.say_if_changed(text, urgent=urgent)
+        elif text != self.held_say:
+            self.held_say = text
+            print(f"[sim] SPEECH HELD (owner {d:.1f} m away, screen only): {text}")
+
+    def flush_held_speech(self) -> None:
+        """P9: say the held message once the robot is near the owner, if it's still the current one."""
+        if not self.held_say:
+            return
+        if self.held_say != self.nudge_says or not self.outputs.get("speech", True):
+            self.held_say = ""
+            return
+        d = self.owner_distance()
+        if d <= SPEAK_NEAR_M:
+            print(f"[sim] SPEECH on arrival (owner {d:.1f} m): {self.held_say}")
+            self.voice.say_if_changed(self.held_say)
+            self.held_say = ""
 
     def set_profile(self, mode: str) -> None:
         """Owner profile (contract C10): deaf | blind | deafblind -> enabled output channels."""
@@ -369,7 +408,7 @@ class NudgeSimulator:
         # Only here, never when the emergency override turns speech on (that would say the stale
         # previous message before the fire text arrives).
         if self.outputs["speech"] and not speech_was_on and self.nudge_says:
-            self.voice.say_if_changed(self.nudge_says, urgent=self._outputs_emergency)
+            self.say_near_owner(self.nudge_says, urgent=self._outputs_emergency)
 
     def refresh_outputs(self) -> None:
         """Recompute the enabled output channels (profile + emergency override); log changes."""
@@ -645,6 +684,7 @@ class NudgeSimulator:
         self.nudge_says = ""
         self.mission_sound = None
         self.voice.last_text = ""
+        self.held_say = ""
         print(f"[sim] HOTKEY [R]: Scene RESET (episode {self.episode}): robot in "
               f"{get_room_at(*ROBOT_START_POSE[:2])}, owner in {ROOM_ORDER[0]}, chair stowed, sounds off")
 
@@ -879,6 +919,7 @@ class NudgeSimulator:
                      else None)
         self.owner.step(float(self.data.time), dt, self.locomotion.get_pose(),
                         self.cmd_alert_mode, self.cmd_guiding)
+        self.flush_held_speech()  # P9
         self.locomotion.step(
             self.cmd_vx,
             self.cmd_vy,
