@@ -3,6 +3,16 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Eden: merging agent D `day/owner-voice` into main - 3 conflicts in Sean's files, keep both sides
+`git merge-tree origin/main origin/day/owner-voice` (main b9c4533 + 569275e..):
+1. `sim/run_sim.py` `NudgeSimulator.__init__` parameters: keep both lines,
+   `profile: str = DEFAULT_PROFILE,` and `voice_endpoint: str = "tcp://127.0.0.1:5558",`.
+2. `sim/run_sim.py` `main()` constructor call: keep both, `profile=args.profile,` and `voice_endpoint=args.voice_sub,`.
+3. `scripts/test_scenarios.py` scenario table: main's block (`profile_deaf`, `profile_blind`, the four `stuck_*`)
+   and agent D's `owner_voice` block both stay; just drop the markers (each block keeps its own closing `},`).
+Then `py_compile` both files and run `owner_voice doorbell smoke profile_deaf` (Sean can run it on the RTX 5060).
+
+
 ## Eden: TODO.md items to tick (Sean's, all done on main)
 - "**Sean:** #4 visible nudge · #12 speech on by default · #19 repro scenarios · review agents E + F": done
   (`a9a6720`, `23fe8b4`; reviews of E and F below; E applied the fixes in `01509b1`).
