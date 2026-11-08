@@ -279,11 +279,14 @@ class WorldModel:
             "escalation": self.escalation,
         }
 
-    def owner_lying_down(self, fresh_s: float = 30.0) -> bool:
-        """C7 camera check says the owner is lying down (recent, confident). False without Teo's check."""
+    def owner_lying_down(self, fresh_s: float = 10.0) -> bool:
+        """C7 camera check says the owner is lying down (fresh, confident). False without Teo's check.
+        Never waits for a check: only the latest look counts, and only if it is <= fresh_s old (Teo, 12.7)."""
         oc = self.owner_check
         if not oc or oc.get("state") != "lying_down" or float(oc.get("confidence", 1.0) or 0.0) < 0.5:
             return False
+        if oc.get("age") is not None:  # OwnerChecker.status() already measured it in sim seconds
+            return float(oc["age"]) <= fresh_s
         t = float(oc.get("t", self.t_sim) or 0.0)
         age = (time.time() - t) if t > 1e6 else (self.t_sim - t)  # unix or sim seconds
         return age <= fresh_s
