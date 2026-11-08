@@ -69,7 +69,10 @@ the additive `yamnet_topk` field and `unknown_event: null`.
 - **Default (off) regression, final code**: `doorbell` PASS 60.4 s, `smoke` PASS 51.2 s, `demo` PASS 86.7 s,
   `owner_voice` PASS 79.9 s, `kettle` PASS 97.2 s.
 - **Final code with the feature ON** (`unknown_glass unknown_baby unknown_during_doorbell kettle
-  oven_timer`, `NUDGE_UNKNOWN_EVENTS=1`): RUN3_PLACEHOLDER
+  oven_timer`, `NUDGE_UNKNOWN_EVENTS=1`): `unknown_glass` PASS 75.1 s (safety: alert_owner,
+  find + tell), `unknown_baby` PASS 25.0 s (Gemma: alert_owner), `unknown_during_doorbell` PASS 61.0 s,
+  `kettle` PASS 97.6 s, `oven_timer` PASS 97.0 s; **no unknown event during kettle / oven timer** (the
+  10 s Alarm hold works). 5/5 PASS.
 
 ## Merge notes
 - `nudge-brain/main.py` (Finn): 7 lines — import; `self.unknown = UnknownEvents(self.agent, self.localizer)`
