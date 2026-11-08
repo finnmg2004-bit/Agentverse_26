@@ -497,6 +497,17 @@ class NudgeControl:
             with dpg.group(horizontal=True):
                 dpg.add_text("Rules:", color=DIM)
                 dpg.add_text("none", tag="rules_txt", wrap=LEFT_W - 80)
+            # Nudge asks the owner something (contract C5 `ask`, e.g. "Shall I call 999?"): answer here
+            with dpg.group(horizontal=True, tag="ask_row", show=False):
+                t = dpg.add_text("NUDGE ASKS:", color=AMBER)
+                if "mid" in self.fonts:
+                    dpg.bind_item_font(t, self.fonts["mid"])
+                dpg.add_text("", tag="ask_txt", color=TEXT)
+                b = dpg.add_button(label="Yes", width=70, callback=lambda: self.answer("yes"))
+                dpg.bind_item_theme(b, self._button_theme((40, 130, 70)))
+                b = dpg.add_button(label="No", width=70, callback=lambda: self.answer("no"))
+                dpg.bind_item_theme(b, self._button_theme((150, 50, 50)))
+                dpg.add_text("", tag="ask_left_txt", color=DIM)
 
             # Tabs: the agent's reasoning first, then one tab per plugin panel (gui/panels/*.py)
             with dpg.tab_bar(tag="main_tabs"):
@@ -642,6 +653,8 @@ class NudgeControl:
                 dpg.draw_text((20, 44), f'Nudge says: "{ns["text"]}"', color=(150, 230, 255, 255), size=17,
                               parent="view_overlay")
 
+        self._update_ask_escalation(br if brain_ok else {})
+
         # Sim clock (absent until the sim implements C2)
         clk = st.get("sim_clock") if sim_ok else None
         if clk:
@@ -695,6 +708,47 @@ class NudgeControl:
         label = {"avoid_area": "avoid", "sound_pref": "sound", "command": "do"}.get(kind, kind)
         quote = f' - "{r["text"]}"' if r.get("text") else ""
         return f"{label}: {what}{until}{src}{quote}"
+
+    # ------------------------------------------------------------------ ask + escalation (C5, C8)
+    def answer(self, choice: str) -> None:
+        """Yes / No button: answer the brain's open `ask` (C5) with a `user_answer` on :5557."""
+        ask = self.brain.get("ask") or {}
+        if not ask.get("id"):
+            return
+        self.pub.send_multipart([b"user_answer", json.dumps(
+            {"id": ask["id"], "text": choice, "choice": choice, "confidence": 1.0}).encode("utf-8")])
+        self.answered_ask = ask["id"]
+
+    def _update_ask_escalation(self, br: dict) -> None:
+        ask = br.get("ask") or {}
+        open_ask = bool(ask.get("id")) and ask.get("id") != getattr(self, "answered_ask", None)
+        dpg.configure_item("ask_row", show=open_ask)
+        if open_ask:
+            dpg.set_value("ask_txt", str(ask.get("question", "")))
+            left = ask.get("timeout_s")
+            if getattr(self, "ask_seen", (None, 0.0))[0] != ask["id"]:
+                self.ask_seen = (ask["id"], time.monotonic())  # status has no start time: count from first sight
+            if left is not None:
+                left = max(0.0, float(left) - (time.monotonic() - self.ask_seen[1]))
+            dpg.set_value("ask_left_txt", f"({left:.0f} s to answer)" if left is not None else "")
+            text = f'Nudge asks: "{ask.get("question", "")}"  (Yes / No)'
+            self._overlay_box(text, AMBER, VIEW_H - 92)
+        esc = br.get("escalation") or {}
+        if esc:
+            who = "999 CALLED" if esc.get("contact") == "999" else "EMERGENCY CONTACT ALERTED"
+            if not esc.get("called", True):
+                who = ("999 NOT CALLED (owner said no)" if esc.get("contact") == "999"
+                       else "EMERGENCY CONTACT: waiting")
+            why = {"yes": "owner said yes", "no": "owner said no", "timeout": "no answer"}.get(
+                str(esc.get("answer")), "owner did not respond" if esc.get("reason") == "no_response" else "")
+            self._overlay_box(f"{who}" + (f"  ({why})" if why else ""),
+                              RED if esc.get("called", True) else AMBER, VIEW_H - 52, size=22)
+
+    def _overlay_box(self, text: str, col, y: float, size: int = 18) -> None:
+        w = min(VIEW_W - 8, 40 + int(size * 0.55) * len(text))
+        dpg.draw_rectangle((8, y), (w, y + size + 16), fill=(0, 0, 0, 190), color=col, thickness=2, rounding=6,
+                           parent="view_overlay")
+        dpg.draw_text((20, y + 7), text, color=col, size=size, parent="view_overlay")
 
     # ------------------------------------------------------------------ mic button (#9)
     def _voice_running(self) -> bool:
@@ -1003,6 +1057,8 @@ class NudgeControl:
                         self.send({"action": "clock", "time": what[6:]})
                     elif what.lower().startswith("say="):
                         self.send_command(what[4:])
+                    elif what.lower().startswith("answer="):
+                        self.answer(what[7:].strip().lower())
                     elif what.lower() in ("mic", "mic=on", "mic=off"):
                         if (what.lower() != "mic=off") != self._voice_running():
                             self.toggle_mic()
