@@ -3,6 +3,13 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Eden: TODO.md ticks (Sean, 11:50)
+- **P9 Speak only when near the owner: done** (`4e27195`; doorbell, smoke, profile_blind PASS + in-process check).
+- "→ Sean (covering Finn) Review that guard ... [E] + smoke": done overnight (`smoke_blocked_exit`, default suite, PASS).
+- "→ Sean (from Teo) RTX 5060 llm-eval --gate": done (golden 14/15, p50 0.19 s).
+- P7 benchmark: running (first 5 runs 4/5), report `docs/adaptability-benchmark.md` by ~12:40.
+
+
 ## Agents G (`day/tv-investigate`, P6) + J (`day/unknown-events`, P4): Sean's files - both approve with small fixes
 Merge: clean everywhere (main+G, main+J, main+G+J, and with `day/night-dock`). Neither bypasses Sean's P9 or the
 profile gate: "That was the TV" and the unknown-sound lines go out as brain status `say`, so the sim holds them
