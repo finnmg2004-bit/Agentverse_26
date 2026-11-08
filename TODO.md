@@ -51,9 +51,11 @@ Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00
 - `nudge-brain/evacuation.py` `fire_estimate` (installed alarm's room unless hearing clearly disagrees) + `nudge-brain/sound_localizer.py` `room_probs` (`d4aaa8c`, Ricktho)
 - (earlier, before this session) `nudge-brain/main.py`: `ALERT_SOUNDS` from the registry, kettle deferral, `SoundEvents` feed + status fields; `agent.py` / `world_model.py`: registry defaults (Ricktho)
 - `nudge-brain/agent.py` `build_menu`: exit options described as "NEAR the fire - dangerous" / "FAR from the fire - safest" + planner's pick tag (`fire_words`, Eden)
+- `nudge-brain/agent.py` + `main.py`: observe-only hooks for the run log (`run_log.py`, runs/*.jsonl; `NUDGE_RUN_LOG=0` = off): `_log_run` after each decision, `late_llm` lines, `command` lines, new file per episode. No decision logic changed (Teo)
 - (add a line here whenever you touch Finn's files this session)
 
 ## Sean (sim, outputs, tests)
+- [ ] **→ Sean (from Teo)** On an RTX 5060 recording laptop, with the sim/GUI closed: check out `claude/agent-evals-7798e9`, run `pixi run llm-eval --gate --sets golden teach` (~3 min) and put the accuracy + p50/p95 latency lines in the technical summary ("where each model runs, hardware and latency"). The GTX 1650 numbers (golden 14/15, p50 2.9 s / p95 5.7 s; teach 17/19) were measured with the GPU shared.
 - [x] On-robot screen shows the "Nudge says" text (`77bbc21`)
 - [x] LED colour by tier (`77bbc21`; kettle now has its own amber on the light bar + screens, from the brain's mission sound)
 - [x] Speech through Teo's `speak(text)` (`sim/robot_voice.py` -> `speech.tts.speak`, `NUDGE_SPEECH=1`; spoken as "Nudge says: ..." so the mic ignores it; smoke uses `interrupt=True`)
@@ -64,6 +66,8 @@ Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00
 - [x] Windows fix: Whisper + numpy crashed with "OMP Error #15"; win-64 now uses OpenBLAS (`pixi.toml`)
 - [ ] **→ Eden (covering Teo)** Measure Gemma latency on the recording laptop (accuracy is 97.8 %; on Eden's RTX 5050 laptop ~0.4–0.9 s, 0 watchdog fallbacks)
 - [ ] Fine-tune (paused): PARKED until Teo is back (add a Modal payment method, then follow AGENTS.md 6.1)
+- [x] Agent evals: every brain run saved to `runs/*.jsonl`; golden sets of real decisions + teach sentences; `pixi run llm-eval --gate` (scripts/llm_eval/README.md)
+- [ ] **→ everyone, ongoing** After ANY prompt / model / menu change run `pixi run llm-eval --gate`; when a run shows a wrong decision, `pixi run llm-harvest --add runs/<file>.jsonl:<line> --expect <letter> --note "why"`
 
 ## Eden (GUI, integration, story)
 - [x] GUI command/rule text box (sends `user_command`) + example sentences

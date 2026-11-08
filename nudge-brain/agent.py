@@ -47,6 +47,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 from sim.house_layout import LANDMARKS, ROOMS, SOUND_SOURCES
 
 import safety
+from run_log import RUN_LOG, text_hash
 from world_model import room_hops
 
 OLLAMA_URL = os.environ.get("NUDGE_OLLAMA_URL", "http://127.0.0.1:11434")
@@ -546,6 +547,9 @@ class NudgeAgent:
             current = self._pending is not None and self._pending["id"] == req_id
             if current:
                 self._pending["result"] = result
+        if not current:  # run log: what Gemma would have chosen after the watchdog decided
+            RUN_LOG.record("late_llm", req_id=req_id, event=event, latency=round(dt, 3),
+                           model=self.model, llm_raw=json.dumps(result)[:500])
         print(f"[agent] LLM #{req_id} '{event}' answered in {dt:.2f} s"
               f"{'' if current else ' (too late: superseded or watchdog already decided)'}", flush=True)
 
@@ -571,7 +575,8 @@ class NudgeAgent:
         with self._lock:
             self._request_id += 1
             self._pending = {"id": self._request_id, "event": event, "options": options, "rule": rule,
-                             "result": None, "ask_esc": ask_esc, "llm": consult}
+                             "result": None, "ask_esc": ask_esc, "llm": consult,
+                             "prompt": prompt, "ask_say": ask_say}  # prompt/ask_say: run log only
             req_id = self._request_id
         self.watchdog.start()
         if consult:
@@ -655,6 +660,8 @@ class NudgeAgent:
     def _finish(self, action: Dict[str, Any], source: str, reason: str, rule: Dict[str, Any],
                 world, event: str = "", llm_raw: Optional[str] = None, say: str = "") -> Dict[str, Any]:
         latency = self.watchdog.elapsed()
+        with self._lock:
+            pending = self._pending  # for the run log (cancel() clears it)
         self.cancel()
         agreed = action["tool"] == rule.get("tool") and action.get("args", {}) == rule.get("args", {})
         if source == "llm" and agreed:
@@ -673,8 +680,39 @@ class NudgeAgent:
                                               "note": self._note, "llm_raw": llm_raw, "say": say,
                                               "model": self.model if source == "llm" else None,
                                               "escalate": bool(action.get("escalate"))}])[-25:]
+        self._log_run(pending, action, source, reason, rule, world, event, latency, agreed, llm_raw, say)
         self._note = ""
         extra = "" if agreed or source != "llm" else f"  (rules would: {rule_txt})"
         why = f" - {reason}" if source == "llm" and reason else ""
         world.log(f"DECIDE [{source} {latency:.2f}s] {action['tool']}({args}){why}{extra}")
         return action
+
+    def _log_run(self, pending, action, source, reason, rule, world, event, latency, agreed, llm_raw, say) -> None:
+        """One `decision` line in runs/*.jsonl (run_log.py). Observes only; never raises."""
+        if not RUN_LOG.enabled:
+            return
+        try:
+            options = (pending or {}).get("options") or []
+
+            def letter(tool, args):
+                return next((LETTERS[i] for i, o in enumerate(options)
+                             if o["tool"] == tool and o["args"] == (args or {})), None)
+
+            m = world.mission or {}
+            RUN_LOG.record(
+                "decision", req_id=(pending or {}).get("id"), t_sim=round(world.t_sim, 2), event=event,
+                mission={"sound": m.get("sound"), "target": m.get("target")} if m else None,
+                emergency=bool(world.is_emergency()), robot_room=world.robot_room,
+                system_prompt=text_hash(SYSTEM_PROMPT), prompt=(pending or {}).get("prompt"),
+                options=[{"letter": LETTERS[i], "tool": o["tool"], "args": o["args"], "facts": o["facts"]}
+                         for i, o in enumerate(options)],
+                ask_esc=bool((pending or {}).get("ask_esc")), ask_say=bool((pending or {}).get("ask_say")),
+                llm_asked=bool((pending or {}).get("llm")), model=self.model,
+                source=source, choice=letter(action["tool"], action.get("args")), tool=action["tool"],
+                args=action.get("args", {}), escalate=bool(action.get("escalate")),
+                latency=round(latency, 3), reason=reason, llm_raw=llm_raw, say=say, note=self._note,
+                rule={"tool": rule.get("tool"), "args": rule.get("args", {}),
+                      "letter": letter(rule.get("tool"), rule.get("args"))},
+                agreed=agreed)
+        except Exception as exc:  # observability must never break a decision
+            print(f"[agent] run log skipped: {exc}", flush=True)
