@@ -106,6 +106,10 @@ SOUND_COL = {name: _sound_rgb(name) + (255,) for name in SOUND_SOURCES}
 # Button order: someone-wants-you (tier 3) first, emergencies last; registry order within a tier.
 SOUND_ORDER = sorted(SOUND_SOURCES, key=lambda n: (-int(SOUND_SOURCES[n].get("tier", 3)), list(SOUND_SOURCES).index(n)))
 BUTTONS_PER_ROW = 7  # 5 sounds + Silence + Reset fit one row; more sounds wrap onto the next
+# Owner profile selector (contract C10; the table of which outputs each enables is sim/owner_profile.py)
+PROFILE_LABELS = {"deaf": "Deaf", "blind": "Blind", "deafblind": "Deafblind"}
+PROFILE_CHANNEL_LABELS = {"screen": "screen", "light": "light bar", "speech": "speech", "haptic": "haptic",
+                          "guiding": "guiding"}
 SOURCE_COL = {"llm": PURPLE, "rules": (140, 180, 230, 255), "safety": RED, "watchdog": AMBER,
               "only option": (150, 150, 155, 255)}
 SOURCE_LABEL = {"llm": "GEMMA", "rules": "rules", "safety": "SAFETY", "watchdog": "watchdog",
@@ -462,6 +466,12 @@ class NudgeControl:
                 dpg.add_text("--:--", tag="clock_txt", color=DIM)
                 dpg.add_button(label="Jump to 21:59", callback=lambda: self.send({"action": "clock", "time": "21:59"}))
                 dpg.add_button(label="+1 h", callback=self.clock_plus_hour)
+                # Owner profile (contract C10, sim/owner_profile.py): which robot outputs are on
+                dpg.add_text("   Owner:")
+                dpg.add_radio_button(list(PROFILE_LABELS.values()), tag="profile_radio", horizontal=True,
+                                     default_value=PROFILE_LABELS["deafblind"],
+                                     callback=lambda s, a: self.set_profile(a))
+                dpg.add_text("(sim: ?)", tag="profile_txt", color=DIM)
             dpg.add_text("", tag="scene_txt", color=DIM)
 
             # Tell Nudge: commands, sound preferences and place rules (AGENTS.md 9.3)
@@ -568,6 +578,28 @@ class NudgeControl:
             return  # sim sends no clock yet
         self.send({"action": "clock", "time": f"{(h + 1) % 24:02d}:{m:02d}"})
 
+    def set_profile(self, label_or_mode: str) -> None:
+        """Owner profile (contract C10): Deaf / Blind / Deafblind -> gui action to the sim."""
+        mode = next((k for k, v in PROFILE_LABELS.items() if v == label_or_mode), str(label_or_mode).lower())
+        if mode in PROFILE_LABELS:
+            self.send({"action": "profile", "mode": mode})
+            print(f"[gui] owner profile -> {mode}")
+
+    def _update_profile(self, st: dict) -> None:
+        """Show the sim's state.profile + the output channels it has on (absent in older sims)."""
+        prof = st.get("profile")
+        if not prof:
+            dpg.set_value("profile_txt", "(sim: no profile)" if st else "(sim: ?)")
+            dpg.configure_item("profile_txt", color=DIM)
+            return
+        if prof != getattr(self, "_shown_profile", None) and prof in PROFILE_LABELS:
+            self._shown_profile = prof  # follow the sim (e.g. started with --profile, or another GUI)
+            dpg.set_value("profile_radio", PROFILE_LABELS[prof])
+        outs = st.get("outputs") or {}
+        on = [PROFILE_CHANNEL_LABELS.get(c, c) for c, v in outs.items() if v]
+        dpg.set_value("profile_txt", f"sim: {prof} | on: {', '.join(on)}")
+        dpg.configure_item("profile_txt", color=TEXT)
+
     # ------------------------------------------------------------------ per-frame updates
     def update(self) -> None:
         now = time.monotonic()
@@ -620,6 +652,7 @@ class NudgeControl:
         else:
             dpg.set_value("clock_txt", "--:--  (sim sends no clock)")
             dpg.configure_item("clock_txt", color=DIM)
+        self._update_profile(st if sim_ok else {})
 
         # Scene line
         if sim_ok:
@@ -973,6 +1006,8 @@ class NudgeControl:
                     elif what.lower() in ("mic", "mic=on", "mic=off"):
                         if (what.lower() != "mic=off") != self._voice_running():
                             self.toggle_mic()
+                    elif what.lower().startswith("profile="):  # C10, e.g. profile=blind@3
+                        self.set_profile(what[8:].strip().lower())
                     else:
                         self.key(what.upper())
                 if shots and elapsed >= shots[0][1]:
@@ -997,8 +1032,8 @@ def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Nudge Control: 3D view, events and agent reasoning")
     ap.add_argument("--auto", default="",
-                    help="Scripted actions: key, cam=<preset>, clock=HH:MM, mic=on|off or say=<sentence>, each @ seconds; "
-                         "separate with ';' "
+                    help="Scripted actions: key, cam=<preset>, clock=HH:MM, mic=on|off, profile=deaf|blind|deafblind "
+                         "or say=<sentence>, each @ seconds; separate with ';' "
                          "(or ',' when no sentence has a comma), e.g. 'say=I'm expecting a parcel@2;B@5;cam=Chase cam@6'")
     ap.add_argument("--screenshot", default="",
                     help="Save PNG(s), quit after the last, e.g. 'shot.png@30' or 'a.png@20;b.png@45'")
