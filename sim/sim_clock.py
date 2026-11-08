@@ -47,11 +47,16 @@ class SimClock:
         m = int(self._abs_min(sim_t) % MIN_PER_DAY)
         return f"{m // 60:02d}:{m % 60:02d}"
 
+    def minute_of_day(self, sim_t: float) -> float:
+        """Fractional minutes after midnight, 0 <= m < 1440 (e.g. 22:00:30 -> 1320.5); used by sim/night.py."""
+        return self._abs_min(sim_t) % MIN_PER_DAY
+
 
 if __name__ == "__main__":  # quick self-check: python sim/sim_clock.py
     c = SimClock("08:00", 0.0)
     assert (c.hhmm(0.0), c.day(0.0)) == ("08:00", 0)
     assert c.hhmm(59.9) == "08:00" and c.hhmm(60.0) == "08:01"
+    assert abs(c.minute_of_day(30.0) - 480.5) < 1e-9
     c.set("21:59", 100.0)
     assert c.hhmm(100.0) == "21:59" and c.hhmm(160.0) == "22:00"
     c.set("23:59", 200.0)
