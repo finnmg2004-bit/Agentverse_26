@@ -177,7 +177,7 @@ LANDMARKS: Dict[str, Vec2] = {
     "back_exit_outside":  EXITS["exit_back"]["outside"],   # smoke-alarm evacuation target
     "terrace_door":       (14.2, 2.6),
     "terrace_outside":    EXITS["exit_terrace"]["outside"],  # alternative evacuation target (kitchen exit)
-    "robot_dock":         (-1.4, -2.5),                    # = ROBOT_START_XY: charging dock in the entry hall, the robot starts on it (sim/charging_dock.py; upstream ROBOT_HOME_XY was (8.0, -2.7) in robot_home)
+    "robot_dock":         (-3.7, -3.3),                    # = ROBOT_START_XY: charging dock in the entry hall beside the front door (west of it, near the south wall; on the east side the door and the TV were both on the robot's left, so the TV sound check could not tell them apart), the robot starts on it (sim/charging_dock.py; upstream ROBOT_HOME_XY was (8.0, -2.7) in robot_home)
     "kettle":             (13.2, 4.2),                     # kitchen, in front of the stove (kettle on the hob)
     "stove":              (13.2, 4.2),                     # same spot: oven timer / cooking jobs
 }
@@ -186,7 +186,7 @@ SMOKE_EVACUATION_TARGET = "back_exit_outside"
 # --------------------------------------------------------------------------- #
 # Robot start pose (upstream START_POS_XY / START_YAW: entry hall, facing north)
 # --------------------------------------------------------------------------- #
-ROBOT_START_XY: Vec2 = (-1.4, -2.5)
+ROBOT_START_XY: Vec2 = (-3.7, -3.3)  # on the charging dock beside the front door (west side)
 ROBOT_START_YAW: float = math.pi / 2
 ROBOT_START_POSE: Vec3 = (ROBOT_START_XY[0], ROBOT_START_XY[1], ROBOT_START_YAW)
 ROBOT_START_ROOM = "entry"

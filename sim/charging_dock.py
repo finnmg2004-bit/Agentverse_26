@@ -1,7 +1,7 @@
 """
 Charging station in the ENTRY HALL: the robot starts the demo parked on it (team feedback, AGENTS.md 12.0 P10).
 
-`house_layout.LANDMARKS["robot_dock"]` = `ROBOT_START_XY` (-1.4, -2.5); the robot starts there facing north.
+`house_layout.LANDMARKS["robot_dock"]` = `ROBOT_START_XY` (-3.7, -3.3, beside the front door, west side); the robot starts there facing north.
 Added at load time with MjSpec (`sim.world.load_spec`, group 0), so the camera and the nav-map builder see it
 like the rest of the house. Never written into worlds/nerv-world/.
 
@@ -113,10 +113,11 @@ if __name__ == "__main__":  # python sim/charging_dock.py [out.png]
     model, data = build_nudge_model(verbose=False)
     if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "dock_plate") < 0:
         problems.append("dock_plate not in the model")
-    # Nothing of the dock may be an obstacle in the static nav map.
+    # Nothing of the dock may be an obstacle in the static nav map: check the pad footprint (0.76 x 1.10 m)
+    # plus ~0.1 m (a larger box would catch the south wall's margin now that the dock stands beside the door).
     nav = NavMap(build_occupancy(model, data))
-    for dx in np.arange(-0.6, 0.61, 0.1):
-        for dy in np.arange(-0.8, 0.81, 0.1):
+    for dx in np.arange(-0.5, 0.51, 0.1):
+        for dy in np.arange(-0.6, 0.61, 0.1):
             if nav.clearance(DOCK_X + dx, DOCK_Y + dy) < 0.3:
                 problems.append(f"nav map obstacle near the dock at ({DOCK_X + dx:.1f}, {DOCK_Y + dy:.1f})")
     # The LiDAR plane (0.32 m) must not hit any dock geom.
