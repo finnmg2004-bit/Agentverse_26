@@ -88,6 +88,8 @@ from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
 from sim.owner_behavior import OwnerBehavior
 from sim.sim_clock import SimClock
+from sim.night import NightScene  # agent F: night lighting (viewer / GUI view only)
+from sim.charging_dock import DockStatus  # agent F: charging-dock status light
 from sim.house_layout import CHAIR_EXIT_POS
 
 VIEW_NAMES = ["top", "follow", "dog"]
@@ -137,6 +139,9 @@ class NudgeSimulator:
 
         self.locomotion = Go2Locomotion(self.model, self.data, self.nav_map)
         self.sensors = SimSensors(self.model, self.data, enable_camera=enable_camera)
+        # Night (sim/night.py): dims the scene by the sim clock; the head camera keeps daylight (YOLO).
+        self.night = NightScene(self.model, self.sensors)
+        self.dock = DockStatus(self.model)  # sim/charging_dock.py: blue standby / green charging
 
         # The owner behaves like a person: wanders, reacts to nudges, taps the handle, may let go.
         from sim.nav_map import GridPlanner
@@ -477,6 +482,7 @@ class NudgeSimulator:
         cam.azimuth = (math.degrees(ryaw) + float(req.get("azimuth", 0.0))) if mode == "chase" \
             else float(req.get("azimuth", 90.0))
         cam.elevation = float(req.get("elevation", -62.0))
+        self.night.upload_to_renderer(r)  # night sky (sim/night.py), only when it changed
         r.update_scene(self.data, camera=cam, scene_option=self.view_opt)
         rgb = r.render()
         ok, jpg = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
@@ -672,6 +678,8 @@ class NudgeSimulator:
                 "sim_clock": self.clock.hhmm(float(self.data.time)),  # contract C2
                 "sim_day": self.clock.day(float(self.data.time)),
                 "objects_gt": self.objects_gt(),  # S7: COCO objects, judge only ([] without --coco-objects)
+                "night": round(self.night.shown, 2),  # 0 day .. 1 night (viewer lighting; head camera unchanged)
+                "on_dock": self.dock.charging,  # robot parked on the charging dock (robot_dock)
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -746,6 +754,8 @@ class NudgeSimulator:
         self.screen.update(self.model, float(self.data.time),
                            self.mission_sound or ALERT_MODE_SOUND.get(self.cmd_alert_mode),
                            self.mission_status)
+        self.night.update(self.clock, float(self.data.time))  # sim/night.py
+        self.dock.update(self.model, float(self.data.time), self.locomotion.get_pose()[:2])
         self.publish_telemetry(float(self.data.time))
         self.publish_view(float(self.data.time))
 
@@ -881,6 +891,7 @@ def main() -> None:
                             shown_overlay = overlay
                         with viewer.lock():  # floating "Nudge says" label above the robot
                             sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.nudge_says)
+                        sim.night.upload_to_viewer(viewer)  # night sky; outside the lock (sim/night.py)
                         viewer.sync()
                         last_sync = now_wall
                     if args.duration > 0.0 and (now_wall - start_wall) >= args.duration:
