@@ -1,11 +1,10 @@
-# Integration status (E0)
+# Overnight STATUS (integration)
 
-Tick 03:50. All 5 lane branches merged cleanly into overnight/integration (no conflicts).
+Tick 04:57 - merged sean, ricktho, eden-tasks, eden-gui (no conflicts; eden-mapping unchanged). Head fe4b7f6.
 
-Core suite (merged tree): doorbell PASS, smoke PASS, carpet_rule PASS, teach_bedtime PASS, cant_do_that PASS.
-Not run this tick: demo, smoke_blocked_exit, kettle, oven_timer, teach_kettle.
+Suite on merged head: doorbell, smoke, carpet_rule, demo, teach_bedtime - all PASS.
+(teach_bedtime: no carpet rule taught, so the 'stepped ON carpet' log lines are expected.)
 
-Needs from others / notes:
-- eden-tasks / sean: in teach_bedtime the robot steps ON living_room_carpet (twice, 4 s and 7.4 s) with no active sound. A taught task's path should respect avoid areas (only danger sounds may override). Test passes anyway because the judge only logs it.
-- ricktho: R2c (smoke masked by the kettle at the stove) still open per last report.
-- eden-gui: E2.5 test video B can now start (teach_bedtime passes on integration).
+Heartbeat note: E0 previous tick 03:50, this tick 04:50 (60 min gap = normal /loop 60m cadence); low-burn not set.
+
+Needs from others: see each lane's overnight/reports/<lane>.md.
