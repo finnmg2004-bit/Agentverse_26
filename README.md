@@ -50,9 +50,8 @@ The crib in `assets/props/crib/` is **"Baby bed with mattress guard" by aswwwcom
 - `knock.wav`: "Knocking on Wood or Door" by stephan (pdsounds.org), **public domain** (<https://commons.wikimedia.org/wiki/File:Knocking_on_wood_or_door.ogg>)
 - `smoke_alarm.wav`: "Smoke alarm" by cori (pdsounds.org), **public domain** (<https://commons.wikimedia.org/wiki/File:Smoke_alarm.ogg>)
 
-Test clips for sounds with no registry rule (`assets/audio/unknown/real_*.wav`, 16 kHz mono, trimmed; used to check that a real dog / baby doesn't fire a fake doorbell, see AGENTS.md 9.5b):
+Test clips for sounds with no registry rule (`assets/audio/unknown/real_*.wav`, 16 kHz mono, trimmed; used to check that a real dog / glass doesn't fire a fake doorbell, see AGENTS.md 9.5b):
 - `real_dog_bark.wav`: "Ladrido perro" by Edo.pt2, **CC0** (<https://commons.wikimedia.org/wiki/File:Ladrido_perro.ogg>), 0.95–3.70 s
-- `real_baby_cry.wav`: "Crying newborn baby" by the_yura, **CC0** (<https://commons.wikimedia.org/wiki/File:Crying_newborn_baby.ogg>), 12.9–16.9 s, mixed to mono
 - `real_glass_break.wav`: "Glass breaking" by Gravity Sound (<https://www.gravitysound.studio/>), **CC BY 4.0** (<https://commons.wikimedia.org/wiki/File:Glass_breaking_(Gravity_Sound).wav>), whole 1.5 s clip, mixed to mono, resampled to 16 kHz (no CC0 / public-domain glass recording exists on Commons)
 
 ## 2. Check the world (headless, no window)
