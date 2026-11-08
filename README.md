@@ -1,6 +1,6 @@
 # Nudge — a local-AI assistance dog for deaf, blind and deafblind people
 
-The correct video is attached below, this is incorrect on builder base.
+The correct video is attached below, this is incorrect on builder base. [watch on Google Drive](https://drive.google.com/file/d/12cjB34Vrt6-
 
 Agentverse 2026, Robotics Track. A Unitree Go2 in MuJoCo **hears the house for its owner** (doorbell, knock, kettle, oven timer, smoke alarm, and sounds it has no rule for), **finds them**, **nudges** them, tells them what happened (handle vibration code, light bar, on-robot screen, voice) and **leads them by the handle** to the door, the kitchen, or out of the house in a fire. Everything runs **locally** on a laptop: no cloud calls.
 
@@ -8,7 +8,7 @@ Agentverse 2026, Robotics Track. A Unitree Go2 in MuJoCo **hears the house for i
 
 For architecture, coordinates, ZMQ contracts and team rules, see **[AGENTS.md](AGENTS.md)**: read it before changing code. One-page technical summary: [`day/summary/Nudge_Technical_Summary.pdf`](day/summary/Nudge_Technical_Summary.pdf).
 
-**The correct Demo video (60 s) (The wrong video was submitted to Builder Base this is the correct video):** [watch on Google Drive](https://drive.google.com/file/d/12cjB34Vrt6-VDNwTnTcYrqYkDT8Pb3om/view?usp=sharing): one continuous take (the owner says "don't step on the new carpet", the doorbell rings, Nudge finds the owner, keeps off the carpet while guiding, then an unscripted smoke alarm pre-empts everything and it asks "Shall I call 999?"), followed by a TV doorbell told apart from the real door, glass breaking reasoned about by local Gemma, and a second home. Perception (head camera, hearing, map, event log) is on screen next to every action.
+**The correct Demo video (60 s) (The wrong video was submitted to Builder Base this is the correct video):** VDNwTnTcYrqYkDT8Pb3om/view?usp=sharing): one continuous take (the owner says "don't step on the new carpet", the doorbell rings, Nudge finds the owner, keeps off the carpet while guiding, then an unscripted smoke alarm pre-empts everything and it asks "Shall I call 999?"), followed by a TV doorbell told apart from the real door, glass breaking reasoned about by local Gemma, and a second home. Perception (head camera, hearing, map, event log) is on screen next to every action.
 
 The world is the **nerv-world house** ([Yanshi-Robotics/nerv-assets](https://github.com/Yanshi-Robotics/nerv-assets), MIT), included as a git submodule; Nudge uses its ground floor. A second home (an apartment from the same repo) is selectable with `--house apt` (experimental).
 
