@@ -284,6 +284,16 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_alert": ["1_pulse"],
         "forbid_sim": ["AVOID AREA: robot stepped ON"],
     },
+    "robot_map_tv": {
+        "desc": "Option A (NUDGE_ROBOT_MAP=1 --coco-objects, saved explored map with objects): 'take me to the "
+                "TV' resolves through the robot's own object memory -> owner guided to the TV",
+        "actions": [("cmd", 0.5, "Nudge, take me to the TV")],
+        "expect_complete": [],
+        "run_for": 90.0,
+        "expect_log": ["guide_owner_to(tv", "Owner delivered to tv"],
+        "expect_alert": [],
+        "experimental": True,
+    },
     "demo": {
         "desc": "AGENTS.md demo story: doorbell, owner moved, then smoke alarm pre-empts while guiding",
         "actions": [("at", 1.0, "B"), ("at", 3.0, "O"), ("on", "guide_owner_to(front_door)", 2.0, "M")],
@@ -678,9 +688,21 @@ def main() -> int:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--coco-objects", action="store_true",
                     help="experimental: sim with COCO-class stand-ins (bed, couch, tv) + state.objects_gt")
+    ap.add_argument("--port-base", type=int, default=5555,
+                    help="run on other ZMQ ports (sim state = base, cmd = +1, gui = +2, voice = +3), so a test "
+                         "can run next to another test / GUI on the default 5555-5558 (default: 5555 = unchanged)")
     args = ap.parse_args()
     if args.coco_objects:
         SIM_EXTRA_ARGS.append("--coco-objects")
+    if args.port_base != 5555:
+        global USER_COMMAND_PUB, SIM_STATE_SUB
+        pb = args.port_base
+        ep = [f"tcp://127.0.0.1:{pb + i}" for i in range(4)]
+        SIM_STATE_SUB, USER_COMMAND_PUB = ep[0], ep[2]
+        SIM_EXTRA_ARGS.extend(["--pub", ep[0], "--sub", ep[1], "--gui-sub", ep[2]])
+        os.environ["NUDGE_GUI_PUB"], os.environ["NUDGE_VOICE_PUB"] = ep[2], ep[3]   # read by rules.py at import
+        import bridge
+        bridge.BrainBridge.__init__.__defaults__ = (ep[0], ep[1])
     if args.list:
         for n, s in SCENARIOS.items():
             tag = " (experimental: run by name)" if s.get("experimental") else ""
