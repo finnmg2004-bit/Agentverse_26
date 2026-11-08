@@ -316,6 +316,16 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_alert": [],
         "experimental": True,
     },
+    "robot_map_sofa": {
+        "desc": "Option A (NUDGE_ROBOT_MAP=1 --coco-objects, maps/robot_map.npz with the sofa the robot found): "
+                "'take me to the sofa' -> owner guided to the sofa in the family room",
+        "actions": [("cmd", 0.5, "Nudge, take me to the sofa")],
+        "expect_complete": [],
+        "run_for": 110.0,
+        "expect_log": ["guide_owner_to(sofa", "Owner delivered to sofa"],
+        "expect_alert": [],
+        "experimental": True,
+    },
     "demo": {
         "desc": "AGENTS.md demo story: doorbell, owner moved, then smoke alarm pre-empts while guiding",
         "actions": [("at", 1.0, "B"), ("at", 3.0, "O"), ("on", "guide_owner_to(front_door)", 2.0, "M")],

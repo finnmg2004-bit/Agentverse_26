@@ -53,6 +53,17 @@ NEW_EMERGENCY_GAP_S = 30.0   # no choose() call for this long = a new emergency:
 HYSTERESIS = os.environ.get("NUDGE_EVAC_HYSTERESIS", "1") != "0"
 
 
+def exit_table() -> Tuple[Dict[str, str], Dict[str, dict]]:
+    """(exit -> outside target, exit -> {room, pos, outside, ...}) to choose from.
+    NUDGE_ROBOT_MAP=1 (Option A): the exits the robot found in its own explored map (robot_map_nav.SCAN_EXITS,
+    filled when the navigator loads the map). Flag off, or no exits found: house_layout's EXITS (unchanged)."""
+    if os.environ.get("NUDGE_ROBOT_MAP", "0") == "1":
+        from robot_map_nav import SCAN_EXITS
+        if SCAN_EXITS:
+            return {k: e["target"] for k, e in SCAN_EXITS.items()}, SCAN_EXITS
+    return EXIT_TARGETS, EXITS
+
+
 def hazard_doors(fire_room: Optional[str]) -> Set[str]:
     if not fire_room:
         return set()
@@ -151,8 +162,9 @@ class EvacuationPlanner:
         hazards = set() if owner_in_fire_room else hazard_doors(fire_room)
         scores: Dict[str, Optional[float]] = {}
         details: Dict[str, Dict[str, Any]] = {}  # per exit target: length / fire_dist, or why unusable
-        for exit_name, target in EXIT_TARGETS.items():
-            e = EXITS[exit_name]
+        exit_targets, exits = exit_table()
+        for exit_name, target in exit_targets.items():
+            e = exits[exit_name]
             scores[target] = None
             if exit_name in blocked:
                 details[target] = {"unavailable": "blocked (seen by LiDAR)"}

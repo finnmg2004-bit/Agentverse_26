@@ -597,11 +597,21 @@ NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorb
 4. **Exploration** (`explorer.py`, frontier-based, geofence = the ground-floor box only): **99.8 %** of the true floor known (561 s + a 166 s top-up for the back-door corner), wall precision **97.4 %**, recall **92.7 %**, stops by itself when coverage stops growing. Map = LiDAR log-odds + head-camera depth obstacles in the 0.10-0.55 m band (table tops). `ViewpointScan` then looks around from ~25 open-space viewpoints for objects.
 5. **Brain uses it** (`robot_map_nav.py`; small flagged hooks in `navigator.py` and `rules.py`): the navigator plans on the saved map + live changes (owner's recent spots ignored), rebuilt in place on a change (the evacuation planner shares it); unseen cells outside the ground-floor box count as garden, so exits stay reachable. "Take me to the TV / telly" resolves through object memory (`robot_map_target`); house_layout rooms/landmarks still work. Scenario results: see 10.8b.
 
-**Committed map:** `maps/robot_map.npz` (+ `.png`, 32 KB) = the explored house + the TV. `NUDGE_ROBOT_MAP=1` and the GUI tab use a PC's own `assets/maps/robot_map.npz` if present, else this one (`NUDGE_ROBOT_MAP_FILE` overrides) — no PC has to re-explore; regenerate with `--mode explore` any time.
+**Committed map:** `maps/robot_map.npz` (+ `.png`, ~32 KB) = the explored house + the **TV and the sofa** the robot found. `NUDGE_ROBOT_MAP=1` and the GUI tab use a PC's own `assets/maps/robot_map.npz` if present, else this one (`NUDGE_ROBOT_MAP_FILE` overrides) — no PC has to re-explore; regenerate with `--mode explore` (+ `--mode scan` + `--replay` for objects) any time.
 
-**Props (11:00):** `sim/coco_standins.py` (only with `--coco-objects`) now builds a shaped sofa, bed and fridge details. Offline head-camera renders: YOLOv8n recognises the fridge (0.47) and the guest room's own bed (0.56) from some angles, but a full viewpoint scan (24 viewpoints, 387 s) still confirmed only the TV; the sofa scores <= 0.20 (it sits in a corner behind the armchair; moving it touches the evacuation path = team call). Resolution (640x480) and a 0.8 m higher camera did not help.
+**Props + sofa (11:15):** `sim/coco_standins.py` (only with `--coco-objects`) builds a shaped bed, fridge details and a brown, lower **sofa, moved to the garden family room** (centre (-8.0, 13.0), facing south): in the living-room corner YOLO never saw it (max 0.11 over 9 robot-height views, behind the armchair), in the family room up to 0.76. One scan from the family room: the moved sofa first shows up as a *change*, then object memory confirms it **0.13 m** from the truth (object range raised 5.5 -> 6.5 m; re-scoring older recordings adds one "microwave" in the kitchen that the judge list doesn't have). Objects now: **TV + sofa = 2/5**, the bed/fridge/table are still not confirmed (bed 0.56 / fridge 0.47 only from rare angles). "Take me to the sofa" works (scenario `robot_map_sofa`). Resolution (640x480) and a 0.8 m higher camera did not help.
 
-**Not done / next:** objects beyond the TV (move the sofa into view / object-search viewpoints chosen per object); the brain does not yet run object detection live (it uses the saved objects); `robot_map.py` process + GUI panel not re-checked live in the GUI (panel shows the saved map + red "new" rings for `changes`); the default demo path is unchanged. Known quirk: before the owner is first seen, the owner standing where the saved map had floor shows up as a change (logged `ROBOT MAP: obstacles not in the saved map: (-10.6, 4.8)`); harmless (route goes around), filtered once the owner is seen.
+**Exits from the scan (`NUDGE_ROBOT_MAP=1` only):** `robot_map_nav.find_exits()` finds openings where known floor crosses the outer wall line (inside -> garden, >= 0.6 m wide): door point + target 1.5 m outside, named by side (`west_exit`, `south_exit`, `east_exit`, targets `<name>_outside`). `evacuation.exit_table()` (own function in Finn's file) gives these to the evacuation planner instead of house_layout's `EXITS` when the flag is on (flag off / nothing found: unchanged). Found on the committed map vs the real exits:
+
+| Found | Real exit | Door error | Target error | Width found / real |
+|---|---|---|---|---|
+| `south_exit` (-1.39, -4.5) | exit_front | 0.01 m | 0.01 m | 2.0 / 2.0 |
+| `west_exit` (-15.0, 3.54) | exit_back | 0.06 m | 0.12 m | 2.1 / 2.0 |
+| `east_exit` (15.0, 2.81) | exit_terrace | 0.21 m | 0.23 m | 2.6 / 2.2 |
+
+Kitchen fire: the kitchen (east) exit is excluded; guest room / dining -> south (front), living room -> west (back). Still from house_layout: each exit's *room* label (to know "is this exit in the fire's room?") and the fire room itself (installed alarm).
+
+**Not done / next:** bed / fridge / table as objects (need views from better angles or other props); the brain does not yet run object detection live (it uses the saved objects); `robot_map.py` process + GUI panel not re-checked live in the GUI (panel shows the saved map + red "new" rings for `changes`); the sofa approach point is the nearest free spot (may be behind it); the default demo path is unchanged. Known quirk: before the owner is first seen, the owner standing where the saved map had floor shows up as a change (logged `ROBOT MAP: obstacles not in the saved map: (-10.6, 4.8)`); harmless (route goes around), filtered once the owner is seen. **For a faster machine:** the flag-ON full suite + soak with the moved sofa and the scanned exits.
 
 #### 10.8b Scenario results (headless, one run each, 2026-11-08 ~10:30)
 | Scenario | `NUDGE_ROBOT_MAP=1 --coco-objects` | flag off (default) |
@@ -614,6 +624,8 @@ NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorb
 | chair | PASS 103.3 s (robot map saw the chair, re-planned) | PASS 64.2 s |
 | carpet_rule | PASS 101.2 s | PASS 73.2 s |
 | robot_map_tv ("take me to the TV") | PASS 90.1 s | n/a |
+| **after the sofa move + scanned exits (11:14-11:18):** smoke | PASS 45.2 s (owner out of the back door) | — |
+| robot_map_sofa ("take me to the sofa") | PASS 110 s (owner delivered to the sofa) | n/a |
 
 ## 11. Overnight run 2026-11-08, until 06:30 (agreed; Eden = merge captain)
 > **AI assistants: if a teammate asks you to pull and read the instructions before the overnight run,** run the setup for them. Don't just summarise it.
