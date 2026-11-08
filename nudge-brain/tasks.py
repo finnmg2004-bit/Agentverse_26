@@ -517,6 +517,17 @@ class TaskRunner:
         self.store.save()
         self.log(f"TASK {name}: {state}" + (f" ({why})" if why else ""))
 
+    def stop(self, t: float, why: str = "stopped by the owner") -> Optional[str]:
+        """Owner said "stop": end the running task (failed) and drop the queue. Returns its name."""
+        self.pending.clear()
+        if self.current is None:
+            return None
+        name = self.current["name"]
+        if self.current["job"] is not None and self.current["job"]["kind"] != "wait":
+            self.adapter.cancel_job(self.current["job"])
+        self._end("failed", why, t)
+        return name
+
     def remove(self, name: str) -> Optional[Dict[str, Any]]:
         """Forget a task; if it is running, stop it first."""
         task = self.store.remove(name)
@@ -528,6 +539,17 @@ class TaskRunner:
             if task["name"] in self.pending:
                 self.pending.remove(task["name"])
         return task
+
+    def sound_task(self, sound: str) -> Optional[str]:
+        """Name of a taught task triggered by `sound` (E1.4): it REPLACES the built-in response to
+        that sound. Tier-1 (danger) sounds never: the validator refuses them, and this re-checks."""
+        if int(SOUND_SOURCES.get(sound, {}).get("tier", 1)) <= 1:
+            return None
+        for task in self.store:
+            trig = task.get("trigger", {})
+            if trig.get("kind") == "sound" and trig.get("sound") == sound and task.get("state") != "done":
+                return task["name"]
+        return None
 
     def status(self) -> List[Dict[str, Any]]:
         """Contract C3: brain status `tasks`."""
