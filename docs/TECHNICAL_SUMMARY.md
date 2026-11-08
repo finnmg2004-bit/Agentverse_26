@@ -25,7 +25,7 @@ its screen, its voice) and leads them by the handle to the door, the kitchen, or
   (away from the fire, not blocked) and whether to call emergency services.
 - **The owner can teach it** by voice (local Whisper, wake word "Nudge") or text: "I've got a new carpet in
   the living room, please don't step on it" becomes a structured rule that the route planner enforces.
-  Rules can never downgrade a danger sound.
+  Rules can never downgrade a danger sound. **Teachable tasks (experimental):** one sentence such as "every night\n  at 10, take me to bed" becomes a small task program (trigger + steps built only from existing skills), shown\n  in the GUI task list; plain code validates and runs it, and tier-1 danger always pre-empts it.
 
 **Adapting to change (shown live).** Owner moved mid-search → re-search by probability; a chair blocks a
 doorway → LiDAR re-plan; a new carpet rule → route around it; smoke alarm during a doorbell task →
