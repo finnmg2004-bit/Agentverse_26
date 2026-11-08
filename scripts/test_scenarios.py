@@ -19,6 +19,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -41,6 +42,7 @@ sys.path.insert(0, str(ROOT / "nudge-brain"))
 #   ("clock", when, "HH:MM")   set the sim clock via the `gui` topic; when = seconds, or "task" = as soon
 #                              as the brain status lists a taught task (C3 `tasks`)
 #   ("gui", t, {payload})       send any `gui` topic payload at t seconds (e.g. owner_state)
+#   ("cmd_on", "log substring", delay_s, text)  owner types `text` once the brain log shows the substring
 #   ("on_task", delay_s, key)  press a key delay_s after the brain status first lists a taught task
 #   expect_task: {"kind": ...} brain status `tasks` must contain a task whose trigger.kind matches
 #   expect_owner_room: room    pass condition: the owner (state.owner_pos_gt) stays in this room >= 2 s
@@ -110,6 +112,37 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_sim": ["owner EVACUATED (OUTSIDE via"],
         "forbid_sim": ["FIRE PROXIMITY", "via exit_back", "via exit_terrace"],
         "min_timeout": 180.0,
+    },
+    # ---- Escalation (AGENTS.md 12: #13 999 call, #20 no response; contract C8). Finn's lane.
+    "smoke_999": {
+        "desc": "Smoke alarm -> owner takes the handle -> 'Shall I call 999?' -> owner types 'yes' -> "
+                "999 called (C8) while the evacuation carries on -> owner outside",
+        "actions": [("at", 1.0, "M"), ("cmd_on", "Shall I call 999", 1.5, "yes")],
+        "expect_complete": ["smoke_alarm"],
+        "expect_log": ["SAFETY PRE-EMPT", 'ASK ', "ESCALATION 999: calling", "answer yes"],
+        "expect_alert": ["continuous"],
+        "expect_says": ["call 999", "calling 999"],
+    },
+    "smoke_999_timeout": {
+        "desc": "Smoke alarm -> 'Shall I call 999?' -> nobody answers -> after 10 s 999 is called anyway",
+        "actions": [("at", 1.0, "M")],
+        "expect_complete": ["smoke_alarm"],
+        "run_for": 70.0,  # the 10 s timeout may end after the owner is already outside
+        "expect_log": ["SAFETY PRE-EMPT", 'ASK ', "ESCALATION 999: calling", "answer timeout"],
+        "expect_alert": ["continuous"],
+        "expect_says": ["call 999", "calling 999"],
+    },
+    "no_response": {
+        "desc": "Owner UNRESPONSIVE (GUI owner_state) -> doorbell -> 3 nudges without a handle tap -> "
+                "emergency contact alerted (C8) -> robot stays with the owner (no guiding)",
+        "actions": [("gui", 0.5, {"action": "owner_state", "state": "unresponsive"}), ("at", 2.0, "B")],
+        "expect_complete": [],
+        "run_for": 90.0,
+        "expect_log": ["No handle tap after nudge 3", "ESCALATION emergency_contact", "stay_with_owner"],
+        "expect_alert": ["1_pulse"],
+        "expect_says": ["emergency contact"],
+        "forbid_log": ["guide_owner_to("],
+        "min_timeout": 160.0,
     },
     # ---- Teach scenarios (overnight contracts C1/C2/C3). Experimental until E1's teachable tasks
     # (nudge-brain/tasks.py) are on integration; E0 runs them there by name.
@@ -249,7 +282,8 @@ class SimProcess:
             cmd.append("--headless")
         cmd += list(extra)
         self.proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, encoding="utf-8", errors="replace")
+                                     text=True, encoding="utf-8", errors="replace",
+                                     env=dict(os.environ, NUDGE_SOUND_OUT="0"))  # tests stay silent (#3)
         self.lines: List[str] = []
         threading.Thread(target=self._pump, daemon=True).start()
 
@@ -275,7 +309,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     print(f"\n=== {name}: {spec['desc']}  [noise={noise}]")
     # Owner commands go out where the Nudge Control GUI publishes them (AGENTS.md 9.4).
     cmd_pub = None
-    if any(a[0] in ("cmd", "clock", "gui") for a in spec["actions"]):
+    if any(a[0] in ("cmd", "cmd_on", "clock", "gui") for a in spec["actions"]):
         import zmq
         cmd_pub = zmq.Context.instance().socket(zmq.PUB)
         try:
@@ -373,6 +407,15 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
                         print(f"    t={el:5.1f}s  owner says <{a[2]}.wav> (voice.py -> Whisper -> user_command)")
                         pending.remove(a)
                     continue
+                if a[0] == "cmd_on":  # ("cmd_on", "brain log substring", delay_s, text): answer a question
+                    if any(a[1] in l for l in log):
+                        fired_on.setdefault(i, el)
+                        if el - fired_on[i] >= a[2]:
+                            cmd_pub.send_multipart([b"user_command", json.dumps(
+                                {"text": a[3], "source": "gui", "confidence": 1.0}).encode("utf-8")])
+                            print(f"    t={el:5.1f}s  user_command: {a[3]!r} (after '{a[1]}')")
+                            pending.remove(a)
+                    continue
                 if a[0] == "cmd":  # owner command (AGENTS.md 9.4 `user_command`), as if typed in the GUI
                     if el >= a[1]:
                         cmd_pub.send_multipart([b"user_command", json.dumps(
@@ -452,7 +495,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     for l in sim.lines:
         if "SCENARIO" in l or "HOTKEY" in l or "AVOID AREA" in l or "NUDGE SAYS" in l:
             print(f"    {l}")
-    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "voice", "clock", "gui")]
+    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "cmd_on", "voice", "clock", "gui")]
     for vp in voice_procs:  # what the voice process heard / published
         out = vp.communicate(timeout=30)[0] if vp.poll() is None else vp.stdout.read()
         for line in (out or "").splitlines():

@@ -65,6 +65,8 @@ The first start takes about 10 s because it builds the navigation map (`assets/m
 
 The viewer opens on a **cutaway** view of the west wing: upper storeys, roof and ceilings are hidden so you can watch the ground floor from above. The robot's own camera still sees the ceilings. To show the whole house, run `pixi run sim --no-cutaway`.
 
+Triggered sounds also **play on your speakers** (the same clips the robot's ears hear, looped until the event is resolved or `X` silences it), so the audience hears the doorbell, kettle or smoke alarm. `NUDGE_SOUND_OUT=0` mutes them, `NUDGE_SOUND_VOLUME=0.3` sets the volume (default 0.5); scenario tests are always silent.
+
 Press the hotkeys with the **MuJoCo window** focused (they also work in the dashboard window):
 
 | Key | Event |
@@ -133,6 +135,14 @@ planner.plan(H.ROBOT_START_XY, H.LANDMARKS["back_exit_outside"])   # [(x, y, doo
 
 ## Voice input
 `pixi run voice` (its own terminal) listens to the laptop microphone, turns speech into text locally with Whisper, and publishes sentences that start with the wake word, e.g. *"Nudge, take me to the kitchen"*, as `user_command` messages for the brain (ZMQ `tcp://127.0.0.1:5558`, see AGENTS.md 9.4 / 9.5b). "Nudge." on its own waits for the next sentence. No mic? `pixi run voice --text "Nudge, stop"` or `pixi run voice --file assets/audio/voice/come_here.wav`; `pixi run voice --selftest` checks the speech-to-text; **`pixi run voice --mic-test`** checks your real microphone before a demo (mute, clipping, noise floor, then say "Nudge, take me to the kitchen").
+
+## Hearing evaluation (many sounds)
+How to get the sounds and test that Nudge hears the right ones:
+
+1. `git pull`, then `pixi install`.
+2. `pixi run fetch-esc50`: downloads **ESC-50** (2,000 five-second clips of 50 everyday sounds: door knock, dog, vacuum cleaner, glass breaking, crying baby, clock alarm, footsteps, washing machine, ...; K. J. Piczak, https://github.com/karolpiczak/ESC-50, pinned commit, content-checked). ~650 MB download, ~850 MB on disk in `assets/datasets/ESC-50/` (**gitignored**). Licence **CC BY-NC 3.0**: non-commercial use only, **never commit it**. `NUDGE_DATASETS=<folder>` keeps one shared copy for several checkouts/worktrees.
+3. `pixi run hearing-eval`: plays random sounds (our registry sounds, synthesized and real, plus ESC-50 clips) through the robot's simulated ears (random room and distance, wall attenuation, one of the 5 background-noise profiles) into `hearing.process_audio` exactly like the brain, then scores (a) detection rate + time to alert per registry sound, (b) false alerts on everything else, (c) smoke-alarm misses, (d) YAMNet's top-1 accuracy on ESC-50. Defaults: 300 trials, seed 0 (`--n`, `--seed`); `--no-esc50` runs without the download (registry clips + background only). Writes `docs/hearing-eval.md` + `docs/img/hearing-eval.png` (chart for the pitch); per-trial CSV is gitignored.
+- The real household recordings the sim can play (`NUDGE_REAL_AUDIO=1`) are already in git under `assets/audio/real/` (Wikimedia Commons, public domain / CC0), so they need no download.
 
 ## Troubleshooting
 | Problem | Fix |

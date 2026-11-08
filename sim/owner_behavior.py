@@ -19,6 +19,8 @@ Owner state (overnight S4; `state.owner_state_gt`, judge only, the brain must ne
             or stronger (WAKE_ALERT_MODES) wakes them - speech alone doesn't; waking is slow
             (WAKE_REACTION_S), then they are awake and react like above.
   idle      awake but staying put (no wandering), e.g. to trigger a taught "idle" task.
+  unresponsive  doesn't react to anything (no tap, won't take the handle): tests the brain's
+            no-response escalation (#20). Added by Finn's lane; [R] / "awake" undo it.
   Set by the `gui` action {"action": "owner_state", "state": "asleep"} (sim/run_sim.py).
 
 Sensors exposed to the brain (published in `state`):
@@ -50,7 +52,7 @@ LET_GO_HOLD_S = (2.0, 3.5)         # stands still at least this long after letti
 LET_GO_COOLDOWN_S = 30.0
 REGRAB_REACH = 1.1                 # robot handle within this distance -> owner can regrab
 NUDGE_CONTACT = 0.60               # robot centre this close + alert on = nudge felt
-OWNER_STATES = ("awake", "asleep", "idle")
+OWNER_STATES = ("awake", "asleep", "idle", "unresponsive")
 WAKE_ALERT_MODES = ("1_pulse", "2_pulse", "continuous")  # what can wake a sleeping owner (vibration)
 WAKE_REACTION_S = (1.5, 3.0)       # asleep: nudge felt -> awake + handle tap
 
@@ -120,6 +122,7 @@ class OwnerBehavior:
         if state not in OWNER_STATES:
             return False
         self.owner_state = state
+        self.loco.owner_grip = state != "unresponsive"  # an unresponsive owner never takes the handle
         if state != "awake":
             self.state, self.path, self.target_yaw = "idle", [], None
         else:
@@ -169,6 +172,9 @@ class OwnerBehavior:
         rx, ry, ryaw = robot_pose
         ox, oy = self.loco.get_owner_pos()
         d_robot = math.hypot(rx - ox, ry - oy)
+        if self.owner_state == "unresponsive":  # #20 test hook: feels nothing, taps nothing, holds nothing
+            self.loco.owner_grip = False
+            return
 
         # ---- being guided (locomotion moves the owner while owner_grip is True)
         if self.loco.guiding_active or (cmd_guiding and self.state == "guided"):

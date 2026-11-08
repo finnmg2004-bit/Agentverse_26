@@ -10,8 +10,14 @@ Provides:
 
 from __future__ import annotations
 
+import atexit
 import math
 import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -265,6 +271,135 @@ def ensure_audio_assets() -> Dict[str, np.ndarray]:
     return clips
 
 
+# Room sounds on the laptop speakers (#3): when a sound is triggered (doorbell, kettle, smoke alarm, ...)
+# the people watching hear the same clip the robot's ears get. Only inside the sim process
+# (sim/run_sim.py, also via run_all / the GUI), never in offline sweeps that call the ear synthesis in a
+# loop; scripts/test_scenarios.py sets NUDGE_SOUND_OUT=0. NUDGE_SOUND_VOLUME = master volume (0..1).
+SOUND_OUT = os.environ.get("NUDGE_SOUND_OUT", "1").lower() not in ("0", "", "false", "off")
+SOUND_OUT_VOLUME = float(os.environ.get("NUDGE_SOUND_VOLUME", "0.5"))
+
+
+class SpeakerOut:
+    """Loops every active sound clip on the computer's speakers (mixed, constant volume).
+
+    Linux: one long-lived `pw-play` / `paplay` raw stream (PortAudio in the pixi env only sees raw
+    ALSA devices, often HDMI); elsewhere: sounddevice. Fails soft: no audio device -> one log line.
+    A sound that starts again plays its clip from the beginning; silence keeps the stream open,
+    so the next sound starts within ~0.2 s.
+    """
+
+    CHUNK = 800     # 50 ms at 16 kHz
+    LEAD_S = 0.15   # how far ahead of real time the pipe is kept filled (start/stop latency)
+
+    def __init__(self, clips: Dict[str, np.ndarray], enabled: Optional[bool] = None) -> None:
+        if enabled is None:
+            enabled = SOUND_OUT and Path(sys.argv[0]).name == "run_sim.py"
+        self.enabled = bool(enabled)
+        self.clips = {k: (0.9 * v / max(1e-6, float(np.abs(v).max()))).astype(np.float32) for k, v in clips.items()}
+        self.volume = max(0.0, min(1.0, SOUND_OUT_VOLUME))
+        self.active: Tuple[str, ...] = ()
+        self.cursors: Dict[str, int] = {}
+        self._lock = threading.Lock()
+        self._started = False
+        self._stop = False
+        self._proc: Optional[subprocess.Popen] = None
+        self._stream = None
+
+    def update(self, active: List[str]) -> None:
+        """Called with the currently active sounds (2 Hz from synthesize_stereo_audio)."""
+        if not self.enabled:
+            return
+        now = tuple(n for n in active if n in self.clips)
+        with self._lock:
+            for n in now:
+                if n not in self.active:
+                    self.cursors[n] = 0
+            self.active = now
+        if now and not self._started:
+            self._started = True
+            self._start()
+
+    def _mix(self, n: int) -> np.ndarray:
+        out = np.zeros(n, dtype=np.float32)
+        with self._lock:
+            for name in self.active:
+                clip = self.clips[name]
+                cur = self.cursors.get(name, 0)
+                out += clip[(np.arange(n) + cur) % len(clip)]
+                self.cursors[name] = (cur + n) % len(clip)
+        return np.clip(out * self.volume, -1.0, 1.0)
+
+    def _start(self) -> None:
+        if sys.platform.startswith("linux"):
+            for exe, args in (("pw-play", ["--raw", "--rate", str(SAMPLE_RATE), "--channels", "1", "--format", "s16", "-"]),
+                              ("paplay", ["--raw", f"--rate={SAMPLE_RATE}", "--channels=1", "--format=s16le"])):
+                if shutil.which(exe):
+                    try:
+                        self._proc = subprocess.Popen([exe, *args], stdin=subprocess.PIPE,
+                                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except OSError:
+                        continue
+                    threading.Thread(target=self._pipe_loop, name="speaker-out", daemon=True).start()
+                    atexit.register(self.close)
+                    print(f"[sensors] room sounds on the speakers via {exe} (NUDGE_SOUND_OUT=0 to mute)")
+                    return
+        try:
+            import sounddevice as sd  # type: ignore
+
+            def callback(outdata, frames, _time, _status):
+                outdata[:, 0] = self._mix(frames)
+
+            try:
+                self._stream = sd.OutputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32", callback=callback)
+            except Exception:  # noqa: BLE001  some devices (e.g. WASAPI shared) refuse 16 kHz: resample
+                dev_sr = int(sd.query_devices(kind="output")["default_samplerate"])
+
+                def callback(outdata, frames, _time, _status):  # noqa: F811
+                    n = max(1, int(round(frames * SAMPLE_RATE / dev_sr)))
+                    outdata[:, 0] = np.interp(np.linspace(0, n - 1, frames), np.arange(n), self._mix(n))
+
+                self._stream = sd.OutputStream(samplerate=dev_sr, channels=1, dtype="float32", callback=callback)
+            self._stream.start()
+            atexit.register(self.close)
+            print("[sensors] room sounds on the speakers via sounddevice (NUDGE_SOUND_OUT=0 to mute)")
+        except Exception as exc:  # noqa: BLE001
+            self.enabled = False
+            print(f"[sensors] room sounds not played on the speakers ({type(exc).__name__}: {exc})")
+
+    def _pipe_loop(self) -> None:
+        t0, written = time.monotonic(), 0
+        while not self._stop:
+            if written / SAMPLE_RATE - (time.monotonic() - t0) > self.LEAD_S:
+                time.sleep(0.01)
+                continue
+            pcm = (self._mix(self.CHUNK) * 32767.0).astype("<i2").tobytes()
+            try:
+                self._proc.stdin.write(pcm)
+                self._proc.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                print("[sensors] speaker stream closed; room sounds off")
+                self.enabled = False
+                return
+            written += self.CHUNK
+
+    def close(self) -> None:
+        self._stop = True
+        if self._proc is not None:
+            try:
+                self._proc.stdin.close()
+                self._proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+            self._proc = None
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._stream = None
+
+
 class SimSensors:
     """Computes LiDAR, Head RGB-D Camera, and Stereo Ear Audio in the simulator."""
 
@@ -276,6 +411,7 @@ class SimSensors:
         self.ear_gain: float = 1.0  # AGC gain carried across windows (EAR_AGC)
         self.rng = np.random.default_rng(123)
         self.noise = AmbientNoise(self.rng)  # background-noise test profile ([N] hotkey / --noise)
+        self.speaker = SpeakerOut(self.audio_clips)  # room sounds on the laptop speakers (#3)
 
         # LiDAR ray angles in body frame: [-90 deg, +90 deg]
         self.lidar_angles = np.linspace(
@@ -481,6 +617,7 @@ class SimSensors:
             right_ch += (gain_r * mono_r).astype(np.float32)
 
         self.audio_cursor = (self.audio_cursor + AUDIO_WINDOW_SAMPLES) % (SAMPLE_RATE * 2)
+        self.speaker.update(active_list)  # people in the room hear it too (no-op outside run_sim.py)
 
         stereo = np.stack([left_ch, right_ch], axis=-1)
         if EAR_AGC:
