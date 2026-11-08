@@ -79,8 +79,9 @@ def emergency_action(world, event: str = "new_sound") -> Dict[str, Any]:
         return {"tool": "guide_owner_to", "args": _evac_args(world)}
     if world.owner_recently_seen(2.0):
         return {"tool": "alert_owner", "args": {"sound": "smoke_alarm", "place": world.evac_target()}}
-    if event == "arrived_in_room":
+    if event == "arrived_in_room" and not world.belief.cleared(world.robot_room):
         return {"tool": "look_around", "args": {}}
+    # Room already ruled out by the camera on the way in (or not arrived): search the next one.
     return {"tool": "go_to_room", "args": {"room": world.best_search_room()}}
 
 
