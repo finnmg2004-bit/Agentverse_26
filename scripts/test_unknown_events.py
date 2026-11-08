@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "nudge-brain"))
 os.environ.setdefault("NUDGE_RUN_LOG", "0")
+os.environ["NUDGE_UNKNOWN_EVENTS"] = "1"  # the feature is off by default
 
 from hearing import StereoHearing  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
@@ -51,6 +52,9 @@ class StubAgent:
     def submit(self, event, world):
         self.submitted = event
 
+    def pending_info(self):
+        return None
+
 
 class StubExec:
     class _S:
@@ -61,8 +65,19 @@ class StubExec:
         self.last = action
 
 
+class _Nav:
+    def clear(self):
+        pass
+
+
+class _Alerts:
+    def clear(self):
+        pass
+
+
 class FakeBrain:
     def __init__(self):
+        self.nav, self.alerts, self.deferred = _Nav(), _Alerts(), set()
         self.world = WorldModel()
         self.agent = StubAgent()
         self.executor = StubExec()
@@ -169,8 +184,9 @@ def main() -> int:
     check(b.world.mission is not None and b.world.mission.get("task_kind") == "find_alert",
           "glass -> find-and-tell mission started")
     st, b = decide("glass breaking", mission="doorbell")
-    check(b.world.mission["sound"] == "doorbell" and "after the doorbell" in st["executed"],
-          f"glass during doorbell -> not hijacked ({st['executed']})")
+    check(b.world.mission.get("task_kind") == "find_alert" and "pre-empted the doorbell" in st["executed"]
+          and "doorbell" in b.deferred, f"glass during doorbell -> tier 1 pre-empts, doorbell resumes after "
+          f"({st['executed']})")
     st, b = decide("baby crying", mission="doorbell")
     check(b.world.mission["sound"] == "doorbell" and st["action"] == "log_only", "baby during doorbell -> logged")
     st, b = decide("baby crying")

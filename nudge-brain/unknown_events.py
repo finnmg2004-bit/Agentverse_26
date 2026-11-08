@@ -17,14 +17,19 @@ ignore it. This module:
   4. Plain-code safety stays in charge:
      - danger categories (glass, crash / explosion, fire, alarm-like, screaming) are ALWAYS alert_owner
        (menu = that one option, Gemma only writes the message; by = "safety");
-     - an unknown sound never interrupts a running mission (doorbell, request, fire ...): it is logged,
-       a danger one is also told to the owner on the screen and alerted once the mission is over;
+     - a non-danger unknown sound never interrupts a running mission (logged only, no Gemma call);
+       a danger one is tier 1: it pre-empts a doorbell / kettle / request mission (find the owner and tell
+       them; no evacuation, it's not a fire; a still-sounding registry sound restarts its mission after),
+       or is just told if Nudge is already with the owner; during a fire evacuation it is only logged;
+     - Gemma is never called while the main agent waits for its own decision (rules decide then);
      - registry sounds keep their own path (this module stays out when a registry score is >= 0.5);
      - speech (the owner talking) is never an unknown event.
 
 Brain status `unknown_event`: {"label", "category", "room", "action", "by": "llm"|"rules"|"safety",
 "reason", "say", "t", "classes"} or null. Every decision also goes into `agent.decisions` (event
-`unknown_sound`) so the control GUI's Agent reasoning tab shows it. NUDGE_UNKNOWN_EVENTS=0 = off.
+`unknown_sound`) so the control GUI's Agent reasoning tab shows it. Off by default: NUDGE_UNKNOWN_EVENTS=1 = on.
+Haptic for a danger alert = `continuous` (tier 1); the sim light bar maps `continuous` to the smoke-alarm
+look (no separate non-fire tier-1 look yet).
 """
 
 from __future__ import annotations
@@ -41,7 +46,7 @@ import numpy as np
 import safety
 from sim.house_layout import ROOMS, SOUND_SOURCES, get_room_at
 
-ENABLED = os.environ.get("NUDGE_UNKNOWN_EVENTS", "1") not in ("0", "", "off", "false")
+ENABLED = os.environ.get("NUDGE_UNKNOWN_EVENTS", "0") not in ("0", "", "off", "false")  # off by default
 DETECT_CONF = float(os.environ.get("NUDGE_UNKNOWN_CONF", "0.45"))
 DEBOUNCE_WINDOWS = 2       # hits within DEBOUNCE_SPAN windows (crying / barking has pauses)
 DEBOUNCE_SPAN = 3
@@ -52,6 +57,7 @@ REGISTRY_OWNS = 0.5        # a registry sound this loud: the normal sound path h
 # -> "Music"): skipped while any registry score is >= REGISTRY_QUIET or a registry sound is still latched.
 TAIL_LIKE = ("alarm", "music or TV")
 REGISTRY_QUIET = 0.2
+TAIL_HOLD_S = 10.0         # ...and for this long after any registry sound was last >= 0.35 (kettle = "Alarm" 0.85)
 DEFER_MAX_S = 90.0         # a danger sound heard during a mission is alerted after it, if this recent
 ACTIONS = ("investigate", "alert_owner", "ask_owner", "log_only")
 LETTERS = "ABCD"
@@ -93,6 +99,11 @@ has no fixed rule. Pick ONE safe action from the menu (answer with its letter), 
 where (<= 12 words, simple English, no question), e.g. "I heard glass breaking in the kitchen.". Benign everyday sounds (music, TV, pets) -> log only.
 Something that may need the owner (water left running, a baby crying) -> ask or alert the owner.
 Unclear where or what it is -> investigate (go and look with the camera)."""
+
+
+def _idle_skill():
+    from skills import Skill
+    return Skill()
 
 
 def category_of(cls: str) -> Optional[str]:
@@ -175,6 +186,7 @@ class UnknownEvents:
 
     def reset(self) -> None:
         self.streak: Dict[str, List[int]] = {}
+        self.last_registry_t = -1e9
         self.win = 0
         self.best: Dict[str, Tuple[str, float]] = {}
         self.last_fired: Dict[str, float] = {}
@@ -185,7 +197,7 @@ class UnknownEvents:
         self.loc.reset()
 
     # ------------------------------------------------------------------ detection
-    def candidates(self, res: Dict[str, Any], latched=()) -> Dict[str, Tuple[str, float]]:
+    def candidates(self, res: Dict[str, Any], latched=(), recent_registry: bool = False) -> Dict[str, Tuple[str, float]]:
         """category -> (best AudioSet class, score) in this window (unknown classes only)."""
         out: Dict[str, Tuple[str, float]] = {}
         if float(res.get("speech", 0.0)) >= 0.5:
@@ -193,7 +205,7 @@ class UnknownEvents:
         reg = max((float(v) for v in (res.get("scores") or {}).values()), default=0.0)
         if reg >= REGISTRY_OWNS:
             return out  # a registry sound is sounding: its own path decides
-        tail = reg >= REGISTRY_QUIET or any(s in SOUND_SOURCES for s in latched)
+        tail = reg >= REGISTRY_QUIET or recent_registry or any(s in SOUND_SOURCES for s in latched)
         for cls, sc in res.get("yamnet_topk") or ():
             cat = category_of(cls)
             if cat is None or float(sc) < max(DETECT_CONF, MIN_CONF.get(cat, 0.0)):
@@ -209,7 +221,10 @@ class UnknownEvents:
         if not self.enabled:
             return
         w = brain.world
-        cands = self.candidates(res, getattr(brain, "latched", ()))
+        if max((float(v) for v in (res.get("scores") or {}).values()), default=0.0) >= 0.35:
+            self.last_registry_t = w.t_sim
+        cands = self.candidates(res, getattr(brain, "latched", ()),
+                                recent_registry=w.t_sim - self.last_registry_t < TAIL_HOLD_S)
         self.win += 1
         for cat in list(self.streak):  # streak = window numbers with a hit, last DEBOUNCE_SPAN windows
             self.streak[cat] = [i for i in self.streak[cat] if self.win - i < DEBOUNCE_SPAN]
@@ -260,6 +275,9 @@ class UnknownEvents:
         self.pending = p
         if len(options) == 1 and not danger:
             p["result"] = {"error": "only option (busy: no unknown sound interrupts a mission)"}
+        elif self.agent.pending_info() is not None:
+            # never two Ollama calls at once: the main agent's decision must stay inside its watchdog
+            p["result"] = {"error": "main agent is deciding: rules decide this one"}
         elif self.agent.enabled and self.agent.llm_online and self.agent.model:
             prompt = self._prompt(p, w)
             threading.Thread(target=self._worker, args=(p, prompt), daemon=True).start()
@@ -364,11 +382,25 @@ class UnknownEvents:
         if w.is_emergency():
             return "logged (fire evacuation running)"
         if w.mission is not None:
-            if p["danger"]:
-                w.say(say, "unknown")  # screen / speech now; the mission itself is not hijacked
-                self.deferred = {"p": p, "say": say, "t": w.t_sim}
-                return f"told the owner, alert after the {w.mission['sound']} mission"
-            return f"logged (busy: {w.mission['sound']} mission)"
+            if not p["danger"]:
+                return f"logged (busy: {w.mission['sound']} mission)"
+            old = w.mission["sound"]
+            if w.guiding_active or w.dist_to_owner() < 1.6:
+                w.say(say, "unknown")  # already with the owner: tell them now, keep the mission going
+                return f"told the owner now (with them during the {old} mission)"
+            # tier 1 pre-empts a tier-2/3 / request mission (no evacuation: not a fire). A registry sound
+            # that is still sounding restarts its mission afterwards (main.py `deferred` machinery).
+            w.log(f"UNKNOWN DANGER PRE-EMPTS the {old} mission: {p['cat']}")
+            brain.agent.cancel()
+            brain.nav.clear()
+            brain.executor.skill = _idle_skill()
+            brain.alerts.clear()
+            w.mission = None
+            w.phase = "idle"
+            if old in SOUND_SOURCES and hasattr(brain, "deferred"):
+                brain.deferred.add(old)
+            self._alert_mission(p, say, brain)
+            return f"pre-empted the {old} mission: find owner + tell them"
         if action == "log_only":
             return "logged"
         if action == "alert_owner":

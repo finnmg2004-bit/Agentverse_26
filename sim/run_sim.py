@@ -819,8 +819,8 @@ class NudgeSimulator:
                 "objects_gt": self.objects_gt(),  # S7: COCO objects, judge only ([] without --coco-objects)
                 "night": round(self.night.shown, 2),  # 0 day .. 1 night (viewer lighting; head camera unchanged)
                 "on_dock": self.dock.charging,  # robot parked on the charging dock (robot_dock)
-                "tv_playing_gt": self.tv_playing,
-                "played_gt": self.clips.names(),  # P4 clips playing (judge only)  # sound the TV is playing (or None) - judge only
+                "tv_playing_gt": self.tv_playing,  # sound the TV is playing (or None) - judge only
+                "played_gt": self.clips.names(),  # P4 clips playing (judge only)
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
