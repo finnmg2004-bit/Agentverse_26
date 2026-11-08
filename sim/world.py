@@ -239,6 +239,10 @@ def _xyaxes_quat(xaxis, yaxis) -> list:
 
 OWNER_MESH_DIR = Path(__file__).resolve().parent.parent / "assets" / "models" / "owner"
 OWNER_DEFAULT_PACK = "rp_posed_00178_29_OBJ"  # same default as scripts/prepare_owner.py
+# In git, so every PC has a realistic owner without any download (assets/owner_default/README.md): "Busy man"
+# (Ricktho, CC0, MakeHuman; YOLO 98 %) by default, "FemaleVisitor" (Open Robotics, CC BY 4.0) as NUDGE_OWNER=visitor.
+# Used when no Renderpeople owner is installed on the PC, or picked by name (busy / visitor).
+OWNER_OPEN_DIR = Path(__file__).resolve().parent.parent / "assets" / "owner_default"
 
 
 def _owner_tools():
@@ -252,15 +256,21 @@ def _owner_tools():
 
 
 def available_owners() -> list:
-    """Owner names for --owner: downloaded packs (converted on first use) + already converted owners."""
+    """Owner names for --owner: the owners in git (busy, visitor) + downloaded packs (converted on first
+    use) + already converted owners."""
+    names = set()
+    if (OWNER_OPEN_DIR / "owner.obj").exists():
+        names.add("busy")
+    if (OWNER_OPEN_DIR / "visitor" / "owner.obj").exists():
+        names.add("visitor")
     try:
         P = _owner_tools()
-        names = set(P.find_packs())
+        names |= set(P.find_packs())
         if P.OWNERS_DIR.is_dir():
             names |= {d.name for d in P.OWNERS_DIR.iterdir() if (d / "owner.obj").exists()}
-        return sorted(names)
     except Exception:  # noqa: BLE001 - listing is informational only
-        return []
+        pass
+    return sorted(names)
 
 
 def _chosen_owner_dir(default: Path) -> Path:
@@ -274,6 +284,10 @@ def _chosen_owner_dir(default: Path) -> Path:
     name = os.environ.get("NUDGE_OWNER", "").strip()
     if not name or name.lower() == "default":
         return default
+    if name.lower() in ("busy", "busy_man", "open"):  # the CC0 owner in git
+        return OWNER_OPEN_DIR
+    if name.lower() in ("visitor", "femalevisitor"):  # the CC BY owner in git
+        return OWNER_OPEN_DIR / "visitor"
     try:
         P = _owner_tools()
         out = P.OWNERS_DIR / name
@@ -332,8 +346,10 @@ def _add_scanned_owner(spec: mujoco.MjSpec, owner) -> bool:
     """
     _ensure_scanned_owner()
     obj, png = OWNER_MESH_DIR / "owner.obj", OWNER_MESH_DIR / "owner.png"
-    if not (obj.exists() and png.exists()):
-        return False
+    if not (obj.exists() and png.exists()):  # no Renderpeople scan on this PC: the open owner from git
+        obj, png = OWNER_OPEN_DIR / "owner.obj", OWNER_OPEN_DIR / "owner.png"
+        if not (obj.exists() and png.exists()):
+            return False
     spec.add_texture(name="owner_tex", type=mujoco.mjtTexture.mjTEXTURE_2D, file=png.as_posix())
     mat = spec.add_material(name="owner_mat", specular=0.1, shininess=0.1)
     mat.textures[int(mujoco.mjtTextureRole.mjTEXROLE_RGB)] = "owner_tex"

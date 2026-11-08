@@ -41,6 +41,8 @@ FADE_MIN = 0.15            # clock minutes = 9 s of sim time (the clock runs 1:1
 SMOOTH_TAU_S = 1.2         # extra smoothing for clock jumps (sim seconds)
 
 LAMP_PREFIX = "night_lamp_"
+# Upstream daylight lights dimmed at night (name prefixes in worlds/nerv-world/build/house-go2.xml).
+DAYLIGHT_LIGHTS = ("h2_sun", "h2_fill_")
 # Rooms that get a warm ceiling lamp at night (room centre, house_layout.ROOMS[...]["center"]).
 LAMP_ROOMS = ("living_room", "entry", "guest", "dining", "kitchen")
 LAMP_Z = H.WALL_HEIGHT - 0.25
@@ -96,9 +98,10 @@ class NightScene:
         self.camera_sees_night = os.environ.get("NUDGE_NIGHT_CAMERA", "0") == "1"
         names = [model.light(i).name for i in range(model.nlight)]
         self.lamps = np.array([i for i, n in enumerate(names) if n.startswith(LAMP_PREFIX)], int)
-        # House lights = lights on the world body that aren't our lamps (robot-mounted lights excluded).
+        # Daylight rig = only the upstream house's sun + ceiling fills (DAYLIGHT_LIGHTS, explicit list), so
+        # any other light someone adds later (a TV glow, robot lights, ...) is left alone at night.
         self.house = np.array([i for i, n in enumerate(names)
-                               if model.light_bodyid[i] == 0 and not n.startswith(LAMP_PREFIX)], int)
+                               if model.light_bodyid[i] == 0 and n.startswith(DAYLIGHT_LIGHTS)], int)
         dirl = (model.light_type[self.house] == int(mujoco.mjtLightType.mjLIGHT_DIRECTIONAL)) \
             if len(self.house) else np.zeros(0, bool)
         self.sun = self.house[dirl]
@@ -122,6 +125,7 @@ class NightScene:
         self.sky_level = 0.0
         self.sky_version = 0
         self._uploaded = {}       # id(renderer) / "viewer" -> sky_version uploaded there
+        self._upload_error_logged = False
         if sensors is not None and hasattr(sensors, "render_head_camera"):
             self.protect_head_camera(sensors)
 
@@ -130,7 +134,7 @@ class NightScene:
         """Call every sim step. `clock` is the sim's SimClock. Returns the darkness level 0..1."""
         if not self.enabled:
             return 0.0
-        target = darkness_at(clock._abs_min(sim_t) % 1440.0)
+        target = darkness_at(clock.minute_of_day(sim_t))
         first = self.last_t is None
         dt = 0.0 if first else max(0.0, sim_t - self.last_t)
         self.last_t = sim_t
@@ -202,21 +206,24 @@ class NightScene:
             for i, *_ in self.sky:
                 mujoco.mjr_uploadTexture(self.model, renderer._mjr_context, i)
             self._uploaded[id(renderer)] = self.sky_version
-        except Exception as exc:  # never break rendering over the sky
-            self.sky = []
-            print(f"[night] skybox upload failed ({exc}); the sky stays as it is")
+        except Exception as exc:  # never break rendering over the sky; not marked uploaded -> retried next frame
+            if not self._upload_error_logged:
+                self._upload_error_logged = True
+                print(f"[night] skybox upload failed ({exc}); retrying on the next frames")
 
     def upload_to_viewer(self, viewer) -> None:
         """Push the current skybox to the passive MuJoCo viewer. Call OUTSIDE viewer.lock() (it waits for the
         viewer's render thread)."""
         if not self.sky or self._uploaded.get("viewer", 0) == self.sky_version:
             return
-        self._uploaded["viewer"] = self.sky_version
         try:
             for i, *_ in self.sky:
                 viewer.update_texture(i)
-        except Exception as exc:
-            print(f"[night] viewer skybox update failed ({exc})")
+            self._uploaded["viewer"] = self.sky_version
+        except Exception as exc:  # not marked uploaded -> retried on the next viewer sync
+            if not self._upload_error_logged:
+                self._upload_error_logged = True
+                print(f"[night] viewer skybox update failed ({exc}); retrying on the next frames")
 
     def protect_head_camera(self, sensors) -> None:
         """Wrap sensors.render_head_camera so the robot's camera always sees daylight (YOLO unchanged)."""

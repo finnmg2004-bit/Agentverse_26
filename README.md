@@ -23,15 +23,17 @@ If you already cloned without submodules, run `pixi run fetch-world`. It downloa
 
 Optional, for the real local models: `pixi run fetch-models` downloads YOLOv8n, YAMNet and Whisper base.en (speech-to-text) into `assets/models/` and pulls Gemma via Ollama (install [Ollama](https://ollama.com) first). Without them the brain falls back to its built-in colour detector, spectral sound rules and deterministic rules.
 
-Optional, for the realistic owner: download the scanned human into `assets/models/` (see [Owner model](#owner-model-third-party-asset-not-in-git) below); the sim converts it automatically.
+The owner (a realistic person) **comes with the repo**: no download needed (see [Owner model](#owner-model) below).
 
-### Owner model (third-party asset, not in git)
-The owner is a free scanned human from **Renderpeople** (<https://renderpeople.com/free-3d-people/>), © Renderpeople: by default **`rp_posed_00178_29`** (the earlier **"Mei Posed 001"**, `rp_mei_posed_001_OBJ`, works too). Their terms apply to free models too and do not allow sharing the files as downloadable 3D data (GTC §4.2b/§4.3b), so this public repo does not include them. To use it:
+### Owner model
+**Default, in git (everyone has it):** "Busy man" by Ricktho (Nudge team), **CC0**, made with MakeHuman (CC0 assets); YOLOv8n detects it in 98 % of head-camera views. Alternative: `NUDGE_OWNER=visitor` = "FemaleVisitor" by Wan Yi Seow, Open Robotics, **CC BY 4.0** (Gazebo Fuel). Files, credits and numbers: [`assets/owner_default/README.md`](assets/owner_default/README.md); regenerate with `scripts/prepare_default_owner.py`.
+
+**Optional, not in git: a Renderpeople scan** takes priority on a PC that has one. The owner is then a free scanned human from **Renderpeople** (<https://renderpeople.com/free-3d-people/>), © Renderpeople: by default **`rp_posed_00178_29`** (the earlier **"Mei Posed 001"**, `rp_mei_posed_001_OBJ`, works too). Their terms apply to free models too and do not allow sharing the files as downloadable 3D data (GTC §4.2b/§4.3b), so this public repo does not include them. To use it:
 1. Download a free posed model (OBJ version) from the link above.
 2. Unzip it into `assets/models/` so you have e.g. `assets/models/rp_posed_00178_29_OBJ/` with the `.obj` and a `tex/` folder (the whole `assets/models/` folder is gitignored).
 3. That's it: **`pixi run sim` converts it automatically** on its first start (a few seconds; again only when the pack changes), and every later run loads it. To convert by hand: `pixi run prepare-owner` (another folder: `pixi run prepare-owner --src assets/models/<folder>`; with several `rp_*_OBJ` folders the sim picks `rp_posed_00178_29_OBJ`, else the newest). `NUDGE_AUTO_OWNER=0` turns the automatic conversion off. The conversion turns the mesh and the colour texture into `assets/models/owner/` (`owner.obj` + `owner.png`, metres, Z-up, feet on the floor) for MuJoCo. Both texture namings are found: older packs ship `*_dif_2k.jpg`, newer ones `tex/*_basecolor.jpg` (4k, shrunk to 2048×2048).
 
-Without it the sim falls back to the primitive owner, which YOLO does not recognise as a person (the brain's colour fallback still finds it).
+Without a Renderpeople scan the sim uses the default owner from git above (before 2026-11-08: the primitive owner, which YOLO did not recognise as a person).
 
 ### Robot voice (credit)
 Nudge speaks with local [Piper](https://github.com/OHF-Voice/piper1-gpl) text-to-speech (`piper-tts`, GPL-3.0; installed as a dependency, not included in this repo) through `speech/tts.py`. Voice: **en_US-ljspeech-medium** from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) (MIT), trained from scratch on the [LJ Speech dataset](https://keithito.com/LJ-Speech-Dataset/) (public domain). `pixi run fetch-models` downloads it; test with `pixi run python speech/tts.py "Take my handle."`.

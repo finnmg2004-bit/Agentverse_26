@@ -3,6 +3,40 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Eden: TODO.md ticks (Sean, 11:50)
+- **P9 Speak only when near the owner: done** (`4e27195`; doorbell, smoke, profile_blind PASS + in-process check).
+- "→ Sean (covering Finn) Review that guard ... [E] + smoke": done overnight (`smoke_blocked_exit`, default suite, PASS).
+- "→ Sean (from Teo) RTX 5060 llm-eval --gate": done (golden 14/15, p50 0.19 s).
+- P7 benchmark: running (first 5 runs 4/5), report `docs/adaptability-benchmark.md` by ~12:40.
+
+
+## Agents G (`day/tv-investigate`, P6) + J (`day/unknown-events`, P4): Sean's files - both approve with small fixes
+Merge: clean everywhere (main+G, main+J, main+G+J, and with `day/night-dock`). Neither bypasses Sean's P9 or the
+profile gate: "That was the TV" and the unknown-sound lines go out as brain status `say`, so the sim holds them
+when the owner is > 3.5 m away and says them on arrival. Thread safety OK (all inside `step_once`).
+
+**G - fix 1 is required before merging:**
+1. `day/reports/agent-g.md:55` still says `RESULTS_PLACEHOLDER`. The TV model is **always loaded**, so it changes the
+   house for every scenario: please run the default suite + `tv_doorbell tv_then_doorbell tv_investigate` + `check-world`
+   and one run where the robot finds the owner in the family room from the living room (the TV hangs in that archway at
+   0.88-1.73 m and can partly hide the owner's torso). Physics / LiDAR / nav map are unaffected (contype 0, lowest part
+   0.875 m).
+2. `sim/run_sim.py:180` + `757-761`: `beacon_tv` is gone, so `tv_beacon_id` is always -1; remove the dead block.
+3. Optional: `run_sim.py:754-756` writes the TV material every physics step; only on change would do.
+4. `NUDGE_TV_INVESTIGATE` is **on by default** and `tv_investigate` is in the default suite (+20 s): Finn's call; else
+   mark the scenario experimental.
+
+**J - fix 1 needed, its scenarios can't pass as written:**
+1. The feature is off by default (`NUDGE_UNKNOWN_EVENTS=0`, read once at import, `unknown_events.py:49`), and nothing
+   turns it on for the scenarios (the brain runs in the test process), so `unknown_glass` / `unknown_baby` always FAIL
+   and `unknown_during_doorbell` passes without testing anything. Fix: add `"unknown_events": True` to the three
+   specs (`test_scenarios.py:403/416/428`) and after `brain = brain_main.Brain(...)` (`:512`):
+   `if spec.get("unknown_events"): brain.unknown.enabled = True`.
+2. `sim/clip_player.py:51`: clamp `repeat` (e.g. `min(10, max(1, int(...)))`); `np.tile` grows without a limit.
+3. No `day/reports/agent-j.md` yet: please add the offline test + `unknown_glass` and `unknown_during_doorbell` with the
+   feature on, and the default suite showing no change.
+
+
 ## Eden: Sean's lines for the technical summary + pitch
 **Sean (simulation, robot outputs, tests):** Built the MuJoCo test bench: the scenario harness with a sim judge
 (40+ end-to-end scenarios, incl. the overnight soak 22/22), the sim clock, owner states (awake / asleep /

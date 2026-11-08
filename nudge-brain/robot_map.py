@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -45,6 +46,11 @@ for _p in (str(_ROOT), str(_ROOT / "nudge-brain")):
 RES = 0.05
 ORIGIN = (-17.0, -7.0)          # covers the house footprint plus the outside exits
 SIZE_M = (34.0, 26.0)
+if os.environ.get("NUDGE_HOUSE", "").strip().lower() not in ("", "house"):   # other house (--house apt):
+    from sim import house_layout as _H                                       # grid follows its footprint
+    _b = _H.HOUSE_BOUNDS
+    ORIGIN = (_b["x_min"] - 2.0, _b["y_min"] - 2.5)
+    SIZE_M = (_b["x_max"] - _b["x_min"] + 4.0, _b["y_max"] - _b["y_min"] + 4.0)
 MAX_RANGE = 4.0
 FOV = np.pi                      # [-90, +90] deg, matches sim/sensors.py
 L_OCC, L_FREE, L_MIN, L_MAX = 0.85, -0.4, -4.0, 4.0

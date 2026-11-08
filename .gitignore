@@ -46,6 +46,7 @@ assets/eval/
 assets/*
 !assets/audio/
 !assets/lightbar/
+!assets/owner_default/
 
 # Brain decision logs (nudge-brain/run_log.py), one file per run/episode
 runs/
