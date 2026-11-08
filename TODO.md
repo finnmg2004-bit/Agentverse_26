@@ -7,6 +7,8 @@ Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00
 - [ ] **Eden:** #9 GUI mic button · merge + suites at 10:45 / 11:45 · demo, summary, pitch, submit
 - [ ] **Finn:** #13 999 call (ask first) · #20 no response → emergency contact · then #19 getting stuck, #11 search/paths
 - [ ] **Teo (his PC, merges his own branches before 11:45):** #16/#6 Gemma visual `owner_check` · agent A Option A own map (#7, #17, #18) + pitch clip · agent C fine-tune/evals · sound-eval chart
+  - [x] Teo: `owner_check` (C7) merged (`NUDGE_OWNER_CHECK=1`, default off), `scripts/test_owner_check.py` 9/10 · **For Finn:** review the flagged hooks in `main.py` + `agent._situation` (AGENTS.md 12.4 C7); YOLO misses a lying owner, Gemma doesn't
+  - [x] Teo: hearing evaluation merged (`pixi run fetch-esc50`, `pixi run hearing-eval`; numbers in AGENTS.md 2.1, chart `docs/img/hearing-eval.png`)
 - [ ] **Sean:** #4 visible nudge · #12 speech on by default · #19 repro scenarios · review agents E + F
 - [ ] **Ricktho:** #3 audible sounds · YOLO check of the scanned owner · review agents B + D · then #8 owner in bed / on the sofa
 - [ ] **Agent B** (Eden's laptop) `day/sound-real`: TV doorbell vs real door, scenario `tv_doorbell`
