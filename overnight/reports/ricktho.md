@@ -25,7 +25,7 @@
     | smoke + doorbell | 260 | 238 | **15** |
 
     0 / 15120 false windows (real + synthesized negatives). Scenarios with `NUDGE_REAL_AUDIO=1`: smoke, doorbell, kettle PASS.
-- Behind a flag / experimental: `NUDGE_EVAC_HYSTERESIS=0` turns R1 off, `NUDGE_EAR_AGC=0` turns the R2c AGC off (both default on).
+- Behind a flag / experimental: `NUDGE_EVAC_HYSTERESIS=0` turns R1 off, `NUDGE_EAR_AGC=0` turns the R2c AGC off (both default on). `NUDGE_SMOKE_TONAL` (the R5 real-alarm rule) defaults to the value of `NUDGE_REAL_AUDIO`, so it is off for the synthesized demo. **Team decision (safety):** keep it opt-in, or turn it on always (with the rule forced on, the synthesized clips gave no false positives either).
 - Not done: **R5 is not finished: real recordings are still poor.** Smoke is now fine with `NUDGE_REAL_AUDIO=1` (slice 2). The real doorbell fires false oven-timer starts. Knock is only heard in a quiet room. The demo must stay on synthesized clips. R6 is not done either. The brain side of C5 (publish `ask`, consume `user_answer`) isn't built by anyone yet.
 - Merge risks (files, contract assumptions): voice `text` is now time-normalised (an additive change in form; `raw` is unchanged). `sim/sensors.py` (+20 lines in `synthesize_stereo_audio`, audio only). `sim/house_layout.py` knock entry gained `event_stop_windows` (data only). `choose()` gained an optional `now=` kwarg and returns an extra `hysteresis` field. Callers are unchanged.
 - How to see it working: the EVAC decision dict has `hysteresis` = "kept (... only 1.0 m better)" / "switched (...)".
