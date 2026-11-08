@@ -89,6 +89,7 @@ from sim.world import build_nudge_model
 from sim.owner_behavior import OwnerBehavior
 from sim.sim_clock import SimClock
 from sim.house_layout import CHAIR_EXIT_POS
+from sim.house_layout import OWNER_VOICE
 
 VIEW_NAMES = ["top", "follow", "dog"]
 
@@ -120,8 +121,10 @@ class NudgeSimulator:
         owner_seed=None,
         clock: str = "08:00",
         coco_objects: bool = False,
+        voice_endpoint: str = "tcp://127.0.0.1:5558",
     ) -> None:
         self.cutaway = cutaway
+        self.voice_until: float = -1.0  # sim time until which the owner is talking (owner voice in the ears)
         if coco_objects:  # S7 (experimental): COCO-class stand-ins + state.objects_gt
             from sim.coco_standins import build_model_with_objects
             self.model, self.data = build_model_with_objects(verbose=True, cutaway=cutaway)
@@ -190,6 +193,11 @@ class NudgeSimulator:
         # "move owner to room", and 3D-view camera requests. Connecting before it exists is fine.
         self.sub_sock.connect(gui_endpoint)
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "gui")
+        # The owner talking to Nudge (`user_command` from the GUI box / tests on :5557 and the voice mic
+        # on :5558): the sim plays the owner's voice from where they stand, so the robot can hear WHERE
+        # they are. Only the sound reaches the brain through the ears; the text goes to the brain directly.
+        self.sub_sock.connect(voice_endpoint)
+        self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "user_command")
 
         # Publication timers
         self.last_state_pub: float = 0.0
@@ -487,9 +495,23 @@ class NudgeSimulator:
                     "mission_text": self.mission_text}
             self.pub_sock.send_multipart([b"view", json.dumps(meta).encode("utf-8"), jpg.tobytes()])
 
+    def owner_speaks(self, payload: dict) -> None:
+        """The owner says something to Nudge: their voice plays from the owner's position for a while
+        (proportional to the sentence length). `"spoken": false` = typed silently, no sound."""
+        text = str(payload.get("text", "")).strip()
+        if not text or payload.get("spoken") is False:
+            return
+        words = len(text.split())
+        dur = min(float(OWNER_VOICE["max_s"]),
+                  max(float(OWNER_VOICE["min_s"]), words / float(OWNER_VOICE["words_per_s"])))
+        self.voice_until = float(self.data.time) + dur
+        ox, oy = self.locomotion.get_owner_pos()
+        print(f"[sim] OWNER SPEAKS for {dur:.1f}s from {get_room_at(ox, oy)} ({ox:.1f}, {oy:.1f}): {text!r}")
+
     def reset_scene(self) -> None:
         """Put robot, owner, chair and sounds back to the demo start state; start a new episode."""
         self.episode += 1
+        self.voice_until = -1.0
         for s in list(self.active_sounds):
             self._stop_sound(s)
         self.owner_room_idx = 0
@@ -625,6 +647,8 @@ class NudgeSimulator:
                 self.handle_gui(payload)
             elif topic == "brain":
                 self.handle_brain_status(payload)
+            elif topic == "user_command":
+                self.owner_speaks(payload)
 
         # Safety timeout if brain disconnects for > 0.6s
         if time.monotonic() - self.last_cmd_time > 0.6:
@@ -702,8 +726,9 @@ class NudgeSimulator:
         # 3. `audio` @ 2 Hz (every 0.50s)
         if now - self.last_audio_pub >= 0.50:
             self.last_audio_pub = now
+            talking = float(self.data.time) < self.voice_until
             pcm_bytes, audio_meta = self.sensors.synthesize_stereo_audio(
-                pose, self.active_sounds
+                pose, self.active_sounds, voice_pos=tuple(owner_pos[:2]) if talking else None
             )
             audio_meta["t"] = round(float(self.data.time), 3)
             audio_meta["robot_pose"] = [round(rx, 4), round(ry, 4), round(ryaw, 4)]
@@ -800,6 +825,8 @@ def main() -> None:
                         help="No MuJoCo window, but keep the real head camera and 3D-view rendering "
                              "(use with the control GUI: `pixi run gui`)")
     parser.add_argument("--gui-sub", default="tcp://127.0.0.1:5557", help="Control GUI command address")
+    parser.add_argument("--voice-sub", default="tcp://127.0.0.1:5558",
+                        help="Voice input address (owner's user_command -> their voice plays from the owner)")
     parser.add_argument("--noise", choices=NOISE_NAMES, default="quiet",
                         help="Background noise profile at start (cycle live with [N])")
     parser.add_argument("--coco-objects", action="store_true",
@@ -821,6 +848,7 @@ def main() -> None:
         owner_seed=args.owner_seed,
         clock=args.clock,
         coco_objects=args.coco_objects,
+        voice_endpoint=args.voice_sub,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
