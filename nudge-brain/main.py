@@ -30,6 +30,7 @@ from hearing import SoundEvents, StereoHearing  # noqa: E402
 from navigator import Navigator  # noqa: E402
 from skills import GoToRoom, Skill, SkillExecutor, SkillOutput, wrap  # noqa: E402
 from vision import OwnerDetector  # noqa: E402
+from gemma_vision import OwnerChecker  # noqa: E402  (Teo, C7 owner_check; NUDGE_OWNER_CHECK=1)
 from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
@@ -179,6 +180,8 @@ class Brain:
         self.alerts = HapticAlerts()
         self.executor = SkillExecutor(self.nav, self.alerts)
         self.agent = NudgeAgent()
+        # Gemma looks at the owner (C7, gemma_vision.py): None unless NUDGE_OWNER_CHECK=1
+        self.owner_check = OwnerChecker.from_env(busy=lambda: self.agent.pending_info() is not None)
         self.localizer = SoundLocalizer()
         self.evac = EvacuationPlanner(self.nav.planner)
         # What the owner tells the robot (GUI text box / voice): rules.py
@@ -240,6 +243,8 @@ class Brain:
         self.fire_ask_id = None
         self.fire_guiding_since = None
         self.last_owner_seen_event = 0.0
+        if self.owner_check:
+            self.owner_check.reset()
         self.episode = episode
         self.world.log(f"RESET by sim (episode {episode}) - ready")
 
@@ -332,6 +337,8 @@ class Brain:
         pose = meta.get("robot_pose", self.world.robot_pose)
         det = self.vision.detect(rgb, depth, (float(pose[0]), float(pose[1]), float(pose[2])))
         self.world.update_owner_detection(det)
+        if self.owner_check:  # latest frame only; the check itself runs in its own thread
+            self.owner_check.on_frame(rgb, det, self.world.t_sim)
         now = time.monotonic()
         if (det["found"] and self.world.mission is not None and self.world.phase == "searching"
                 and now - self.last_owner_seen_event > OWNER_SEEN_COOLDOWN):
@@ -617,6 +624,10 @@ class Brain:
                     self.agent.submit("path_blocked", self.world)
 
         out = self.executor.step(self.world)
+        if self.owner_check:
+            if out.event == "owner_no_response":
+                self.owner_check.request("owner_no_response")
+            self.owner_check.publish(self.world, self.agent)
         if out.event:
             m = self.world.mission
             if out.event == "guide_complete":
@@ -734,6 +745,8 @@ class Brain:
             "tasks": self.task_runner.status(),
             # brain-side owner activity for idle tasks (E1.6): minutes without a sign of activity
             "owner_activity": self.owner_activity.status(),
+            # C7: Gemma's camera look at the owner (NUDGE_OWNER_CHECK=1, else null)
+            "owner_check": self.owner_check.status(w.t_sim) if self.owner_check else None,
         }
 
     def run(self, duration: float = 0.0) -> None:

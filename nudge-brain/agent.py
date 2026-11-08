@@ -263,6 +263,10 @@ def _situation(event: str, world) -> List[str]:
         lines.append(f"Owner: not visible; last seen {age:.0f} s ago in the {_label(world.owner_room)}.")
     else:
         lines.append("Owner: not seen yet.")
+    oc = getattr(world, "owner_check", None)  # Gemma's camera look at the owner (C7; only with NUDGE_OWNER_CHECK=1)
+    if oc and oc.get("state") != "not_visible" and oc.get("age", 99.0) <= 10.0:
+        lines.append(f"Camera look at the owner {oc['age']:.0f} s ago: {oc['description']} "
+                     f"({oc['state'].replace('_', ' ')}).")
     if world.owner_ack == "acknowledged":
         lines.append("The owner acknowledged the alert (tapped the handle).")
     elif world.nudge_attempts:

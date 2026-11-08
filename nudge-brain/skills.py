@@ -50,6 +50,23 @@ def owner_clear_of_exit(ox: float, oy: float, goal: Tuple[float, float]) -> bool
     return math.copysign(1.0, gy - py) * (oy - py) >= margin
 
 
+STUCK_SAY = "Something is in the way. I am finding another route."
+
+
+def _nav_step(world, nav: Navigator, speed: float, guiding: bool = False):
+    """nav.step + stuck reporting (#19): log the navigator's recovery steps, tell a guided owner once."""
+    ignore = world.owner_pos if world.owner_recently_seen(3.0) or guiding else None
+    vx, vy, wz, status = nav.step(world.robot_pose, world.lidar_ranges, speed, guiding=guiding, ignore=ignore)
+    for line in nav.pop_news():
+        world.log(f"NAV {line}")
+        if guiding and "STUCK" in line and "[owner]" not in line \
+                and (world.nudge_says or {}).get("text") != STUCK_SAY:
+            world.say(STUCK_SAY, "stuck")
+    if status == "stuck":
+        nav.clear()
+    return vx, vy, wz, status
+
+
 @dataclass
 class SkillOutput:
     vx: float = 0.0
@@ -88,10 +105,12 @@ class GoToRoom(Skill):
         return f"go_to_room({self.room})"
 
     def step(self, world, nav, alerts) -> SkillOutput:
-        vx, vy, wz, status = nav.step(world.robot_pose, world.lidar_ranges, CRUISE_SPEED)
+        vx, vy, wz, status = _nav_step(world, nav, CRUISE_SPEED)
         if status == "arrived":
             nav.clear()
             return SkillOutput(event="arrived_in_room", done=True)
+        if status == "stuck":  # recovery failed: already in the room -> scan from here; else agent decides
+            return SkillOutput(event="arrived_in_room" if world.robot_room == self.room else "timeout", done=True)
         return SkillOutput(vx, vy, wz)
 
 
@@ -204,10 +223,15 @@ class ApproachAndAlert(Skill):
         if self.stage == "approach":
             if self.goal_owner and math.hypot(ox - self.goal_owner[0], oy - self.goal_owner[1]) > 0.4:
                 self._replan(world, nav)
-            vx, vy, wz, status = nav.step(world.robot_pose, world.lidar_ranges, CRUISE_SPEED)
+            vx, vy, wz, status = _nav_step(world, nav, CRUISE_SPEED)
             if status == "arrived" or world.dist_to_owner() < STANDOFF + 0.1:
                 nav.clear()
                 self._to("face")
+            elif status == "stuck":  # can't get round to the owner: nudge from here if close, else re-decide
+                if world.dist_to_owner() < 1.6:
+                    self._to("face")
+                else:
+                    return SkillOutput(event="timeout", done=True)
             return SkillOutput(vx, vy, wz)
 
         if self.stage == "face":
@@ -342,7 +366,9 @@ class GuideOwner(Skill):
                              cross_areas=self.cross)
             if self.push_started is not None:
                 return self._final_push(world)
-            vx, vy, wz, status = nav.step(world.robot_pose, world.lidar_ranges, GUIDE_SPEED)
+            vx, vy, wz, status = _nav_step(world, nav, GUIDE_SPEED, guiding=True)
+            if status == "stuck":  # the agent re-leads (new route around the remembered obstacle)
+                return SkillOutput(guiding=True, event="path_blocked", done=True)
             if status == "arrived":
                 nav.clear()
                 if self._owner_delivered(world):
