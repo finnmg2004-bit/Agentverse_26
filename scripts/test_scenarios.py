@@ -398,6 +398,45 @@ SCENARIOS: Dict[str, Dict] = {
         "min_timeout": 180.0,
         "experimental": True,
     },
+    # P4 (agent J): sounds with NO registry rule, reasoned by local Gemma (nudge-brain/unknown_events.py).
+    # Test clips are synthesized (scripts/make_unknown_clips.py) and played via the gui action "play".
+    "unknown_glass": {
+        "desc": "P4: glass breaks in the kitchen (no rule for it) -> danger floor: always alert_owner -> "
+                "find the owner and tell them 'I heard glass breaking...' (never ignored, no evacuation)",
+        "actions": [("gui", 1.0, {"action": "play", "file": "unknown/glass_break.wav", "pos": [12.0, 3.5],
+                                  "level": 3.0, "repeat": 2})],
+        "expect_complete": [],
+        "run_for": 75.0,
+        "expect_log": ["UNKNOWN SOUND: glass breaking", "UNKNOWN DECISION [safety] glass breaking -> alert_owner",
+                       "MISSION REQUEST", "NUDGE SAYS:"],
+        "forbid_log": ["SAFETY PRE-EMPT", "-> log_only"],
+        "expect_alert": ["continuous"],
+        "experimental": True,
+    },
+    "unknown_baby": {
+        "desc": "P4: a baby cries in the dining room -> Gemma / rules: ask the owner (or alert / investigate), "
+                "never ignored, no evacuation",
+        "actions": [("gui", 1.0, {"action": "play", "file": "unknown/baby_cry.wav", "pos": [-3.0, 3.0],
+                                  "level": 2.0, "repeat": 2})],
+        "expect_complete": [],
+        "run_for": 25.0,
+        "expect_log": ["UNKNOWN SOUND: baby crying", "UNKNOWN DECISION"],
+        "forbid_log": ["SAFETY PRE-EMPT", "-> log_only"],
+        "expect_alert": [],
+        "experimental": True,
+    },
+    "unknown_during_doorbell": {
+        "desc": "P4: doorbell mission running, then a baby cries -> logged only, the doorbell mission is not "
+                "hijacked (owner still delivered to the front door)",
+        "actions": [("at", 1.0, "B"),
+                    ("on_gui", "MISSION DOORBELL", 6.0, {"action": "play", "file": "unknown/baby_cry.wav",
+                                                         "pos": [-3.0, 3.0], "level": 2.0, "repeat": 3})],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["alert_owner(doorbell", "guide_owner_to(front_door)"],
+        "forbid_log": ["find owner + tell them", "asked the owner", "going to look in", "MISSION REQUEST"],
+        "expect_alert": ["1_pulse"],
+        "experimental": True,
+    },
     "owner_voice": {
         "desc": "#10: owner moved to the guest room (out of sight), then says 'take me to the kitchen' -> "
                 "the robot HEARS where the voice comes from and heads for the guest room (no room scanned "
