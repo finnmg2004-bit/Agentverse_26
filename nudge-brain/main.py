@@ -89,6 +89,10 @@ class TaskAdapter:
             w.mission.update(task=task["name"], task_kind=job["kind"])
             if say:
                 w.mission["say"] = say
+            trig = task.get("trigger") or {}
+            if trig.get("kind") == "sound" and trig.get("sound") in SOUND_SOURCES:
+                # nudge with the trigger sound's tier pattern (kettle: 2 pulses), not the request's 1 pulse
+                w.mission["alert_sound"] = trig["sound"]
             self.mission = w.mission
             b.agent.submit("user_command", w)
         elif job["kind"] == "say":
@@ -523,6 +527,9 @@ class Brain:
         status, status_text = self.world.mission_status()
         if self.world.escalated and status == "active":
             status_text += "  |  EMERGENCY SERVICES CALLED"
+        m = self.world.mission
+        if m is not None and m.get("alert_sound") and self.alerts.mode == "1_pulse":
+            self.alerts.set_for_sound(m["alert_sound"])  # taught sound task (TaskAdapter.start_job)
         self.bridge.send_cmd(vx, vy, wz, alert_mode=self.alerts.mode, guiding=out.guiding,
                              mission_status=status, mission_text=status_text, episode=self.episode)
         now = time.monotonic()
