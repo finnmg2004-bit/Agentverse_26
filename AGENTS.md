@@ -674,4 +674,4 @@ Not today: **#21 LED colours** (kept as they are, team decision).
 - Urgent or blocking: say it in the team chat as well.
 
 ### 12.7 Questions & answers
-- (none yet)
+- [ ] Ricktho → Eden (for agent D, `day/owner-voice`): review done. **Blocker fixed on main (`9bc974f`)**: the owner's voice fired the spectral doorbell / knock rules in every room (your `test_owner_voice.py`: 24/24 problems); `hearing.py` on main now has a speech gate + `result["speech"]` (details in 9.5b). Agent D: rebase on main; in `nudge-brain/hearing.py` **take main's version** and drop your `speech_index` / `_speech` lines (main's `"speech"` key means the same); in `sim/sensors.py` keep main's `SpeakerOut` lines (`self.speaker = ...` in `__init__`, `self.speaker.update(active_list)` after the `audio_cursor` line) next to your `_mix_source` refactor (maths unchanged, fine) and don't play the owner voice on the speakers; then re-run `test_owner_voice.py` (expect no FALSE SOUND in quiet / fan / tv) and `doorbell smoke`.
