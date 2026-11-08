@@ -46,6 +46,7 @@ DUMP_DIR = Path(os.environ["NUDGE_HEARING_DUMP"]) if os.environ.get("NUDGE_HEARI
 DUMP_SOUND = os.environ.get("NUDGE_HEARING_DUMP_SOUND", "kettle")
 DUMP_MIN = float(os.environ.get("NUDGE_HEARING_DUMP_MIN", "0.4"))
 OVEN_TONAL_GATE = 8.0
+OVEN_LOCAL_GATE = 3.0  # oven peak (5.18-5.26 kHz) over the strongest bin at 5.11-5.165 kHz (doorbell bell partial)
 # Knock = short wooden bursts. Burstiness = p95 / median energy of 10 ms frames in 110-600 Hz.
 # Party music (sustained chords at 175-392 Hz, inside the knock band) used to fire the knock rule
 # in 64 % of windows with nothing knocking; real knocks are >= 279 in a quiet room. Gate at 4:
@@ -56,6 +57,21 @@ KNOCK_BURST_GATE = 4.0
 # spectral kettle rule fires and the spectral smoke rule does NOT confirm a 3.1 kHz alarm, YAMNet's
 # smoke score is capped below the 0.6 pre-emption threshold. A real smoke alarm (also with the kettle
 # on) is still caught by the spectral smoke rule.
+# ...but only when there is no separate alarm tone at 2.6-3.6 kHz (tonality > ALARM_TONE_UNCAP): the real
+# smoke-alarm recording has a 2.2-2.4 kHz component that fires the kettle rule on every other window,
+# and the cap then pushed a REAL alarm down to 0.45 (NUDGE_REAL_AUDIO=1). Kettle (+ oven) alone <= 65.
+ALARM_TONE_UNCAP = 150.0
+# Real-alarm rule (R5): a real smoke alarm beeps at ~2.8 kHz (the recording: 2.79 + 2.86 kHz), outside the
+# synthetic 2.95-3.4 kHz band, and through walls YAMNet hears it as "Police car (siren)". Rule: a sharp
+# tone in 2.6-3.6 kHz (tonality > ALARM_TONE_GATE) that also carries > ALARM_TONE_MIN_SHARE of the
+# window's energy (the real doorbell's chime harmonics reach tonality 563 but only ~1-25 % share).
+# Offline sweep (18 spots x 4 headings x 5 noise profiles, real + synthesized clips, alone and with
+# kettle / oven / doorbell): 0 / 15120 false windows; ~13 / 576 listening cases per combination missed.
+# A false window = a false evacuation, so it is opt-in: NUDGE_SMOKE_TONAL (default = NUDGE_REAL_AUDIO).
+ALARM_TONE_GATE = 100.0
+ALARM_TONE_MIN_SHARE = 0.15
+SMOKE_TONAL_RULE = os.environ.get("NUDGE_SMOKE_TONAL", os.environ.get("NUDGE_REAL_AUDIO", "0")) not in (
+    "0", "", "false", "off")
 YAMNET_SMOKE_CAP_WITH_KETTLE = 0.45  # < SoundEvents.START_CONF (0.5): a capped score is no smoke start event
 
 
@@ -290,6 +306,12 @@ class StereoHearing:
         kettle_tonal = self._tonality(freqs, psd, (2150.0, 2400.0), ((1700.0, 2100.0), (2450.0, 2900.0)))
         kettle_ratio = self._band_energy(freqs, psd, 2150.0, 2400.0) / total_energy
         kettle_gate = kettle_tonal > KETTLE_TONAL_GATE and kettle_ratio >= KETTLE_MIN_RATIO
+        alarm_tonal = self._tonality(freqs, psd, (2600.0, 3600.0), ((1700.0, 2100.0), (3700.0, 4400.0)))
+        if SMOKE_TONAL_RULE and alarm_tonal > ALARM_TONE_GATE:
+            alarm_share = self._band_energy(freqs, psd, 2600.0, 3600.0) / total_energy
+            if alarm_share > ALARM_TONE_MIN_SHARE:
+                score_smoke = max(score_smoke, float(np.clip(
+                    0.65 + 0.15 * math.log10(alarm_tonal / ALARM_TONE_GATE), 0.0, 0.97)))
         score_kettle = 0.0
         if kettle_gate:
             score_kettle = float(np.clip(max(kettle_ratio * 1.1,
@@ -297,9 +319,15 @@ class StereoHearing:
 
         # 5. Oven timer: 5.2 kHz piezo beeps, a band no other sound uses. Same tonality test:
         #    >= 82 with the timer on anywhere in the house under every noise profile, <= 2.8 without.
+        #    The real doorbell recording has a bell partial at 5.16 kHz (tonality up to ~12000) that fired
+        #    false oven-timer starts (NUDGE_REAL_AUDIO=1). The timer beeps at 5.20 kHz: its peak must also
+        #    beat the strongest bin just below it (5.11-5.165 kHz) by OVEN_LOCAL_GATE (oven ~110, bell 0.04).
         oven_tonal = self._tonality(freqs, psd, (5050.0, 5400.0), ((4400.0, 4900.0), (5600.0, 6000.0)))
+        in_oven = (freqs >= 5180.0) & (freqs <= 5260.0)
+        below = (freqs >= 5110.0) & (freqs <= 5165.0)
+        oven_local = float(np.max(psd[in_oven]) / (np.max(psd[below]) + 1e-14))
         score_oven = 0.0
-        if oven_tonal > OVEN_TONAL_GATE:
+        if oven_tonal > OVEN_TONAL_GATE and oven_local > OVEN_LOCAL_GATE:
             oven_ratio = self._band_energy(freqs, psd, 5050.0, 5400.0) / total_energy
             score_oven = float(np.clip(max(oven_ratio * 1.1,
                                            0.55 + 0.15 * math.log10(oven_tonal / OVEN_TONAL_GATE)), 0.0, 0.97))
@@ -322,7 +350,8 @@ class StereoHearing:
             yamnet_scores, top_name, top_score = self._yamnet()
             yamnet_top = (top_name, round(top_score, 3))
             scores = {}
-            if kettle_gate and spectral["smoke_alarm"] < 0.3 and "smoke_alarm" in yamnet_scores:
+            if (kettle_gate and spectral["smoke_alarm"] < 0.3 and alarm_tonal < ALARM_TONE_UNCAP
+                    and "smoke_alarm" in yamnet_scores):
                 yamnet_scores["smoke_alarm"] = min(yamnet_scores["smoke_alarm"], YAMNET_SMOKE_CAP_WITH_KETTLE)
             for sound in SOUNDS:
                 y = yamnet_scores.get(sound, 0.0)
