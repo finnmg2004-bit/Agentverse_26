@@ -177,7 +177,7 @@ LANDMARKS: Dict[str, Vec2] = {
     "back_exit_outside":  EXITS["exit_back"]["outside"],   # smoke-alarm evacuation target
     "terrace_door":       (14.2, 2.6),
     "terrace_outside":    EXITS["exit_terrace"]["outside"],  # alternative evacuation target (kitchen exit)
-    "robot_dock":         (8.0, -2.7),                     # upstream ROBOT_HOME_XY
+    "robot_dock":         (-1.4, -2.5),                    # = ROBOT_START_XY: charging dock in the entry hall, the robot starts on it (sim/charging_dock.py; upstream ROBOT_HOME_XY was (8.0, -2.7) in robot_home)
     "kettle":             (13.2, 4.2),                     # kitchen, in front of the stove (kettle on the hob)
     "stove":              (13.2, 4.2),                     # same spot: oven timer / cooking jobs
 }

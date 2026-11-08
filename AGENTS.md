@@ -190,7 +190,7 @@ See README.md for the step-by-step guide.
 - **Landmarks** (`LANDMARKS`):
   - `front_door` (-1.4, -3.9) inside the entry; door in south wall at (-1.4, -4.5); `front_door_outside` (-1.4, -6.0)
   - `back_door` (-14.2, 3.6) inside the living room; door in west wall at (-15.0, 3.6); **`back_exit_outside` (-16.6, 3.6)** = smoke evacuation target
-  - `terrace_door` (14.2, 2.6) kitchen east door → pool terrace; `robot_dock` (8.0, -2.7)
+  - `terrace_door` (14.2, 2.6) kitchen east door → pool terrace; `robot_dock` (-1.4, -2.5) = the robot's start pose in the entry hall (charging pad, `sim/charging_dock.py`; moved from robot_home 2026-11-08)
 - **Robot start**: `ROBOT_START_POSE = (-1.4, -2.5, +π/2)` (facing north), room `entry`.
 - **Sound Sources** (`SOUND_SOURCES`: `pos`, `room`, `target_landmark`, `alert_mode`, `level`, beacon colours):
   - `doorbell`: (-0.2, -4.35, 1.9) in `entry` → `front_door`, `1_pulse`, level 1
