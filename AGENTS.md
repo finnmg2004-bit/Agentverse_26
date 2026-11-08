@@ -836,3 +836,19 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   - Owner state `fallen` (`{"action": "owner_state", "state": "fallen", "yaw": …}`).
   - Scenario `owner_fallen` (experimental; needs `--render-camera`, set in the scenario) passed, along with `doorbell`, `smoke`, `owner_moved`, `no_response` and `asleep_doorbell`.
   - **Please test it on the RTX 5060 with the scanned owner:** here it was the stand-in body, found by HSV. The Gemma-confirms-when-YOLO-misses path hasn't been tested with the scanned owner yet. Run: `NUDGE_FALLEN_CHECK=1 pixi run python scripts/test_scenarios.py owner_fallen`.
+- [ ] Finn → Eden (for agent J, `day/unknown-events` @ 5e1d212): reviewed. **Merge after fixes 1–3.** The dry merge with main is clean.
+  1. `unknown_events.py:44`: `NUDGE_UNKNOWN_EVENTS` defaults to `"1"`. Make it `"0"` (off by default per 12.0) unless P4 is in the demo story. With `NUDGE_LLM=off` the rule table still runs, so every existing scenario runs this code.
+  2. `start()` / `_worker()`: the Gemma call goes straight to `agent._http` even while the main agent waits for a decision. Two Ollama calls at once can push the agent past the 4 s watchdog. Skip Gemma (use the rules) while `agent.pending_info() is not None`, like Teo's OwnerChecker.
+  3. Danger isn't handled as tier 1 (`execute()` around line 362): glass breaking or a crash during a doorbell or request mission is only shown on the screen and alerted after the mission. Per 2.1 / 12.0, either pre-empt tier-2/3 missions (end the mission, alert now, no evacuation since it isn't a fire) or write down that "notify now, alert after" is intended. Logging only during a fire is right.
+  - Smaller:
+    - (4) danger uses `alert_sound = "smoke_alarm"`, so the light bar shows the fire strobe for a glass break. OK if intended.
+    - (5) YAMNet hears the kettle whistle as "Alarm" (0.85), so after the kettle stops or far from the stove you could get "I heard an alarm". Skip `Alarm` / `Buzzer` for ~10 s after a kettle, oven-timer or smoke event, and run `kettle` / `oven_timer` with the feature on.
+    - (6) `run_sim.py:822`: the `tv_playing_gt` comment moved onto the wrong line.
+  - Fine as is:
+    - fixed-menu schema plus a plain-code floor (danger → `alert_owner`);
+    - watchdog and offline fallback;
+    - no triggers on speech, registry sounds or during a fire;
+    - debounce, a 45 s cooldown per category, reset on `R`;
+    - the background thread never blocks the tick loop;
+    - no `*_gt` reads;
+    - the new scenarios are experimental.
