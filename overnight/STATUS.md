@@ -1,14 +1,11 @@
 # Integration status (E0)
 
-Tick 02:50. All 5 lane branches merged cleanly into overnight/integration (eden-gui, eden-mapping, eden-tasks, ricktho, sean). No conflicts.
+Tick 03:50. All 5 lane branches merged cleanly into overnight/integration (no conflicts).
 
-Core suite (merged tree): doorbell PASS, smoke PASS, carpet_rule PASS.
-Not run: demo, smoke_blocked_exit, kettle, oven_timer, teach_* (teach_bedtime/cant_do_that expected FAIL until E1.3 wires tasks into main.py).
-
-Heartbeats: eden-gui 02:40, eden-mapping 02:50, eden-tasks 02:30, integration 02:50 (no gaps > 50 min).
+Core suite (merged tree): doorbell PASS, smoke PASS, carpet_rule PASS, teach_bedtime PASS, cant_do_that PASS.
+Not run this tick: demo, smoke_blocked_exit, kettle, oven_timer, teach_kettle.
 
 Needs from others / notes:
-- ricktho: R2c open (smoke masked by the kettle at the stove).
-- eden-tasks: wire tasks into main.py (E1.3) so Sean's teach scenarios can pass.
-- sean: S5 soak script (scripts/soak.py) now on integration.
-- Observation: robot steps on living_room_carpet during smoke evacuation; allowed (danger overrides place rules).
+- eden-tasks / sean: in teach_bedtime the robot steps ON living_room_carpet (twice, 4 s and 7.4 s) with no active sound. A taught task's path should respect avoid areas (only danger sounds may override). Test passes anyway because the judge only logs it.
+- ricktho: R2c (smoke masked by the kettle at the stove) still open per last report.
+- eden-gui: E2.5 test video B can now start (teach_bedtime passes on integration).
