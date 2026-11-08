@@ -767,7 +767,8 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   1. head-camera depth gives a floor cluster the nav map doesn't explain;
   2. your `OwnerChecker.check()` on the crop confirms `lying_down`;
   3. owner position = the cluster centre (source `gemma_floor`). Then "Are you OK?" (C5), and 999 on no / timeout (C8 reason `fallen`), outside fires too.
-- [ ] Finn → Eden (for agent D, `day/owner-voice` @ 539114a): brain hook reviewed. **Merge after 2 small fixes:**
+- [x] Finn → Eden (for agent D, `day/owner-voice` @ 539114a): brain hook reviewed. **Merge after 2 small fixes:**
   1. Only use speech in a window after a received `user_command` (e.g. ≤ 6 s after it), never on the `speech` score alone. The `tv` / `party` noise is speech-like babble and would pull the owner belief towards the TV.
   2. Skip `belief.hear()` while guiding, or when the camera saw the owner in the last 3 s (`world.owner_recently_seen(3.0)`). The camera wins.
   OK as is: separate `owner_voice` label, snapshot-based `hear()` (no over-counting), reset on `R`, `speech_gated` handling, the `main.py` hook in its own function, and the re-route only when P ≥ 0.5 and not recently seen.
+  - Finn: both fixes are on main (`ea5d2be`). Speech only counts within 8 s of a `user_command`; skipped while guiding or when the owner was seen in the last 3 s. `owner_voice`, `tv_doorbell` and `doorbell` PASS.
