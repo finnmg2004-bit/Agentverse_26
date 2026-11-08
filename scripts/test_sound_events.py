@@ -34,6 +34,7 @@ from hearing import SoundEvents, StereoHearing  # noqa: E402
 
 # Robot listening spots: same room, next door, across the house.
 SPOTS = {
+    "stove": (13.4, 5.6),        # right next to the kettle / oven timer (loud, clipping)
     "kitchen": (8.0, 2.4),
     "robot_home": (8.0, -2.0),
     "entry": (-1.4, -2.0),

@@ -39,6 +39,12 @@ YAMNET_CLASSES: Dict[str, Tuple[str, ...]] = {
 }
 SOUNDS: Tuple[str, ...] = tuple(SOUND_SOURCES)
 KETTLE_TONAL_GATE = 8.0
+KETTLE_MIN_RATIO = 1e-3  # share of the window's energy in the whistle band (see the kettle rule)
+# Debug: NUDGE_HEARING_DUMP=<dir> saves every window whose NUDGE_HEARING_DUMP_SOUND (default kettle)
+# score is >= NUDGE_HEARING_DUMP_MIN (default 0.4): stereo PCM + YAMNet buffer (.npz) + result (.json).
+DUMP_DIR = Path(os.environ["NUDGE_HEARING_DUMP"]) if os.environ.get("NUDGE_HEARING_DUMP") else None
+DUMP_SOUND = os.environ.get("NUDGE_HEARING_DUMP_SOUND", "kettle")
+DUMP_MIN = float(os.environ.get("NUDGE_HEARING_DUMP_MIN", "0.4"))
 OVEN_TONAL_GATE = 8.0
 # Knock = short wooden bursts. Burstiness = p95 / median energy of 10 ms frames in 110-600 Hz.
 # Party music (sustained chords at 175-392 Hz, inside the knock band) used to fire the knock rule
@@ -50,7 +56,7 @@ KNOCK_BURST_GATE = 4.0
 # spectral kettle rule fires and the spectral smoke rule does NOT confirm a 3.1 kHz alarm, YAMNet's
 # smoke score is capped below the 0.6 pre-emption threshold. A real smoke alarm (also with the kettle
 # on) is still caught by the spectral smoke rule.
-YAMNET_SMOKE_CAP_WITH_KETTLE = 0.5
+YAMNET_SMOKE_CAP_WITH_KETTLE = 0.45  # < SoundEvents.START_CONF (0.5): a capped score is no smoke start event
 
 
 def zero_scores() -> Dict[str, float]:
@@ -277,9 +283,13 @@ class StereoHearing:
         #    over the median bin of the neighbouring 1.7-2.9 kHz: >= 19 with the kettle on anywhere in
         #    the house under every noise profile (tv / vacuum / party included), <= 3.3 without it
         #    (doorbell, knock, smoke alarm, noise). Gate at 8; confidence grows with log tonality.
+        #    The whistle must also carry real energy (KETTLE_MIN_RATIO of the window): right next to the
+        #    stove the very loud oven-timer beep clips and leaves a ~1e-6 spur at 2.2 kHz that is
+        #    "tonal" (the test is scale-free) and gave a false kettle start in the oven_timer scenario.
+        #    Real kettle >= 4.5e-2 everywhere (also with smoke alarm / oven timer on), spur <= 7e-6.
         kettle_tonal = self._tonality(freqs, psd, (2150.0, 2400.0), ((1700.0, 2100.0), (2450.0, 2900.0)))
-        kettle_gate = kettle_tonal > KETTLE_TONAL_GATE
         kettle_ratio = self._band_energy(freqs, psd, 2150.0, 2400.0) / total_energy
+        kettle_gate = kettle_tonal > KETTLE_TONAL_GATE and kettle_ratio >= KETTLE_MIN_RATIO
         score_kettle = 0.0
         if kettle_gate:
             score_kettle = float(np.clip(max(kettle_ratio * 1.1,
@@ -340,7 +350,7 @@ class StereoHearing:
         if best_label in SOUND_SOURCES:
             estimated_room = str(SOUND_SOURCES[best_label]["room"])
 
-        return {
+        result = {
             "label": best_label,
             "confidence": round(float(best_conf), 3),
             "scores": scores,
@@ -355,6 +365,22 @@ class StereoHearing:
             "rms": round(rms, 4),
             "backend": self.backend_name,
         }
+        if DUMP_DIR is not None and scores.get(DUMP_SOUND, 0.0) >= DUMP_MIN:
+            self._dump(stereo_pcm, robot_pose, result)
+        return result
+
+    def _dump(self, stereo_pcm: np.ndarray, robot_pose, result: Dict[str, Any]) -> None:
+        """Debug (NUDGE_HEARING_DUMP=<dir>): save a window that scored DUMP_SOUND >= DUMP_MIN."""
+        import json
+        import time as _time
+
+        DUMP_DIR.mkdir(parents=True, exist_ok=True)
+        self._dump_n = getattr(self, "_dump_n", 0) + 1
+        if self._dump_n > 200:
+            return
+        stem = DUMP_DIR / f"{DUMP_SOUND}_{_time.strftime('%H%M%S')}_{self._dump_n:03d}"
+        np.savez_compressed(str(stem) + ".npz", stereo=stereo_pcm, yamnet_buf=self._buf, pose=np.array(robot_pose))
+        (Path(str(stem) + ".json")).write_text(json.dumps(result, default=str, indent=1))
 
 
 class SoundEvents:
