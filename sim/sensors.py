@@ -41,8 +41,9 @@ AUDIO_DIR = PROJECT_ROOT / "assets" / "audio"
 REAL_AUDIO_DIR = AUDIO_DIR / "real"
 USE_REAL_AUDIO = os.environ.get("NUDGE_REAL_AUDIO", "0") not in ("0", "", "false", "off")
 # P8: doorbell / knock ring in bursts (registry `ring_pattern`: ring_s on, pause_s off, silent after give_up_s,
-# the visitor left). Off by default: the sounds loop until answered, as before.
-INTERMITTENT = os.environ.get("NUDGE_INTERMITTENT", "0").lower() not in ("0", "", "false", "off")
+# the visitor left). ON by default since 13:25 on 2026-11-08 (team request: rings in bursts, not non-stop;
+# doorbell knock owner_moved carpet_rule demo tv_then_doorbell PASS with it); NUDGE_INTERMITTENT=0 = old loop.
+INTERMITTENT = os.environ.get("NUDGE_INTERMITTENT", "1").lower() not in ("0", "", "false", "off")
 
 SAMPLE_RATE: int = 16000
 AUDIO_WINDOW_SEC: float = 0.5
