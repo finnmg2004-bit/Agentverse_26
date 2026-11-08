@@ -53,7 +53,10 @@ class OwnerVoice:
         if self.active and t - self.last_t > VOICE_GAP_S:
             self.end(world, localizer)
         speech = float(res.get("speech", 0.0) or 0.0)
-        scores = res.get("scores", {}) or {}
+        # hearing.py's speech gate caps spectral scores the voice itself causes at 0.40 and lists them in
+        # `speech_gated`: those are the voice, not another sound, so they don't make the window "mixed".
+        gated = set(res.get("speech_gated") or ())
+        scores = {k: v for k, v in (res.get("scores", {}) or {}).items() if k not in gated}
         if speech < SPEECH_MIN or any(float(scores.get(s, 0.0)) >= OTHER_SOUND_MAX for s in SOUND_SOURCES):
             return None
         if not self.active:
@@ -62,7 +65,7 @@ class OwnerVoice:
             self.logged_room = None
         self.last_t = t
         pose = tuple(world.robot_pose)
-        localizer.update(dict(res, label=LABEL, confidence=speech), pose)
+        localizer.update(dict(res, label=LABEL, confidence=speech, scores=scores), pose)
         est = localizer.estimate(LABEL)
         if not est or not est.get("room_prob"):
             return None

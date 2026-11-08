@@ -58,12 +58,14 @@ def main() -> int:
                 pcm = (st * 32767).astype(np.int16).astype(np.float32) / 32768.0
                 res = hearing.process_audio(pcm, pose)
                 speech.append(res["speech"])
-                hits = {k: v for k, v in res["scores"].items() if v >= 0.35}
+                gated = set(res.get("speech_gated") or ())  # capped at 0.40 by the speech gate: the voice itself
+                hits = {k: v for k, v in res["scores"].items() if v >= 0.35 and k not in gated}
                 if hits:
                     false_hits.append(hits)
                 rel.append(res["rel_azimuth_deg"])
                 if res["speech"] >= 0.5 and not hits:
-                    loc.update(dict(res, label="owner_voice", confidence=res["speech"]), pose)
+                    loc.update(dict(res, label="owner_voice", confidence=res["speech"],
+                                    scores={k: v for k, v in res["scores"].items() if k not in gated}), pose)
             est = loc.estimate("owner_voice")
             truth = math.degrees(math.atan2(spot[1] - pose[1], spot[0] - pose[0]) - pose[2])
             truth = (truth + 180) % 360 - 180
