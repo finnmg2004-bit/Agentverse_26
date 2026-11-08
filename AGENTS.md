@@ -630,11 +630,13 @@ Fast-forwarded scan with rooms/objects appearing on the GUI map -> owner teaches
 ### 12.3 Agents on Eden's laptop (own branch + worktree each, report in `day/reports/<agent>.md` on the branch; Eden merges only green work at 10:45 / 11:45)
 | Agent | Branch | Builds | Reviewer |
 |---|---|---|---|
-| **A** Option A | `day/own-map` | The 5 steps of 10.8: real objects (`--coco-objects`), room naming, live change detection, frontier exploration + saved map, robot uses its own map behind `NUDGE_ROBOT_MAP=1`; plus a fast-forwarded scan clip for the pitch | Teo |
+| **A** Option A | **on Teo's PC** (session `robot-map`, branch `claude/robot-map-f55c88`, started 08:50) | The 5 steps of 10.8: real objects (`--coco-objects`), room naming, live change detection, frontier exploration + saved map, robot uses its own map behind `NUDGE_ROBOT_MAP=1`; plus a fast-forwarded scan clip for the pitch. **Eden: don't start agent A on your laptop** | Teo |
 | **B** "Is the sound real?" | `day/sound-real` | TV in the living room as a sound source (hotkey + GUI button) that can play a doorbell; the brain checks direction + loudness against the real front door and says "That was the TV" instead of starting a mission; new scenario `tv_doorbell` | Ricktho |
-| **C** Fine-tune | `day/finetune` | Eval set + training data from the deterministic policy, Modal LoRA script for a small Gemma, GGUF + `Modelfile`, eval harness; **Teo runs the Modal training** on his account. Ships only if ≥ 90 % correct (base: 97.8 %) and < 1 s | Teo |
+| **C** Fine-tune / evals | **on Teo's PC** (branches `claude/gemma-finetune-4982cb`: eval harness + 1,500/150 training data + Modal LoRA script + Modelfiles, done 2026-11-07; `claude/agent-evals-7798e9`: decision run logs `runs/*.jsonl`, golden set of >= 20 real decisions + teach-parser set, `pixi run llm-eval --gate` (90 %), in progress) | Modal training only if Teo adds the card + Gemma licence by ~10:00; ships only if >= 90 % correct (base 97.8 %) and < 1 s. **Eden: don't start agent C on your laptop**; Teo merges his branches when green | Teo |
 | **D** Owner voice (#10) | `day/owner-voice` | Finish "Nudge knows where the owner is when they speak": sim plays the voice from the owner (done), hearing speech score (done), localiser + owner belief + `main.py` hook, GUI map shows it, scenario `owner_voice` | Ricktho (hearing), Finn (`main.py`) |
 
+
+**Also on Teo's PC (own branches, merged by Teo when green, flagged / default off):** `claude/gemma-vision-a43658` = Teo's own #16/#6 (Gemma visual `owner_check` C7, `NUDGE_OWNER_CHECK=1`; the `main.py` hook lines go to Finn for review); `claude/sound-eval-949d3e` = hearing evaluation with many random sounds (ESC-50 etc. through the sim ears: detection / false-alert / smoke-miss rates + a chart for the pitch; Ricktho reviews; datasets stay out of git).
 Agents share the test lock (`scripts/locked_test.py`) and stop at 11:35 (final push + report). Teo / Ricktho: send review notes to Eden, who relays them to the agent.
 
 ### 12.4 Contracts for today (only ever add fields)
