@@ -56,3 +56,4 @@
 - 04:43: R5 slice 3 (real doorbell no longer fires the oven timer), 8209cf4, tested: test_sound_events real doorbell false oven starts 70->0, oven 120/120; real + synth doorbell/oven_timer scenarios PASS
 - 05:10: R5 slice 4 (doorbell ratio above 300 Hz + noise-only sweep), 19ee03e, tested: test_sound_events synth + real (no false starts), doorbell + demo PASS, real doorbell PASS
 - 05:39: R5 slice 5 (tier-1 events on 1 window, smoke stop hold 3 s), 9d5d670, tested: test_sound_events real smoke 24/24/24/20/22, synth 24 everywhere, noise only no false starts; smoke, demo, kettle PASS. R5 ticked. Morning notes rewritten.
+- 06:00: FINAL. No new item (06:00 rule). Everything is pushed (head before this line: 65c3e58). Integration 05:50 merged it with doorbell / smoke / carpet_rule / demo / teach_bedtime PASS. Open for the morning: the NUDGE_SMOKE_TONAL team decision, the C5 brain side, R6.
