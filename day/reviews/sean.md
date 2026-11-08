@@ -3,6 +3,30 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Video: plan + two finished 60 s cuts (Sean, 13:40) - team picks one, Eden submits
+Recorded on the RTX 5060 laptop from main `ac4e7c8` (dock beside the front door; hearing as on main before Ricktho's
+reverted change). Files are on Sean's laptop, **not in git** (videos never go in git); Sean shares them in the team chat:
+- `nudge_video_manual.mp4` (58.9 s) - continuous take with a **hand-pressed, unscripted smoke alarm** (meets the brief's
+  "one unscripted change in a single continuous take"). 999 is called by timeout (the Yes click came 1 s late).
+- `nudge_video_auto.mp4` (59.1 s) - same story, smoke alarm + "yes" scripted (clean, 999 "by owner"); caption does not
+  claim "unscripted". Sean recommends **manual** because of the brief.
+
+| Time | Segment | Shows |
+|---|---|---|
+| 0:00-0:12.6 | Title card "Nudge - a local-AI guide and alert robot for deaf and deafblind people" | intro audio ("UCL East Library", 12.5 s) |
+| 0:12.6-0:41 | **One continuous take** (sped up, badge on screen) | owner: "please do not step on the new carpet" -> rule set; doorbell; finds the owner (camera + YOLO); visible nudge; guiding while keeping off the carpet (red no-go box on the map); smoke alarm mid-guide -> EMERGENCY, "Shall I call 999?", evacuation keeping off the carpet |
+| 0:41-0:55 | Adaptability, 3 short clips | TV doorbell -> "That was the TV, not the door"; glass breaks (no rule) -> local Gemma reasons and alerts; a different home (apartment), same brain |
+| 0:55-0:59 | End card | "100 % on-device: Gemma 4 E2B (0.19 s), YAMNet, YOLOv8n, Whisper, Piper - RTX 5060 laptop. 9/12 randomised unseen situations solved." |
+
+Perception is on screen next to the actions the whole time (head camera + YOLO box, hearing bars, map with route and
+no-go area, event log, "Nudge says"). Video only has audio for the intro. Left out on purpose: `night_task` (a doorbell
+started by itself after the spoken command, reported in 12.7) and `voice` (no room).
+
+How it was made (re-cut in ~1 min, no re-recording): clips with `scripts/record_clips.py` + a one-take recorder (same
+launch pattern, GUI `--record`, `--auto` for carpet + doorbell), assembled with `scripts/make_montage.py --seg ...
+--title-secs 12.6 --fit 59.5`, intro audio muxed with ffmpeg (`imageio-ffmpeg`).
+
+
 ## Eden: P7 adaptability benchmark done - lines for the pitch + summary
 `docs/adaptability-benchmark.md` (script `scripts/benchmark_adapt.py`, seed 2026, RTX 5060, every run alone on the PC):
 **9/12 randomised runs passed (75 %)**. Doorbell 2/2, kettle 2/2, owner asleep 2/2, TV noise 4/4; oven timer 2/3, smoke 3/5;
