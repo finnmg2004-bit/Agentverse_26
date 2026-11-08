@@ -65,7 +65,7 @@ Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00
 - [x] Local text-to-speech (Piper): `from speech.tts import speak, synthesize, warmup, stop` (voice en_US-ljspeech-medium, MIT; `pixi run fetch-models`)
 - [x] Windows fix: Whisper + numpy crashed with "OMP Error #15"; win-64 now uses OpenBLAS (`pixi.toml`)
 - [ ] **→ Eden (covering Teo)** Measure Gemma latency on the recording laptop (accuracy is 97.8 %; on Eden's RTX 5050 laptop ~0.4–0.9 s, 0 watchdog fallbacks)
-- [ ] Fine-tune (paused): PARKED until Teo is back (add a Modal payment method, then follow AGENTS.md 6.1)
+- [x] Fine-tune: **dropped** (base Gemma decides in 0.19 s on the RTX 5060; AGENTS.md 6.1)
 - [x] Agent evals: every brain run saved to `runs/*.jsonl`; golden sets of real decisions + teach sentences; `pixi run llm-eval --gate` (scripts/llm_eval/README.md)
 - [ ] **→ everyone, ongoing** After ANY prompt / model / menu change run `pixi run llm-eval --gate`; when a run shows a wrong decision, `pixi run llm-harvest --add runs/<file>.jsonl:<line> --expect <letter> --note "why"`
 
