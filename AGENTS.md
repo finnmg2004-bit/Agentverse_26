@@ -696,6 +696,16 @@ Kitchen fire: the kitchen (east) exit is excluded; guest room / dining -> south 
 
 Eden's laptop runs agents F, G, I, J (+ H if there is room) on one test lock: **nobody runs a GUI / sim session on Eden's laptop until 12:40** except under `scripts/locked_test.py`.
 
+#### 12.0b Status 12:05 + NEW work for everyone until 12:40 (keep your session busy: give it the whole list at once)
+**Done:** P1 human model (Ricktho: CC0 "Busy man" in git), P5 apartment (Teo), P9 speak near the owner (Sean), P10 dock in the entry hall (agent F, merged). **In progress:** P4 unknown sounds (agent J), P6 TV (agent G), P11 localisation (agent I), Rescan button (agent L, new), montage tooling (agent K, new). **Still open:** P7 (Sean), P8 (Ricktho).
+| Who | New work, in order (push each piece as it works; everything new stays off by default) |
+|---|---|
+| **Finn** | (1) Spoken request: wait ~1.5 s for the owner-voice estimate before choosing which room to search, so the robot goes straight to the right room (agent D's note; `agent.py`). (2) The brain's wording per owner profile (`state.profile`): deaf → short screen text, blind → spoken "Take my handle" style (agent E's open item). (3) Review agents J, G and L (Rescan) as they report. |
+| **Sean** | (1) P7 adaptability benchmark on the RTX 5060 (randomised owner room / noise / chair / sound → a pass rate for the pitch). (2) Apartment checks there: `--house apt` + `smoke`, `owner_voice`, `kettle` → post PASS/FAIL in 12.7 (decides whether the apartment is in the video). (3) Recording setup on the RTX 5060 (P2): screen recorder + one test clip. |
+| **Ricktho** | (1) P8 intermittent doorbell / knock. (2) The owner's spoken "yes" / answers (`user_answer`) also play the owner's voice in the sim (Finn's note: it's silent in the recording today). (3) Real CC0 test clips for agent J's unknown sounds (glass break, dog, baby) in `assets/audio/unknown/` + credits in README. |
+| **Teo** | (1) Finish the robot-map soak + post the decision. (2) Record the **exploration clip** for the video/pitch (robot driving + map growing, sped up). (3) Review agent L's Rescan button (it uses your `explorer.py` / `robot_map.py`). (4) Explorer geofence for the apartment, so the Rescan works in `--house apt`. |
+| **Eden** | Merge agents as they report; P3 summary + pitch drafts (`docs/TECHNICAL_SUMMARY.md`, `docs/PITCH.md`) with today's features + numbers; P2 demo story options for 12:30. |
+
 ### 12.2 People (stay in your files; changes elsewhere: small, additive, tell the owner)
 | Person | Must do (demo) | Then, if time | Files |
 |---|---|---|---|

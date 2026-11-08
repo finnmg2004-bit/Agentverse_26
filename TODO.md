@@ -4,17 +4,20 @@ Status: overnight run merged (`d2e2f00`, 14/14). **Final day: all 5 working, pla
 Tick an item off when it lands on `main`. **Hard deadline 14:00.** Demo story by **12:30**, final feature pushes by **12:40**, freeze **12:45**, full suite + recording in parallel 12:45–13:15, submit 13:40–13:50.
 
 ## Last build round 11:30 → 12:40 (AGENTS.md 12.0, focus: adaptability)
-- [ ] P1 Human model on Eden's + the recording laptop (Ricktho → Eden)
+- **New work for everyone until 12:40: AGENTS.md 12.0b**
+- [x] P1 Human model: CC0 "Busy man" (MakeHuman) in git as the default owner, "FemaleVisitor" (CC BY 4.0) as `NUDGE_OWNER=visitor` (Ricktho)
 - [ ] P2 Demo story (adaptability) + recording setup on the RTX 5060 (Eden + Sean) · by 12:30
 - [ ] P3 Summary + pitch drafts, 2–3 lines from everyone (all → Eden) · by 12:30
 - [ ] P4 Unknown events reasoned by local Gemma (agent J, Finn reviews)
-- [ ] P5 Select a different house: apartment, `--house apt` (agent I + Teo)
+- [x] P5 Select a different house: apartment, `--house apt` + owner start-up options + GUI Start-up tab (Teo; doorbell PASS in the apartment, smoke / kettle untested there)
 - [ ] P6 TV model + Nudge investigates the TV doorbell (agent G, Finn reviews)
 - [ ] P7 Adaptability benchmark: randomised unseen runs → pass rate (Sean, own PC)
 - [ ] P8 Intermittent doorbell / knock (Ricktho)
-- [ ] P9 Speak only when near the owner (Sean)
-- [ ] P10 Charging station by the front door + review fixes (agent F)
-- [ ] P11 Localisation from LiDAR, off by default (agent H, only if the lock has room)
+- [x] P9 Speak only when near the owner (Sean, `4e27195`)
+- [x] P10 Charging station in the entry hall = the robot's start pose + Sean's review fixes (agent F, merged; YOLO false positives from the old dock fixed)
+- [ ] P11 Localisation from LiDAR, off by default (agent I, `day/localize`)
+- [ ] Rescan-house button: live frontier exploration + map in the GUI (agent L, `day/rescan`)
+- [ ] Montage tooling for the video: `record_clips.py` + `make_montage.py` (agent K, `day/montage`)
 
 ## Today (AGENTS.md 12; numbers = the team's ideas list)
 - [ ] **Eden:** merge + suites · demo, summary, pitch, submit
