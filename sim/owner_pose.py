@@ -1,13 +1,15 @@
 """
-Owner poses beyond standing (#8): the owner lies on their back in the guest bed while `asleep`.
+Owner poses beyond standing (#8): while `asleep` the owner lies on their back in the guest bed
+(NUDGE_OWNER_IN_BED=1 or =bed) or naps on the living-room sofa (NUDGE_OWNER_IN_BED=sofa).
 
-Behind NUDGE_OWNER_IN_BED=1 (default off; standing at the guest owner spot as before). The scanned owner
+Default off (standing at the guest owner spot as before). The scanned owner
 is one rigid posed mesh, so "lying" = the whole owner body rotated onto the mattress (face up, head on
 the pillows at the north end), feet at the foot of the bed, where the robot can reach them for the wake-up
 nudge (owner_behavior.NUDGE_CONTACT is measured to the body origin = the feet). On waking the owner stands
-up beside the bed. The bed is read from the upstream scene (geom `furn_h2_guest_mattress`), not hard-coded.
+up beside it. The bed / sofa is read from the upstream scene (geoms `furn_h2_guest_mattress` /
+`furn_h2living_room_base`, which spans exactly between the sofa's arms), not hard-coded.
 
-A sitting pose (sofa) would need a seated scan: the free Renderpeople posed models are rigid, not rigged.
+A sitting pose would need a seated scan: the free Renderpeople posed models are rigid, not rigged.
 """
 
 from __future__ import annotations
@@ -19,8 +21,10 @@ from typing import Optional, Tuple
 import mujoco
 import numpy as np
 
-OWNER_IN_BED = os.environ.get("NUDGE_OWNER_IN_BED", "0").lower() not in ("0", "", "false", "off")
-MATTRESS_GEOM = "furn_h2_guest_mattress"
+_SPOT = os.environ.get("NUDGE_OWNER_IN_BED", "0").lower()
+OWNER_IN_BED = _SPOT not in ("0", "", "false", "off")
+SLEEP_SURFACES = {"bed": "furn_h2_guest_mattress", "sofa": "furn_h2living_room_base"}
+MATTRESS_GEOM = SLEEP_SURFACES["sofa" if _SPOT == "sofa" else "bed"]  # 1 / bed -> guest bed
 BODY_HALF_DEPTH = 0.25   # scanned owner: 0.51 m front-to-back -> back on the mattress when lying face up
 BODY_LENGTH = 1.73       # feet to head
 EDGE_GAP = 0.26          # body centre line this far inside the mattress's east edge (the side the robot comes from)
@@ -70,7 +74,7 @@ def lie_in_bed(loco) -> bool:
     if pose is None or mid < 0:
         return False
     loco.data.mocap_pos[mid], loco.data.mocap_quat[mid] = pose
-    print("[sim] owner lies down in the guest bed", flush=True)
+    print(f"[sim] owner lies down ({'on the sofa' if _SPOT == 'sofa' else 'in the guest bed'})", flush=True)
     return True
 
 
