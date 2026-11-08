@@ -707,6 +707,19 @@ Eden's laptop runs agents F, G, I, J (+ H if there is room) on one test lock: **
 | **Teo** | (1) Finish the robot-map soak + post the decision. (2) Record the **exploration clip** for the video/pitch (robot driving + map growing, sped up). (3) Review agent L's Rescan button (it uses your `explorer.py` / `robot_map.py`). (4) Explorer geofence for the apartment, so the Rescan works in `--house apt`. |
 | **Eden** | Merge agents as they report; P3 summary + pitch drafts (`docs/TECHNICAL_SUMMARY.md`, `docs/PITCH.md`) with today's features + numbers; P2 demo story options for 12:30. |
 
+#### 12.0c From ~12:45: video + next build round in parallel (no hard freeze)
+**Deadline is the video only** (no slides yet). All of today's agent work is on `main` (B, D, E, F, G, I, J, K, L); combined tests green.
+- **Video (Sean on the RTX 5060 + Eden choosing / reviewing):** record with `scripts/record_clips.py` (see `docs/VIDEO_HOWTO.md`), montage with `scripts/make_montage.py --fit 58`, submit by **13:45**. Eden tags the commit Sean records from as `demo-snapshot` (reference only, nobody is blocked). Teo's exploration clip goes in as its own segment.
+- **`main` keeps moving, but safely:** everything new is **off by default** (flag) and merged only with its scenario + `doorbell smoke` green, so the recording laptop can pull without risk. Don't run tests on the RTX 5060 while Sean records.
+| Who | Next round |
+|---|---|
+| **Finn** | Merge `finn/unreachable` (owner unreachable) if green; spoken request waits for the voice estimate; wording per profile (12.0b leftovers) |
+| **Ricktho** | P8 intermittent doorbell / knock; real CC0 clips for glass / baby / dog + the false oven-timer / doorbell triggers agent J found |
+| **Teo** | Exploration clip to Eden; moved objects update the robot's object memory live ("take me to the sofa" follows a moved sofa); apartment polish (owner_voice there, kitchen stand-ins) |
+| **Sean** | Video recording first; then a non-fire tier-1 light look (glass breaking currently shows the fire strobe) |
+| **Agent M** (Eden's laptop) | Rescan map used live: after "House scanned", the brain switches to the new map without a restart (`NUDGE_ROBOT_MAP=1`) |
+| **Agent N** (Eden's laptop) | Localisation from an unknown start ("kidnapped robot"): global initialisation + recovery, `NUDGE_LOCALIZE_GLOBAL=1` |
+
 ### 12.2 People (stay in your files; changes elsewhere: small, additive, tell the owner)
 | Person | Must do (demo) | Then, if time | Files |
 |---|---|---|---|
