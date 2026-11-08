@@ -47,7 +47,7 @@ MIN_KNOWN, MIN_PREC, MIN_RECALL = 0.30, 0.60, 0.40     # honest-but-lenient pass
 GEOFENCE = (H.HOUSE_BOUNDS["x_min"], H.HOUSE_BOUNDS["y_min"], H.HOUSE_BOUNDS["x_max"], H.HOUSE_BOUNDS["y_max"]) \
     if hasattr(H, "HOUSE_BOUNDS") else (-15.0, -4.5, 15.0, 17.5)
 # Room each COCO class should name, and the house_layout rooms that count as that room type.
-ROOM_TYPE_KEYS = {"bedroom": {"guest"}, "living room": {"living_room"}, "kitchen": {"kitchen"},
+ROOM_TYPE_KEYS = {"bedroom": {"guest"}, "living room": {"living_room", "family_room"}, "kitchen": {"kitchen"},
                   "dining room": {"dining", "entry"}, "bathroom": set()}
 
 
