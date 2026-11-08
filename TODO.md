@@ -14,8 +14,10 @@ open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
 
 - [x] Rehearsal found Gemma choosing an exit **next to the fire** (terrace, "much closer to the fire") over the planner's front door; `safety.validate_action` now rejects LLM exits whose route passes > 1 m closer to the fire than the planner's (`6d367ee`, Eden)
 - [ ] **→ Sean (covering Finn)** Review that guard with a scenario: block back exit `[E]` + smoke alarm → the robot never routes past the fire and the owner gets outside
-- [ ] **→ Ricktho (covering Finn)** **Fire estimate drifts**: after LiDAR sees the back exit blocked, the re-plan says "fire in laundry (heard)" instead of "kitchen (installed alarm)", so exits in the real fire room are not excluded. Prefer the installed alarm's room unless hearing clearly disagrees?
-- [ ] **→ Eden (covering Finn)** Gemma's exit reasons contradict its choice ("Terrace exit is much closer to the fire"): state each exit's fire distance as plain safety facts in the menu (`agent.py` menu text only)
+- [x] **→ Ricktho (covering Finn)** **Fire estimate drifts**: now stays "fire in kitchen (installed alarm (by ear P=0.96))" after the back exit is found blocked, so the terrace is excluded and the front door is chosen (verified by Eden's re-run of the blocked-exit take)
+- [ ] **→ Ricktho** New: while hearing refines the fire estimate, the planner's preferred exit **flips front door ↔ back exit every ~0.5 s** ("EVAC (fire location refined by hearing)" lines, P 0.62–0.66). Add hysteresis (only switch exit if clearly better) so the suggestion is stable
+- [x] **→ Eden (covering Finn)** Gemma's exit reasons contradicted its choice ("Terrace exit is much closer to the fire"): the menu now says "route passes NEAR the fire (1.6 m) - dangerous" / "stays FAR from the fire (12.5 m) - safest" + "(the evacuation planner's pick)". Re-run: "Back exit is much safer from the fire"; `smoke`, `demo` PASS
+- [x] **→ Eden (covering Teo)** Gemma latency, Eden's RTX 5050 laptop: 0.51–0.98 s per decision, 0 watchdog fallbacks (re-measure on the recording laptop if it is a different machine)
 
 ## Ricktho (sounds + voice)
 - [x] Voice input: mic -> Whisper -> wake word "Nudge" -> `user_command` (:5558)
@@ -33,6 +35,7 @@ open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
 - `nudge-brain/safety.py`: exit-safety guard `FIRE_MARGIN_M` (`6d367ee`, Eden)
 - `nudge-brain/evacuation.py` `fire_estimate` (installed alarm's room unless hearing clearly disagrees) + `nudge-brain/sound_localizer.py` `room_probs` (`d4aaa8c`, Ricktho)
 - (earlier, before this session) `nudge-brain/main.py`: `ALERT_SOUNDS` from the registry, kettle deferral, `SoundEvents` feed + status fields; `agent.py` / `world_model.py`: registry defaults (Ricktho)
+- `nudge-brain/agent.py` `build_menu`: exit options described as "NEAR the fire - dangerous" / "FAR from the fire - safest" + planner's pick tag (`fire_words`, Eden)
 - (add a line here whenever you touch Finn's files this session)
 
 ## Sean (sim, outputs, tests)

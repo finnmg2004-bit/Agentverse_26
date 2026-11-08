@@ -246,13 +246,28 @@ def build_menu(event: str, world) -> Tuple[List[str], List[Dict[str, Any]]]:
     keep_off = _areas_text(world)
     if lead_now or event == "owner_no_response":
         if emergency and world.evac:
-            for target, d in world.evac.get("details", {}).items():
+            details = world.evac.get("details", {})
+            usable = [d for d in details.values() if not d.get("unavailable") and d.get("fire_dist") is not None]
+            best_far = max((d["fire_dist"] for d in usable), default=0.0)
+            planner_pick = world.evac.get("target")
+
+            def fire_words(dist: float) -> str:
+                # Plain safety words: a small model misread "passes 1.6 m from the fire" as good
+                # (rehearsal: "Terrace exit is much closer to the fire"). Eden, covering Finn.
+                if dist < 3.0:
+                    return f"route passes NEAR the fire ({dist:.1f} m) - dangerous"
+                if dist >= best_far - 0.5:
+                    return f"route stays FAR from the fire ({dist:.1f} m) - safest"
+                return f"route stays {dist:.1f} m from the fire"
+
+            for target, d in details.items():
                 if d.get("unavailable"):
                     continue
                 if d.get("around_ok", True):
                     add("guide_owner_to", {"target": target},
                         f"lead the owner out via {target}: {d['length']:.0f} m walk, "
-                        f"route passes {d['fire_dist']:.1f} m from the fire"
+                        + fire_words(d["fire_dist"])
+                        + (" (the evacuation planner's pick)" if target == planner_pick else "")
                         + (f", keeps off {keep_off}" if keep_off else ""))
                 if "cross_length" in d:
                     add("guide_owner_to", {"target": target, "via": "across"},
@@ -260,7 +275,7 @@ def build_menu(event: str, world) -> Tuple[List[str], List[Dict[str, Any]]]:
                         f"{d['cross_length']:.0f} m walk"
                         + (f" instead of {d['length']:.0f} m" if d.get("around_ok", True) else
                            " (no other way)")
-                        + f", route passes {d['cross_fire_dist']:.1f} m from the fire")
+                        + ", " + fire_words(d["cross_fire_dist"]))
         elif not emergency:
             why = "where they asked to go" if sound == "request" else f"where the {sound} needs them"
             add("guide_owner_to", {"target": m["target"]},
