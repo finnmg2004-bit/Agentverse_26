@@ -39,3 +39,10 @@ assets/tasks.tmp
 assets/datasets/
 # Hearing-eval raw outputs (the report + chart in docs/ are committed)
 assets/eval/
+
+# Assets: ignore everything people download or generate themselves (models, datasets, maps, owner
+# scans, caches...). Only the small shared assets the sim needs are in git. To share a new asset
+# folder on purpose, add a "!assets/<folder>/" line here (and check its licence allows it).
+assets/*
+!assets/audio/
+!assets/lightbar/
