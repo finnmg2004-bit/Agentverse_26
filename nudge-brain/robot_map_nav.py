@@ -40,6 +40,7 @@ OBJECT_PLACES = {
     "dining table": ("dining_table", r"\b(dining )?table\b"),
 }
 PLACES: Dict[str, Tuple[str, Tuple[float, float]]] = {}    # key -> (pattern, approach xy), filled by register()
+SCAN_EXITS: Dict[str, dict] = {}   # exits found in the robot's own map (register_exits); used by evacuation.py
 OWNER_MEMORY_S = 60.0
 OWNER_RADIUS = 0.7
 REBUILD_MIN_S = 2.0
@@ -156,7 +157,79 @@ class RobotMapNav:
             out[key] = xy
         return out
 
+    def register_exits(self, landmarks: dict) -> List[dict]:
+        """Find the exits in the robot's map and offer them to the evacuation planner (SCAN_EXITS) with an
+        outside target each (added to LANDMARKS in this process). The room label of each exit (for "is the
+        fire in this room?") is house_layout's room name, the same names the fire estimate uses."""
+        from sim.house_layout import get_room_at
+        SCAN_EXITS.clear()
+        found = find_exits(self.grid, self.geofence)
+        used: Dict[str, int] = {}
+        for e in found:
+            used[e["side"]] = used.get(e["side"], 0) + 1
+            base = f"{e['side']}_exit" + (f"_{used[e['side']]}" if used[e["side"]] > 1 else "")
+            target = f"{base}_outside"
+            landmarks[target] = e["outside"]
+            SCAN_EXITS[base] = dict(e, name=base, target=target, room=get_room_at(*e["inside"]))
+        return list(SCAN_EXITS.values())
+
     def status(self) -> dict:
         return {"file": str(self.path.name), "known_frac": round(self.grid.known_frac(), 3),
                 "objects": [{k: o[k] for k in ("id", "cls", "x", "y", "room")} for o in self.omem.confirmed()],
                 "rooms": self.rooms, "places": {k: v[1] for k, v in PLACES.items()}, "changes": self.changes()}
+
+
+# ---------------------------------------------------------------------------- exits from the scan
+EXIT_BAND_M = 0.6        # look this far either side of the outer wall line
+EXIT_REACH_M = 0.35      # an opening must have known floor this far inside AND outside
+EXIT_MIN_WIDTH_M = 0.6   # narrower gaps (LiDAR leaking past a door frame) are not exits
+EXIT_OUT_M = 1.5         # target this far outside the door point
+
+
+def find_exits(grid, geofence) -> List[dict]:
+    """Openings in the explored outer wall: known-free floor that crosses the installer's ground-floor box
+    edge (inside -> garden). Each: {name, pos (door point on the wall line), outside (1.5 m out), inside,
+    width, axis ('x' = vertical wall), side}. Uses only the robot's map + the geofence box."""
+    import numpy as np
+    from scipy import ndimage
+    x0, y0, x1, y1 = geofence
+    xs = grid.origin[0] + np.arange(grid.w) * grid.res
+    ys = grid.origin[1] + np.arange(grid.h) * grid.res
+    X, Y = np.meshgrid(xs, ys)
+    sides = np.stack([X - x0, x1 - X, Y - y0, y1 - Y])          # west, east, south, north
+    d_in = sides.min(axis=0)                                     # >0 inside, <0 outside
+    side = sides.argmin(axis=0)
+    free = grid.free()
+    band = np.abs(d_in) <= EXIT_BAND_M
+    lab, n = ndimage.label(free & band, structure=np.ones((3, 3)))
+    names = ("west", "east", "south", "north")
+    normals = ((-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0))
+    out = []
+    for k, sl in enumerate(ndimage.find_objects(lab), start=1):
+        if sl is None:
+            continue
+        m = lab[sl] == k
+        di, sd = d_in[sl][m], side[sl][m]
+        if not ((di >= EXIT_REACH_M).any() and (di <= -EXIT_REACH_M).any()):
+            continue
+        cross = np.abs(di) <= 0.06          # free cells ON the wall centre line = the gap itself
+        if not cross.any():
+            continue
+        s = int(np.bincount(sd[cross]).argmax())
+        cx, cy = X[sl][m][cross], Y[sl][m][cross]
+        along = cy if s in (0, 1) else cx
+        width = float(along.max() - along.min()) + grid.res
+        if width < EXIT_MIN_WIDTH_M:
+            continue
+        nx, ny = normals[s]
+        if s in (0, 1):
+            px, py = (x0 if s == 0 else x1), float(np.mean(cy))
+        else:
+            px, py = float(np.mean(cx)), (y0 if s == 2 else y1)
+        out.append({"pos": (round(px, 2), round(py, 2)),
+                    "outside": (round(px + EXIT_OUT_M * nx, 2), round(py + EXIT_OUT_M * ny, 2)),
+                    "inside": (round(px - 0.8 * nx, 2), round(py - 0.8 * ny, 2)),
+                    "width": round(width, 2), "axis": "x" if s in (0, 1) else "y", "side": names[s]})
+    for i, e in enumerate(sorted(out, key=lambda e: (e["side"], e["pos"]))):
+        e["name"] = f"scan_exit_{e['side']}_{i + 1}"
+    return sorted(out, key=lambda e: e["name"])

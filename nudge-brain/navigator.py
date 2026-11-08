@@ -222,8 +222,10 @@ def _load_robot_map():
         rm = RobotMapNav(MAP_FILE)
         rm.pending = False
         places = rm.register_places(LANDMARKS)
+        exits = rm.register_exits(LANDMARKS)
         print(f"[nav] NUDGE_ROBOT_MAP=1: planning on the robot's own map {MAP_FILE.name} "
-              f"({rm.grid.known_frac():.0%} of the grid known); places from objects: {places or 'none'}", flush=True)
+              f"({rm.grid.known_frac():.0%} of the grid known); places from objects: {places or 'none'}; "
+              f"exits from the scan: {[(e['name'], e['pos']) for e in exits] or 'none'}", flush=True)
         return rm
     except Exception as e:  # missing / unreadable map: keep the demo path working
         print(f"[nav] NUDGE_ROBOT_MAP=1 but no usable robot map ({e}); using the static floor plan", flush=True)
