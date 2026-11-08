@@ -70,6 +70,7 @@ from sim.house_layout import (
     CHAIR_DOORWAY_POS,
     CHAIR_STOWED_POS,
     LANDMARKS,
+    EXITS,
     OUTSIDE,
     ROBOT_START_POSE,
     ROOMS,
@@ -86,6 +87,7 @@ from sim.robot_voice import RobotVoice
 from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
 from sim.owner_behavior import OwnerBehavior
+from sim.sim_clock import SimClock
 from sim.house_layout import CHAIR_EXIT_POS
 
 VIEW_NAMES = ["top", "follow", "dog"]
@@ -101,6 +103,7 @@ VIEW_NAMES = ["top", "follow", "dog"]
 GOAL_RADIUS_M = 1.4
 GOAL_DWELL_S = 1.0    # must stay inside the radius this long, so walking past/through doesn't count
 SCENARIO_TIMEOUT_S = 120.0
+FIRE_TOO_CLOSE_M = 3.0  # judge only: the robot should never route this close to the fire (smoke alarm)
 
 
 class NudgeSimulator:
@@ -115,6 +118,7 @@ class NudgeSimulator:
         gui_endpoint: str = "tcp://127.0.0.1:5557",
         owner_wander: bool = True,
         owner_seed=None,
+        clock: str = "08:00",
     ) -> None:
         self.cutaway = cutaway
         self.model, self.data = build_nudge_model(verbose=True, cutaway=cutaway)
@@ -127,6 +131,8 @@ class NudgeSimulator:
         from sim.nav_map import GridPlanner
         self.owner = OwnerBehavior(self.locomotion, lambda: GridPlanner(self.nav_map),
                                    seed=owner_seed, wander=owner_wander)
+        # Sim clock (contract C2): time of day in the house, advancing with sim time.
+        self.clock = SimClock(clock, float(self.data.time))
         self.chair_at_exit = False
 
         # Scene state controlled by hotkeys
@@ -197,6 +203,9 @@ class NudgeSimulator:
 
         # Scenario tracking: sound -> sim time it started (cleared when resolved/silenced)
         self.sound_started: Dict[str, float] = {}
+        # Judge-only fire check: closest the robot came to the smoke alarm (the fire) while it rang.
+        self.fire_min_dist: float = float("inf")
+        self.fire_too_close_logged: bool = False
         self.sound_timed_out: Dict[str, bool] = {}
         self.goal_since: Dict[str, float] = {}  # sound -> sim time the owner entered the goal radius
         self.last_scenario_check: float = 0.0
@@ -218,6 +227,9 @@ class NudgeSimulator:
         if not self.active_sounds.get(name):
             self.sound_started[name] = float(self.data.time)
             self.sound_timed_out[name] = False
+            if name == "smoke_alarm":
+                self.fire_min_dist = float("inf")
+                self.fire_too_close_logged = False
         self.active_sounds[name] = True
 
     def _stop_sound(self, name: str) -> None:
@@ -233,6 +245,15 @@ class NudgeSimulator:
             return
         self.last_scenario_check = t
         ox, oy = self.locomotion.get_owner_pos()
+        if "smoke_alarm" in self.sound_started:
+            rx, ry, _ = self.locomotion.get_pose()
+            fx, fy = SOUND_SOURCES["smoke_alarm"]["pos"][:2]
+            fd = float(np.hypot(rx - fx, ry - fy))
+            self.fire_min_dist = min(self.fire_min_dist, fd)
+            if fd < FIRE_TOO_CLOSE_M and not self.fire_too_close_logged:
+                self.fire_too_close_logged = True
+                print(f"[sim] FIRE PROXIMITY: robot {fd:.1f} m from the fire at ({fx}, {fy}) "
+                      f"(limit {FIRE_TOO_CLOSE_M} m), robot at ({rx:.2f}, {ry:.2f})")
         for name, started in list(self.sound_started.items()):
             target = str(SOUND_SOURCES[name]["target_landmark"])
             evac = name == "smoke_alarm"
@@ -241,7 +262,9 @@ class NudgeSimulator:
             tx, ty = LANDMARKS["back_door"] if evac else LANDMARKS[target]
             dist = float(np.hypot(ox - tx, oy - ty))
             outside = evac and get_room_at(ox, oy) == OUTSIDE
-            if dist <= GOAL_RADIUS_M or outside:
+            # Back exit blocked by the chair ([E]): standing at it is not an evacuation, only OUTSIDE counts.
+            at_goal = dist <= GOAL_RADIUS_M and not (evac and self.chair_at_exit)
+            if at_goal or outside:
                 self.goal_since.setdefault(name, t)
             else:
                 self.goal_since.pop(name, None)
@@ -250,9 +273,15 @@ class NudgeSimulator:
                 if evac:
                     for s in list(self.sound_started):
                         self._stop_sound(s)  # owner is leaving the house: nothing left to alert to
-                    where = "OUTSIDE" if outside else "at the back door exit"
+                    if outside:
+                        via = min(EXITS, key=lambda n: float(np.hypot(ox - EXITS[n]["outside"][0],
+                                                                      oy - EXITS[n]["outside"][1])))
+                        where = f"OUTSIDE via {via}"
+                    else:
+                        where = "at the back door exit"
                     print(f"[sim] SCENARIO COMPLETE: smoke_alarm -> owner EVACUATED ({where}) "
-                          f"after {elapsed:.1f}s (owner at {ox:.2f}, {oy:.2f}). Alarm cleared.")
+                          f"after {elapsed:.1f}s (owner at {ox:.2f}, {oy:.2f}; robot came within "
+                          f"{self.fire_min_dist:.1f} m of the fire). Alarm cleared.")
                 else:
                     self._stop_sound(name)
                     print(f"[sim] SCENARIO COMPLETE: {name} -> owner reached the {target} after {elapsed:.1f}s "
@@ -270,6 +299,10 @@ class NudgeSimulator:
         mission = status.get("mission") or {}
         self.mission_sound = mission.get("sound")
         say = str(mission.get("say") or "").strip() if mission.get("status") == "active" else ""
+        if not say:
+            # Proposed add-only field (overnight C1/C3): a reply to the owner outside a mission, e.g. a
+            # taught "just tell me" task or "Sorry, I can't do that yet...". Older brains don't send it.
+            say = str(status.get("say") or "").strip()
         if say != self.nudge_says:
             self.nudge_says = say
             if say:
@@ -372,6 +405,13 @@ class NudgeSimulator:
             if name in SOUND_SOURCES:
                 self._start_sound(name)
                 print(f"[sim] GUI: {SOUND_SOURCES[name].get('label', name)} started at {SOUND_SOURCES[name]['pos'][:2]}")
+        elif action == "clock":  # contract C2: {"action": "clock", "time": "21:59"}
+            try:
+                self.clock.set(str(payload.get("time", "")), float(self.data.time))
+                print(f"[sim] GUI: clock set to {self.clock.hhmm(float(self.data.time))} "
+                      f"(day {self.clock.day(float(self.data.time))})")
+            except ValueError:
+                print(f"[sim] GUI: bad clock time {payload.get('time')!r} (want HH:MM)")
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()
@@ -427,6 +467,7 @@ class NudgeSimulator:
         ox, oy = ROOMS[ROOM_ORDER[0]]["owner_spot"]
         self.locomotion.set_owner_pos(ox, oy)
         self.owner.reset(float(self.data.time))
+        self.clock.reset(float(self.data.time))
         self.chair_blocking = False
         self.chair_at_exit = False
         self.locomotion.set_chair_pos(*CHAIR_STOWED_POS)
@@ -446,12 +487,13 @@ class NudgeSimulator:
               f"{get_room_at(*ROBOT_START_POSE[:2])}, owner in {ROOM_ORDER[0]}, chair stowed, sounds off")
 
     def status_overlay(self) -> tuple:
-        """(title, detail) for the viewer's on-screen mission status."""
+        """(title, detail) for the viewer's on-screen mission status (title starts with the sim clock)."""
+        now = self.clock.hhmm(float(self.data.time))
         if self.mission_status == "complete":
-            return ("MISSION COMPLETE", self.mission_text)
+            return (f"{now}  MISSION COMPLETE", self.mission_text)
         if self.mission_status == "active":
-            return ("MISSION ACTIVE", self.mission_text)
-        return (f"READY (episode {self.episode})",
+            return (f"{now}  MISSION ACTIVE", self.mission_text)
+        return (f"{now}  READY (episode {self.episode})",
                 "B/K/M = sound   O = move owner   W = owner wander   C/E = chair   X = silence   R = reset"
                 "   N = noise   V = view")
 
@@ -589,6 +631,8 @@ class NudgeSimulator:
                 "avoid_steps": self.avoid_steps,
                 "avoid_areas": {k: list(v) for k, v in AVOID_AREAS.items()},
                 "nudge_says": self.nudge_says,  # what the robot screen shows / speaks
+                "sim_clock": self.clock.hhmm(float(self.data.time)),  # contract C2
+                "sim_day": self.clock.day(float(self.data.time)),
             }
             self.pub_sock.send_multipart(
                 [b"state", json.dumps(state_msg).encode("utf-8")]
@@ -719,6 +763,8 @@ def main() -> None:
     parser.add_argument("--gui-sub", default="tcp://127.0.0.1:5557", help="Control GUI command address")
     parser.add_argument("--noise", choices=NOISE_NAMES, default="quiet",
                         help="Background noise profile at start (cycle live with [N])")
+    parser.add_argument("--clock", default="08:00",
+                        help="Sim clock start time HH:MM (state.sim_clock; [R] resets to it; GUI action 'clock' sets it)")
     parser.add_argument("--view", choices=VIEW_NAMES, default="top",
                         help="Viewer camera at start: top, follow (chase robot), dog (head camera); cycle with [V]")
     args = parser.parse_args()
@@ -732,6 +778,7 @@ def main() -> None:
         gui_endpoint=args.gui_sub,
         owner_wander=not args.owner_static,
         owner_seed=args.owner_seed,
+        clock=args.clock,
     )
     dt = float(sim.model.opt.timestep)
     rx, ry, ryaw = sim.locomotion.get_pose()
