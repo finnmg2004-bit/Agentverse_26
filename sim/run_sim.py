@@ -338,9 +338,15 @@ class NudgeSimulator:
         if p is None:
             print(f"[sim] GUI: unknown profile {mode!r} ({'|'.join(PROFILE_NAMES)})")
             return
+        speech_was_on = self.outputs.get("speech")
         self.profile = p
         self.refresh_outputs()
         print(f"[sim] PROFILE: {describe(p, self.outputs, self._outputs_emergency)}")
+        # Switched to a speech profile mid-message (e.g. deaf -> blind): say the current message once.
+        # Only here, never when the emergency override turns speech on (that would say the stale
+        # previous message before the fire text arrives).
+        if self.outputs["speech"] and not speech_was_on and self.nudge_says:
+            self.voice.say_if_changed(self.nudge_says, urgent=self._outputs_emergency)
 
     def refresh_outputs(self) -> None:
         """Recompute the enabled output channels (profile + emergency override); log changes."""
@@ -349,11 +355,8 @@ class NudgeSimulator:
         new = channels(self.profile, emergency)
         self._outputs_emergency = emergency
         if new != self.outputs:
-            speech_was_on = self.outputs.get("speech")
             self.outputs = new
             print(f"[sim] OUTPUTS: {describe(self.profile, new, emergency)}")
-            if new["speech"] and not speech_was_on and self.nudge_says:  # e.g. switched to blind mid-message
-                self.voice.say_if_changed(self.nudge_says, urgent=emergency)
 
     @property
     def screen_text(self) -> str:

@@ -15,7 +15,7 @@
   carer, visitors or firefighters see the strobe and the screen; hearing people in a deaf owner's
   house hear "Fire...". Back to the profile's channels when the emergency ends.
   Other decisions: blind light bar shows its idle look (faint white = "robot on"), not black;
-  speech still needs `NUDGE_SPEECH=1` (master switch), the profile only allows/forbids it;
+  speech is on unless `NUDGE_SPEECH=0` (master switch, Sean's #12 default), the profile only allows/forbids it;
   `[R]` reset keeps the profile (owner setting); `[sim] NUDGE SAYS:` and `state.nudge_says` stay
   for every profile (message is still decided, only outputs change); the viewer's bottom-left
   "Nudge says" overlay is operator/audience text, so it stays.
@@ -61,4 +61,4 @@ pixi run brain --no-dashboard
 pixi run gui                    # click Owner: Deaf / Blind / Deafblind, then Doorbell
 ```
 Deaf: flank screens + light bar on, sim log `SPEECH OFF (profile deaf)`. Blind: screens dark, light bar
-idle, label hidden, speech (with `NUDGE_SPEECH=1`). Smoke alarm in any profile: everything on.
+idle, label hidden, speech on (unless `NUDGE_SPEECH=0`). Smoke alarm in any profile: everything on.

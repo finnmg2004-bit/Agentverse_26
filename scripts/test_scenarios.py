@@ -300,7 +300,7 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": ["alert_owner(doorbell", "guide_owner_to(front_door)"],
         "expect_alert": ["1_pulse"],
         "expect_sim": ["PROFILE: blind: screen off, light off, speech ON", "NUDGE SAYS:"],
-        "forbid_sim": ["SPEECH OFF"],
+        "forbid_sim": ["SPEECH OFF (profile"],
     },
 }
 

@@ -30,8 +30,10 @@ Decisions (documented here so the team can flip them in PROFILES):
     the MuJoCo viewer is the operator / audience overlay, not a robot output, so it stays.
   * deaf: no speech (an owner who can't hear it gets nothing from it; a silent house stays
     silent), except in an emergency.
-  * Speech still needs NUDGE_SPEECH=1 (the speaker's master switch, sim/robot_voice.py); the
+  * Speech is on unless NUDGE_SPEECH=0 (the speaker's master switch, sim/robot_voice.py); the
     profile only decides whether the speaker is *allowed* to talk.
+  * A profile switch to a speaking profile says the current message once; the emergency
+    override does not (the fire message itself is spoken when it arrives, never a stale one).
   * The haptic handle and guiding are never switched off: they are the one channel every
     owner shares, and the brain's alert / guiding logic depends on them.
   * The profile is an owner setting, not scene state: [R] reset keeps it.

@@ -11,14 +11,20 @@ the brain would (cmd alert_mode + brain status), steps the sim and checks what a
   * haptic  : guide handle swings up (always on)
   * state   : state["profile"] / state["outputs"] (published every 50 ms)
 
-    pixi run python scripts/locked_test.py --cmd python scripts/test_profiles.py
+    pixi run python scripts/test_profiles.py
 
-Uses its own ports (5565-5567) so it never talks to a running sim / brain / GUI.
+Uses its own ports (5565-5567), never the sim ports 5555-5559, so it needs no test lock and never
+talks to a running sim / brain / GUI. Speech and sound output are muted (the speech call is spied on).
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+# Silent test: no TTS / no laptop-speaker sounds even where they default to on (set before importing the sim).
+os.environ.setdefault("NUDGE_SPEECH", "0")
+os.environ.setdefault("NUDGE_SOUND_OUT", "0")
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -126,6 +132,8 @@ def main() -> int:
         check(seen["screen"] and seen["label"], "smoke: screen lit + label")
         check(seen["center"] and seen["red"], "smoke: light bar centre + danger strobe")
         check(SMOKE_SAY in p.spoken, "smoke: spoken")
+        if not want["speech"]:
+            check(DOORBELL_SAY not in p.spoken, "smoke: the stale doorbell message is NOT spoken")
         check(seen["handle_up"], "smoke: haptic handle up")
 
         p.clear()
