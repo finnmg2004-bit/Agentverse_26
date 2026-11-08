@@ -9,6 +9,7 @@ noise profiles included) and the brain's `StereoHearing` + `SoundEvents`, so no 
 
     pixi run python scripts/test_sound_events.py                     # kettle + oven_timer, all noise
     pixi run python scripts/test_sound_events.py --sounds doorbell knock --noise quiet tv
+    pixi run python scripts/test_sound_events.py --sounds none        # background noise only: any start is false
 """
 
 from __future__ import annotations
@@ -86,7 +87,8 @@ def main() -> int:
                         starts = 0
                         for phase, dur in (("on", args.on_s), ("off", args.off_s)):
                             for _w in range(int(dur / WIN_S)):
-                                pcm, _ = sensors.synthesize_stereo_audio(pose, {sound: phase == "on"})
+                                on = {} if sound == "none" else {sound: phase == "on"}
+                                pcm, _ = sensors.synthesize_stereo_audio(pose, on)
                                 res = hearing.process_audio(ears(pcm), pose)
                                 for e in ev.update(res, t):
                                     if e["sound"] != sound:

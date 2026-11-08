@@ -246,6 +246,7 @@ SOUND_SOURCES: Dict[str, Dict[str, object]] = {
         "file": "smoke_alarm.wav",
         "yamnet": ("Smoke detector, smoke alarm", "Fire alarm"),
         "label": "Smoke alarm",
+        "event_stop_windows": 6,            # SoundEvents: real alarms pause ~1.5 s (temporal-3) -> 3 s quiet = stopped
         "say": "Smoke alarm! Hold my handle. We are going outside now.",
         "rgba_active": (1.0, 0.15, 0.15, 0.98),
         "rgba_idle": (0.5, 0.1, 0.1, 0.35),
