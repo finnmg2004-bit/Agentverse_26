@@ -905,6 +905,16 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   - **Which owner the video shows:** since `18dbcad` a Renderpeople scan installed in `assets/models/` still wins over Ricktho's Busy man. If the recording laptop has the scan Ricktho copied, the video shows that; `--owner busy` (or `NUDGE_OWNER=busy`) forces Busy man (YOLO 98 %). Either is fine, just pick one on purpose. The GUI Start-up tab now lists busy / visitor too (`e03fdc5`).
 - [ ] Teo → Sean + Eden: **robot-map test 3 (soak) is running now on Teo's PC** (3 rounds of doorbell + smoke + smoke_blocked_exit, `NUDGE_ROBOT_MAP=1`, plain-code decisions), so neither of you needs to find room for it. Result + verdict here by **12:30**. If it shows a failure, the fix lands on a side branch and Teo merges it only if it re-passes; Sean, your tests 1 + 2 stay valid unless I say otherwise here. The map goes into the demo only if 1, 2 and 3 are all green (the rule above); then the recording needs `NUDGE_ROBOT_MAP=1` and, Eden, the GUI's Robot map tab in view.
 - [ ] Teo → Eden (for agent L, Rescan) + Sean: **explorer geofence in the apartment.** The explorer's only outside knowledge is a "stay inside this box" rectangle (the geofence), so it doesn't drive out of an open door into the garden. `scripts/test_mapping.py` takes it from `house_layout.HOUSE_BOUNDS`, which `--house apt` / `NUDGE_HOUSE=apt` already swaps to the apartment's box (23 x 15 m), so the geofence itself follows the house. **Agent L: build the Rescan's `FrontierExplorer(geofence=...)` from `house_layout.HOUSE_BOUNDS` the same way, never a hard-coded box**, then it works in both houses. One gap left, in Teo's file: the robot's map grid (`robot_map.py` `ORIGIN` / `SIZE_M`) is sized for the big house, and the apartment's south edge (y < -7) falls 0.5 m outside it; Teo fixes that so the grid follows `HOUSE_BOUNDS` (no change for the default house). Rescan in the apartment is untested; nobody needs to test it before the freeze.
+- [x] Sean → Teo + Eden: **apartment checks (12.0b, Sean 2)** on the RTX 5060, `NUDGE_HOUSE=apt`, main `877960b`, own ports (no contention seen):
+  - `check_world` PASS (all rooms / spots / landmarks reachable; robot start clearance 2.12 m).
+  - `smoke` **PASS** 46.7 s (pre-empt, continuous, 999 prompt; owner out via the front door to the lift lobby; robot >= 9.2 m from the fire).
+  - `kettle` **PASS** 71.2 s (2 pulses, guided across the stair hall to the kettle).
+  - `owner_voice` FAIL x2, but only on its house-specific checks (`probably guest`, `go_to_room(guest)`, `Owner seen in guest`): the apartment
+    has no guest room, `[O]` puts the owner in the dining room. The behaviour worked: "heard the owner from the north-west -> probably
+    dining (P 0.41)" -> went there, found them, delivered them to the kitchen; no forbidden lines. An apt variant would expect `dining`.
+  - **Recommendation: YES, the apartment in the video as a short "second home" clip (doorbell, smoke or kettle).** Avoid the guest
+    bedroom / asleep-in-bed and kitchen close-ups: the sim logs "furniture meshes not fetched: dropped 91 meshes" and the stove /
+    sink / hood have no stand-ins, so the kitchen looks bare.
 - [ ] Finn → Eden (`docs/TECHNICAL_SUMMARY.md` @ 08cd41a, Finn's parts):
   - **Fix line 28:** "if the only door is blocked, it says so and escalates" is **not on main** (`finn/unreachable` was deliberately not merged). Drop that half-sentence, or write "[next step]".
   - **Lines 30–31 (fallen owner):** it's **off by default** (`NUDGE_FALLEN_CHECK=1` / `NUDGE_OWNER_CHECK=1`). Detection: the depth camera finds a body-sized shape on the floor that isn't on the map, then YOLO or Gemma confirms it's a person. Suggest: "…a fallen owner on the floor (depth camera, confirmed by Gemma; experimental, off by default) → 'Are you OK?' → 999."
@@ -913,3 +923,14 @@ Not today: **#21 LED colours** (kept as they are, team decision).
     - teach parser: 19/19 teach sentences with plain-code checks (e.g. "call my daughter" is refused, never promised);
     - stuck: a chair wedged next to the archway → recovers in 1 step (`stuck_chair` PASS; before the fix it was stuck > 30 s).
   - **Line 54 [TBC] localisation:** agent I passed live (`NUDGE_LOCALIZE=1`, `doorbell` + `smoke` PASS). Offline: 0.08 m mean / 0.21 m max error on a 62 s, 5-room tour, against 9.4 m drift with odometry alone. It's experimental and off by default; global (kidnapped) start doesn't work yet.
+- [ ] Ricktho → Finn, Sean, Eden (12.0b items): **(2) done:** the owner's answers (`user_answer` from the voice mic :5558 and the GUI Yes / No buttons :5557) now play the owner's voice in the sim like `user_command` ("OWNER SPEAKS ... 'yes'"), so a spoken "yes" to "Shall I call 999?" is heard by the robot's ears. Sean: 2 lines in `sim/run_sim.py` (SUBSCRIBE `user_answer` + the topic check next to `user_command`). Tested: `smoke_999` PASS (52 s), `doorbell` PASS. **(1) P8 was already done** (`6357df6`, `NUDGE_INTERMITTENT=1`, see 9.5b), Eden: please tick it. **(3)** real PD / CC0 clips for agent J's unknown sounds: in progress (also checks agent J's warning that real glass / a dog bark can fire the spectral oven / doorbell rules).
+- [ ] Teo → Eden (`docs/TECHNICAL_SUMMARY.md` @ 08cd41a): the brief asks for **where each model runs, with hardware and latency**; the draft only has Gemma's. Measured numbers (all local, no cloud):
+  | Model | Runs on | Latency |
+  |---|---|---|
+  | Gemma 4 E2B (Ollama), decisions | laptop GPU (RTX 5060) | 0.19 s median, 0.26 s p95 |
+  | Gemma 4 E2B, owner sentence → rule / task | laptop GPU (RTX 5060) | ~0.6 s |
+  | Gemma 4 E2B, camera look at the owner | laptop GPU (measured on a GTX 1650) | 1.6–2.5 s warm (never waited on) |
+  | YOLOv8n (ONNX Runtime), owner detection | CPU, 4 threads | ~60 ms per frame, 10 Hz camera |
+  | YAMNet (TFLite) + spectral rules, sounds | CPU, 2 threads | alert 0.5 s median after the sound starts (0.5 s audio windows) |
+  | Whisper base.en (faster-whisper int8), voice | CPU | ~0.5 s per sentence |
+  | Piper TTS, speech | CPU | voice loads in ~5 s at start-up (per-sentence time not measured) |

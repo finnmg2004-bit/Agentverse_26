@@ -243,6 +243,8 @@ class NudgeSimulator:
         # they are. Only the sound reaches the brain through the ears; the text goes to the brain directly.
         self.sub_sock.connect(voice_endpoint)
         self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "user_command")
+        # The owner's answers to Nudge's questions (`user_answer`, C5: voice mic / GUI Yes-No) are spoken too.
+        self.sub_sock.setsockopt_string(zmq.SUBSCRIBE, "user_answer")
 
         # Publication timers
         self.last_state_pub: float = 0.0
@@ -842,7 +844,7 @@ class NudgeSimulator:
                 self.handle_gui(payload)
             elif topic == "brain":
                 self.handle_brain_status(payload)
-            elif topic == "user_command":
+            elif topic in ("user_command", "user_answer"):
                 self.owner_speaks(payload)
 
         # Safety timeout if brain disconnects for > 0.6s
