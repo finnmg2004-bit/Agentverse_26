@@ -112,3 +112,8 @@ Merged `origin/main` into the branch. Regression on the merged branch (before th
   With the pad: "tv" 0.33 (below object_memory's tv MIN_CONF 0.40), "person" 0.32 (the house's own baseline), no owner detection, no HSV hit.
   It also scores "bench" up to 0.53, but bench is not a class we use.
 - Picture: `agentF_dock_entry.png`.
+- **Tested on the final branch** (main merged, dock in the entry):
+  - `check-world`: all checks passed (`robot_dock` and `robot_start` clearance 0.61 m, `front_door` 0.91 m).
+  - `sim/charging_dock.py`: OK.
+  - `scripts/test_scenarios.py --port-base 6655 doorbell smoke demo`: **PASS / PASS / PASS** (62.2 s, 57.2 s, 86.5 s).
+    I ran it on ports 6655+ instead of under the lock: the lock was busy with other agents' long runs past my deadline. Separate ports mean no conflict; only the CPU was shared.
