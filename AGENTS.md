@@ -612,20 +612,19 @@ Fast-forwarded scan with rooms/objects appearing on the GUI map -> owner teaches
 
 ---
 
-## 12. Final day plan, 2026-11-08 09:30 → submit 13:45 (agreed; all 5 working; Eden = merge captain)
-**Goal:** the ideas list from the team's notes, built by 5 people + 4 agents on Eden's laptop. **Feature freeze 11:45.** The demo story is decided at ~11:45 from what works (12.5).
+## 12. Final day plan, 2026-11-08 09:30 → submit 13:50 (agreed; all 5 working; Eden = merge captain)
+**Goal:** the ideas list from the team's notes, built by 5 people + 4 agents on Eden's laptop. **Hard deadline now 14:00 (no 15:00 buffer). Feature freeze moved to 12:45.** The demo story is chosen by **12:30**, from features already on `main` and tested (12.5).
 
-### 12.1 Timeline
+### 12.1 Timeline (updated ~11:05)
 | Time | What |
 |---|---|
-| 09:30–10:45 | Build block 1 |
-| **10:45** | **Checkpoint 1:** everyone pushes what works; Eden runs `doorbell smoke carpet_rule demo` and posts green/red |
-| 10:45–11:45 | Build block 2 |
-| **11:45** | **Feature freeze.** Last feature push; Eden merges the agent branches that are green and runs the full suite (~20 min); choose the demo story |
-| 12:00–12:45 | Rehearse 3× in a row, then **record** the ≤ 60 s one-take video (Eden runs the GUI; nobody runs tests on Eden's laptop) |
-| 12:45 | Everyone sends Eden 2–3 lines on their part (summary + pitch) |
-| 12:45–13:30 | Technical summary + pitch final (Eden) |
-| **13:30–13:45** | **Submit** (deadline 15:00) |
+| 09:30–11:00 | Build blocks 1+2 (done: agents B, D, E, F merged; see TODO.md) |
+| now – **12:40** | Build + merge. **Final feature pushes by 12:40.** Whoever isn't coding: write the technical summary + pitch drafts now (`docs/`); everyone sends Eden 2–3 lines on their part by 12:30 |
+| **12:30** | **Demo story chosen** (only features on `main` + tested) |
+| **12:45** | **Feature freeze**; everyone pulls the frozen `main` |
+| 12:45–13:15 | **In parallel:** Eden's laptop runs the full suite (nobody else runs tests/sims there) **and** the recording laptop (RTX 5060) rehearses + **records** the ≤ 60 s take on the frozen code (fallback: overnight test videos A / B) |
+| 13:15–13:40 | Technical summary + pitch final (from the drafts); pick the best take |
+| **13:40–13:50** | **Submit** (hard deadline 14:00) |
 
 ### 12.2 People (stay in your files; changes elsewhere: small, additive, tell the owner)
 | Person | Must do (demo) | Then, if time | Files |
