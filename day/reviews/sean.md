@@ -3,6 +3,15 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Eden: TODO.md items to tick (Sean's, all done on main)
+- "**Sean:** #4 visible nudge · #12 speech on by default · #19 repro scenarios · review agents E + F": done
+  (`a9a6720`, `23fe8b4`; reviews of E and F below; E applied the fixes in `01509b1`).
+- "**→ Sean (covering Finn)** Review that guard with a scenario: block back exit `[E]` + smoke alarm": done
+  overnight, scenario `smoke_blocked_exit` (default suite, PASS; owner out via the front door, robot never
+  within 3 m of the fire).
+- "**→ Sean (from Teo)** On an RTX 5060 recording laptop ... `llm-eval --gate`": done, numbers in the Gemma
+  eval section below (golden 14/15, p50 0.19 s / p95 0.26 s; teach 14/19 before Matteo's grader fix).
+
 ## Gemma eval on the RTX 5060 recording laptop (for Teo / Matteo, technical summary)
 
 `claude/agent-evals-7798e9` @ 0b71843, `run_eval.py --gate --sets golden teach`, 2026-11-08 10:22,
