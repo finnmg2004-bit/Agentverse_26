@@ -80,8 +80,10 @@ def lie_in_bed(loco) -> bool:
 
 def is_lying(loco) -> bool:
     mid = getattr(loco, "owner_mocap_id", -1)
-    return mid >= 0 and abs(float(loco.data.mocap_quat[mid][0]) - LYING_QUAT[0]) < 1e-3 and \
-        abs(float(loco.data.mocap_quat[mid][1]) - LYING_QUAT[1]) < 1e-3
+    # Full orientation AND up on the bed / sofa (body origin > 0.4 m): Finn's `fallen` owner also lies
+    # (on the floor, origin 0.14 m) and must never be taken for the owner in bed.
+    return (mid >= 0 and float(np.abs(loco.data.mocap_quat[mid] - LYING_QUAT).max()) < 1e-3
+            and float(loco.data.mocap_pos[mid][2]) > 0.4)
 
 
 def body_distance(loco, rx: float, ry: float) -> float:
