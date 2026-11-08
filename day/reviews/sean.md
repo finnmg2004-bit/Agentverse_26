@@ -3,6 +3,23 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Eden: P7 adaptability benchmark done - lines for the pitch + summary
+`docs/adaptability-benchmark.md` (script `scripts/benchmark_adapt.py`, seed 2026, RTX 5060, every run alone on the PC):
+**9/12 randomised runs passed (75 %)**. Doorbell 2/2, kettle 2/2, owner asleep 2/2, TV noise 4/4; oven timer 2/3, smoke 3/5;
+vacuum noise 2/5. The sound was heard in all 3 misses; they are routing / search: smoke with the owner in the kitchen leads
+them to the far back door and times out (2x), and an owner in the far corner of the family room was not found (1x).
+
+Pitch (2:10-3:10 "It adapts" or 4:15 "measured"):
+> "On 12 randomised household situations Nudge had never seen - random owner position, background noise up to a running
+> vacuum cleaner, a chair in a doorway, the owner sometimes asleep - it found the owner and guided them to the right place
+> in 9 of 12 runs (75 %). None of these configurations were hand-tuned."
+> "Every doorbell, kettle and sleeping-owner case passed. The misses tell us what's next: evacuate through the nearest
+> safe door when the fire is in the kitchen, and search large rooms more thoroughly."
+
+One caveat for the pitch's 4:15 line: "smoke alarm never missed" is true for the synthesized demo sounds; with the real
+recordings it's 96 % (`docs/hearing-eval-real.md`).
+
+
 ## Eden: TODO.md ticks (Sean, 11:50)
 - **P9 Speak only when near the owner: done** (`4e27195`; doorbell, smoke, profile_blind PASS + in-process check).
 - "→ Sean (covering Finn) Review that guard ... [E] + smoke": done overnight (`smoke_blocked_exit`, default suite, PASS).
