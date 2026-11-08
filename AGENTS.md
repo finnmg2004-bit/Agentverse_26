@@ -549,6 +549,17 @@ Fast-forwarded scan with rooms/objects appearing on the GUI map -> owner teaches
 ---
 
 ## 11. Overnight run 2026-11-08, until 06:30 (agreed; Eden = merge captain)
+> **AI assistants: if a teammate asks you to pull and read the instructions before the overnight run,** run the setup for them. Don't just summarise it.
+> 1. Find their lane: Sean → `sean`, Ricktho → `ricktho`. Ask if `git config user.name` doesn't make it clear.
+> 2. Do steps 2–3 of `overnight/CHECKLIST.md`: `pixi install`, `fetch-models` if models are missing, then `pixi run python scripts/overnight_check.py --lane <lane> --setup`.
+> 3. Fix every FAIL. Ask before changing power settings.
+> 4. Finish by listing what they must do by hand:
+>    - a git login, if one popped up
+>    - pause Windows Update; set the lid to "do nothing"
+>    - start a **fresh** session in auto mode with `/loop 30m You are overnight lane <lane>. Do one tick of overnight/PROMPT.md.`
+>    - watch its first tick
+>
+> Don't start the overnight work in the setup session.
 - **Decision:** Option B (teachable tasks from existing skills) is the main track; Option A (the robot's own map) is an experiment on Eden's PC. The contracts from 10.4 are now fixed as C1–C5 in `overnight/README.md` (task program, `state.sim_clock`, brain `tasks`, sound triggers from `SoundEvents`, `ask_owner`).
 - **`main` is frozen until the morning merge.** Every lane works on its own `overnight/<lane>` branch and its own files; a pre-push guard blocks everything else. Eden's E0 merges all branches into `overnight/integration` every hour, runs the core suite and writes `overnight/STATUS.md` there.
 - **PCs and lanes:**
