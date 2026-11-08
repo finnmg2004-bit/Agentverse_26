@@ -220,6 +220,7 @@ SOUND_SOURCES: Dict[str, Dict[str, object]] = {
         # P8: a real visitor rings, waits, rings again, then gives up. The sim plays this pattern only with
         # NUDGE_INTERMITTENT=1; SoundEvents always holds a stop through the pause (one visitor = one event).
         "ring_pattern": {"ring_s": 3.0, "pause_s": 6.0, "give_up_s": 60.0},
+        "event_quiet_below": 0.5,           # SoundEvents: below this counts as a pause (TV babble ~0.3 doesn't)
         "say": "Doorbell. Hold my handle. I will take you to the front door.",
         "rgba_active": (0.1, 0.85, 1.0, 0.95),
         "rgba_idle": (0.1, 0.4, 0.5, 0.35),

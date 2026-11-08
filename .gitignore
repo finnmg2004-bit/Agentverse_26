@@ -54,3 +54,7 @@ runs/
 
 rp_*_OBJ/
 MUJOCO_LOG.TXT
+*rp_*_c4d/
+*rp_*_FBX/
+*rp_*_fbx/
+Renderpeople_*.pdf

@@ -515,7 +515,11 @@ class SoundEvents:
                     events.append(ev)
             else:
                 self.active[name]["confidence"] = max(self.active[name]["confidence"], round(conf, 3))
-                self._below[name] = self._below.get(name, 0) + 1 if conf < self.STOP_CONF else 0
+                # P8: registry `event_quiet_below` (doorbell 0.5): with its long hold through the visitor's
+                # pauses only a real ring keeps the doorbell going; TV babble at ~0.3 must not stretch it.
+                # Knocks score lower inside a ring, so the knock keeps the normal STOP_CONF.
+                quiet_below = float(SOUND_SOURCES.get(name, {}).get("event_quiet_below", self.STOP_CONF))
+                self._below[name] = self._below.get(name, 0) + 1 if conf < quiet_below else 0
                 if self._below[name] >= self.stop_windows(name):
                     start = self.active.pop(name)
                     ev = self._event(name, "stop", start["confidence"], result, t)
