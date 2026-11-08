@@ -43,6 +43,12 @@ start = { cmd = "python scripts/run_all.py", depends-on = ["fetch-world"] }
 # End-to-end scenario tests (doorbell, knock, smoke, owner_moved, chair, reset, demo); add --gui to watch
 test-scenarios = { cmd = "python scripts/test_scenarios.py", depends-on = ["fetch-world"] }
 
+# Hearing eval dataset: ESC-50 (2,000 clips, 50 classes, CC BY-NC 3.0, ~650 MB download) -> assets/datasets/ (gitignored)
+fetch-esc50 = "python scripts/fetch_datasets.py"
+
+# Hearing eval: random registry + ESC-50 sounds through the sim's ears -> docs/hearing-eval.md + chart
+hearing-eval = "python scripts/test_hearing_eval.py"
+
 [target.linux-64.tasks]
 # Simulator (forces X11/GLFW compatibility on Linux Wayland/X11)
 sim = { cmd = "python sim/run_sim.py", env = { MUJOCO_GL = "glfw", GDK_BACKEND = "x11" }, depends-on = ["fetch-world"] }

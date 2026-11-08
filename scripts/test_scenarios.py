@@ -19,6 +19,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -281,7 +282,8 @@ class SimProcess:
             cmd.append("--headless")
         cmd += list(extra)
         self.proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, encoding="utf-8", errors="replace")
+                                     text=True, encoding="utf-8", errors="replace",
+                                     env=dict(os.environ, NUDGE_SOUND_OUT="0"))  # tests stay silent (#3)
         self.lines: List[str] = []
         threading.Thread(target=self._pump, daemon=True).start()
 
