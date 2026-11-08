@@ -548,6 +548,29 @@ Fast-forwarded scan with rooms/objects appearing on the GUI map -> owner teaches
 
 ---
 
+### 10.8 Option A mapping — status after the overnight run (2026-11-08, from `overnight/reports/eden-mapping.md`)
+**Built (all experimental, separate from the demo path; the brain still plans on `nav_map.py` + `house_layout.py`):**
+- `nudge-brain/robot_map.py` — own process, publishes ZMQ topic `robot_map` on **:5559** (1 Hz): log-odds occupancy grid from the LiDAR + robot pose, PNG in the message, resets on an episode change (`R`).
+- `nudge-brain/object_memory.py` — multi-class YOLO + head-camera depth -> object positions, plus room naming from objects; enabled with `robot_map.py --objects` (objects + rooms go in the :5559 header).
+- Change detection: LiDAR hits inside cells it was confident were free (no occupied cell within 5×5) become `changes: [{kind, x, y, cells, t}]` in the header + a `[robot_map] CHANGE` log line.
+- `gui/panels/robot_map.py` — GUI tab subscribing to :5559 (grid texture + robot + objects).
+- `scripts/test_mapping.py` — headless tour (entry -> dining -> living_room -> guest) scored against `house_layout.py`.
+
+**Measured:**
+- **Walls are good:** 75.6 % of the house seen on the tour, wall precision **97.0 %**, recall **95.0 %**.
+- **Objects are weak:** YOLO labels the furniture stand-in boxes as `tv` (3 duplicate "tv" objects, one outside the house). From the start pose: 0 objects (the entry hall only has box stand-ins). Real detection rate unknown.
+- **Room naming is unreliable**; a wide kitchen splits into 2 clusters (`CLUSTER_DIST` 3.5 m).
+- **Change detection** only checked on synthetic data (static wall = 0 changes, chair = 1); not run live with `[C]`; false-positive rate from pose jitter unknown.
+- **GUI panel** never rendered live; it does not draw `changes` yet.
+- Not built: frontier **exploration** (the test drives a fixed tour), the brain **using** the map, the "build new jobs from primitives" agent.
+
+**What would make it usable (next steps, in order):**
+1. **Real objects for YOLO:** run with Sean's `--coco-objects` (bed, sofa, wall TV via `sim/coco_standins.py`; ground truth in `state.objects_gt`) and score object memory against it; drop detections outside the map / on box stand-ins (min confidence, min size, merge duplicates by class + distance, must lie inside a known-free room).
+2. **Room naming** from the objects that are now real (bed -> bedroom, couch + tv -> living room, fridge -> kitchen), with `house_layout` only as the test's ground truth.
+3. **Live change detection** with `[C]` (chair in a doorway) and `[E]`, measuring false positives while driving.
+4. **Exploration:** frontier-based scan from the start pose until coverage stops growing; save the map to disk; the video can start from the saved map.
+5. **Let the robot use it, behind a flag** (`NUDGE_ROBOT_MAP=1`, default off): the planner plans on the robot's grid (+ live changes) instead of the static `nav_map`, and "take me to the sofa / my bed" resolves through object memory. The default demo path stays as it is until the scenario suite passes with the flag on.
+
 ## 11. Overnight run 2026-11-08, until 06:30 (agreed; Eden = merge captain)
 > **AI assistants: if a teammate asks you to pull and read the instructions before the overnight run,** run the setup for them. Don't just summarise it.
 > 1. Find their lane from `git config user.name`: `SeanChen66` → `sean`, `Ricktho1` → `ricktho`. Ask only if it's neither.
