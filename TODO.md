@@ -4,15 +4,16 @@ Status: overnight run merged (`d2e2f00`, 14/14). **Final day: all 5 working, pla
 Tick an item off when it lands on `main`. Feature freeze **11:45**, record 12:00–12:45, submit 13:45.
 
 ## Today (AGENTS.md 12; numbers = the team's ideas list)
-- [ ] **Eden:** #9 GUI mic button · merge + suites at 10:45 / 11:45 · then #15 GUI Deaf/Blind switch, demo, summary, pitch, submit
+- [ ] **Eden:** #9 GUI mic button · merge + suites at 10:45 / 11:45 · demo, summary, pitch, submit
 - [ ] **Finn:** #13 999 call (ask first) · #20 no response → emergency contact · then #19 getting stuck, #11 search/paths
-- [ ] **Teo:** #16/#6 Gemma visual owner check (`owner_check`) + deeper reasoning · steer agents A + C (Modal + Gemma licence by 10:00)
-- [ ] **Sean:** #4 visible nudge · #12 speech on by default · #19 repro scenarios · then #15 modes on the robot, #1 night, #2 charging station
+- [ ] **Teo (his PC, merges his own branches before 11:45):** #16/#6 Gemma visual `owner_check` · agent A Option A own map (#7, #17, #18) + pitch clip · agent C fine-tune/evals · sound-eval chart
+- [ ] **Sean:** #4 visible nudge · #12 speech on by default · #19 repro scenarios · review agents E + F
 - [ ] **Ricktho:** #3 audible sounds · YOLO check of the scanned owner · review agents B + D · then #8 owner in bed / on the sofa
-- [ ] **Agent A** `day/own-map`: Option A, 10.8 steps 1–5 (#7, #17, #18) + pitch clip
-- [ ] **Agent B** `day/sound-real`: TV doorbell vs real door, scenario `tv_doorbell`
-- [ ] **Agent C** `day/finetune`: eval + data + Modal LoRA + GGUF (Teo trains)
-- [ ] **Agent D** `day/owner-voice`: #10 Nudge knows where the owner is from their voice, scenario `owner_voice`
+- [ ] **Agent B** (Eden's laptop) `day/sound-real`: TV doorbell vs real door, scenario `tv_doorbell`
+- [ ] **Agent D** (Eden's laptop) `day/owner-voice`: #10 Nudge knows where the owner is from their voice, scenario `owner_voice`
+- [ ] **Agent E** (Eden's laptop) `day/profiles`: #15 Deaf / Blind / Deafblind modes (GUI + robot outputs)
+- [ ] **Agent F** (Eden's laptop) `day/night-dock`: #1 night dimming + #2 charging station
+- Everything local (Gemma, YAMNet, YOLO, Whisper, Piper); no Gemini cloud API
 - [ ] Remove the overnight push guard on every PC: `pixi run python scripts/overnight_check.py --uninstall-hook`
 - Not today: #21 LED colours (kept as they are)
 

@@ -65,6 +65,8 @@ The first start takes about 10 s because it builds the navigation map (`assets/m
 
 The viewer opens on a **cutaway** view of the west wing: upper storeys, roof and ceilings are hidden so you can watch the ground floor from above. The robot's own camera still sees the ceilings. To show the whole house, run `pixi run sim --no-cutaway`.
 
+Triggered sounds also **play on your speakers** (the same clips the robot's ears hear, looped until the event is resolved or `X` silences it), so the audience hears the doorbell, kettle or smoke alarm. `NUDGE_SOUND_OUT=0` mutes them, `NUDGE_SOUND_VOLUME=0.3` sets the volume (default 0.5); scenario tests are always silent.
+
 Press the hotkeys with the **MuJoCo window** focused (they also work in the dashboard window):
 
 | Key | Event |
