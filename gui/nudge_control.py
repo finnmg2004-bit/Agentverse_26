@@ -23,10 +23,13 @@ ZMQ: SUB sim :5555 (`state`, `camera`, `view`), SUB brain :5556 (`brain`), PUB :
 
 from __future__ import annotations
 
+import atexit
 import json
 import math
 import os
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -64,6 +67,8 @@ SIM_PUB = "tcp://127.0.0.1:5555"
 BRAIN_PUB = "tcp://127.0.0.1:5556"
 GUI_PUB = "tcp://127.0.0.1:5557"
 VOICE_PUB = os.environ.get("NUDGE_VOICE_PUB", "tcp://127.0.0.1:5558")  # nudge-brain/voice.py (voice_status)
+VOICE_SCRIPT = ROOT / "nudge-brain" / "voice.py"  # started / stopped by the Mic button
+VOICE_LOG = Path(tempfile.gettempdir()) / "nudge_voice.log"
 
 VIEW_W, VIEW_H = 960, 540
 CAM_W, CAM_H = 320, 240
@@ -215,6 +220,9 @@ class NudgeControl:
         self.reason_sig: Any = None
         self.events_sig: Any = None
         self.last_sent: Optional[tuple] = None  # (text, monotonic time) of the last "Tell Nudge"
+        self.voice_proc: Optional[subprocess.Popen] = None  # voice.py started by the Mic button
+        self.mic_note = ""
+        atexit.register(self.stop_voice)  # closing the GUI also stops the mic
         # Keyboard shortcuts = sound hotkeys + scene controls + Silence/Reset (all data-driven)
         all_keys = list(SOUND_KEYS.values()) + [k for _, k in SCENE_CONTROLS] + list(FIXED_KEYS)
         self.keymap = {getattr(dpg, f"mvKey_{k}"): k for k in all_keys if hasattr(dpg, f"mvKey_{k}")}
@@ -469,6 +477,10 @@ class NudgeControl:
                 dpg.add_combo(EXAMPLE_COMMANDS, default_value="examples...", width=-1, tag="cmd_examples",
                               callback=lambda s, a: dpg.set_value("cmd_input", a))
             with dpg.group(horizontal=True):
+                # Mic button (#9): starts / stops the local voice input (nudge-brain/voice.py: mic -> Whisper)
+                b = dpg.add_button(label="Mic ON", tag="mic_btn", width=80, callback=self.toggle_mic)
+                dpg.bind_item_theme(b, self._button_theme((40, 120, 90)))
+                dpg.add_checkbox(label="wake word", tag="mic_wake", default_value=True)
                 dpg.add_text("mic: off", tag="voice_txt", color=DIM)
                 dpg.add_text("Heard:", color=DIM)
                 dpg.add_text("nothing yet", tag="heard_cmd_txt", color=(150, 230, 255, 255))
@@ -651,16 +663,55 @@ class NudgeControl:
         quote = f' - "{r["text"]}"' if r.get("text") else ""
         return f"{label}: {what}{until}{src}{quote}"
 
+    # ------------------------------------------------------------------ mic button (#9)
+    def _voice_running(self) -> bool:
+        return self.voice_proc is not None and self.voice_proc.poll() is None
+
+    def toggle_mic(self) -> None:
+        """Start / stop the local voice input (nudge-brain/voice.py: laptop mic -> Whisper -> `user_command`)."""
+        if self._voice_running():
+            self.stop_voice()
+            self.mic_note = "mic: stopping..."
+            return
+        if time.monotonic() - self.t_voice < 2.0:  # `pixi run voice` already running in another window
+            self.mic_note = "mic: already running in another window"
+            return
+        args = [sys.executable, str(VOICE_SCRIPT)]
+        if not dpg.get_value("mic_wake"):
+            args.append("--no-wake")  # every sentence is a command (no "Nudge, ..." needed)
+        try:
+            log = open(VOICE_LOG, "w", encoding="utf-8")
+            self.voice_proc = subprocess.Popen(args, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT)
+            self.mic_note = "mic: starting (loading Whisper)..."
+        except Exception as exc:  # noqa: BLE001
+            self.voice_proc = None
+            self.mic_note = f"mic: failed to start ({exc})"
+
+    def stop_voice(self) -> None:
+        if not self._voice_running():
+            return
+        self.voice_proc.terminate()
+        try:
+            self.voice_proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            self.voice_proc.kill()
+
     def _update_commands(self, br: dict, brain_ok: bool) -> None:
-        # Voice module (pixi run voice) mic indicator
+        # Mic button label: what pressing it will do
+        running = self._voice_running()
+        dpg.configure_item("mic_btn", label="Mic OFF" if running else "Mic ON")
+        if self.voice_proc is not None and not running and self.voice_proc.returncode not in (0, None, 1, -15):
+            self.mic_note = f"mic: voice input stopped (exit {self.voice_proc.returncode}, log {VOICE_LOG})"
+        # Voice module (pixi run voice / Mic button) mic indicator
         if time.monotonic() - self.t_voice < 2.0 and self.voice:
             state = str(self.voice.get("state", "?"))
             col = {"hearing": GREEN, "transcribing": AMBER, "listening": CYAN}.get(state, DIM)
             dpg.set_value("voice_txt", f"mic: {state}")
             dpg.configure_item("voice_txt", color=col)
+            self.mic_note = ""
         else:
-            dpg.set_value("voice_txt", "mic: off")
-            dpg.configure_item("voice_txt", color=DIM)
+            dpg.set_value("voice_txt", self.mic_note or "mic: off")
+            dpg.configure_item("voice_txt", color=AMBER if self.mic_note else DIM)
         heard = br.get("heard") if brain_ok else None
         if heard and heard.get("text"):
             conf = heard.get("confidence")
@@ -919,6 +970,9 @@ class NudgeControl:
                         self.send({"action": "clock", "time": what[6:]})
                     elif what.lower().startswith("say="):
                         self.send_command(what[4:])
+                    elif what.lower() in ("mic", "mic=on", "mic=off"):
+                        if (what.lower() != "mic=off") != self._voice_running():
+                            self.toggle_mic()
                     else:
                         self.key(what.upper())
                 if shots and elapsed >= shots[0][1]:
@@ -943,7 +997,8 @@ def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Nudge Control: 3D view, events and agent reasoning")
     ap.add_argument("--auto", default="",
-                    help="Scripted actions: key, cam=<preset> or say=<sentence>, each @ seconds; separate with ';' "
+                    help="Scripted actions: key, cam=<preset>, clock=HH:MM, mic=on|off or say=<sentence>, each @ seconds; "
+                         "separate with ';' "
                          "(or ',' when no sentence has a comma), e.g. 'say=I'm expecting a parcel@2;B@5;cam=Chase cam@6'")
     ap.add_argument("--screenshot", default="",
                     help="Save PNG(s), quit after the last, e.g. 'shot.png@30' or 'a.png@20;b.png@45'")

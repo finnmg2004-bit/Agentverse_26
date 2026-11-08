@@ -36,6 +36,8 @@ P_DETECT = 0.15           # chance one camera frame detects a visible owner (10 
 MOVE_RATE = 1.0 / 90.0    # people change room roughly every 1.5 min
 HOP_DISCOUNT = 0.35       # search score = P / (1 + HOP_DISCOUNT * hops)
 FLOOR = 1e-4
+CLEARED_P = 0.06          # a room is "cleared" (no need to scan it) below this probability...
+CLEARED_RATIO = 0.25      # ...and below this fraction of the most likely other room
 
 
 def _samples(room: str) -> List[Tuple[Tuple[float, float], float]]:
@@ -107,6 +109,15 @@ class OwnerBelief:
     # ------------------------------------------------------------------ queries
     def most_likely(self) -> str:
         return max(self.p, key=self.p.get)
+
+    def cleared(self, room: Optional[str]) -> bool:
+        """True if the camera has already ruled this room out (e.g. while walking in through an open
+        archway), so spinning to scan it would only waste time: its probability is tiny both in
+        absolute terms and next to the most likely other room."""
+        if room not in self.p:
+            return False
+        others = max((v for r, v in self.p.items() if r != room), default=0.0)
+        return self.p[room] < CLEARED_P and self.p[room] < CLEARED_RATIO * others
 
     def best_room(self, robot_room: str, hops_fn, exclude: Optional[Set[str]] = None) -> str:
         """Room to search next: high probability, not too far away."""

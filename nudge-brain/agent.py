@@ -89,6 +89,25 @@ e.g. BSL users, English is a second language). Example say: "Doorbell. Hold my h
 # --------------------------------------------------------------------------- #
 # Deterministic policy (fallback + "what the rules would do" for comparison)
 # --------------------------------------------------------------------------- #
+def _scan_here_useful(world) -> bool:
+    """Is spinning to scan the current room worth it? Not if it was scanned already, or if the
+    camera already ruled it out (e.g. walking in through an open archway: owner_belief.cleared)."""
+    here = world.robot_room
+    return here in ROOMS and here not in world.searched_rooms and not world.belief.cleared(here)
+
+
+def _search_step(world, scan_first: bool) -> Dict[str, Any]:
+    """Next search move. Never go_to_room(<current room>): that is what look_around is for.
+    scan_first (just arrived / timed out in a room): scan it if that can still find the owner, else
+    walk on. Otherwise (a new sound, a finished scan): the best room by probability and distance."""
+    if scan_first and _scan_here_useful(world):
+        return {"tool": "look_around", "args": {}}
+    room = world.best_search_room()
+    if room == world.robot_room:
+        return {"tool": "look_around", "args": {}}
+    return {"tool": "go_to_room", "args": {"room": room}}
+
+
 def deterministic_policy(event: str, world) -> Dict[str, Any]:
     """Rule-based fallback that always produces a safe, valid tool call."""
     if world.is_emergency():
@@ -105,25 +124,30 @@ def deterministic_policy(event: str, world) -> Dict[str, Any]:
             return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
         return {"tool": "go_to_room", "args": {"room": world.best_search_room()}}
     if event == "owner_no_response":
-        if world.nudge_attempts < MAX_NUDGES:
+        # #20: after MAX_NUDGES unanswered nudges main.py alerts the emergency contact; an owner who
+        # doesn't respond can't be led, so Nudge stays with them until they do (or help arrives).
+        if world.nudge_attempts < MAX_NUDGES and not _contact_alerted(world):
             return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
-        return {"tool": "guide_owner_to", "args": {"target": target}}
+        return {"tool": "stay_with_owner", "args": {}}
     if event in ("new_sound", "owner_seen") and world.owner_recently_seen(3.0):
         return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
     if event in ("new_sound", "owner_not_found"):
-        return {"tool": "go_to_room", "args": {"room": world.best_search_room()}}
+        return _search_step(world, scan_first=False)
     if event == "arrived_in_room":
-        if world.owner_recently_seen(2.0):
+        # 3 s, like the prompt's "visible now" (was 2 s: a sighting 2-3 s old meant a pointless scan)
+        if world.owner_recently_seen(3.0):
             return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
-        return {"tool": "look_around", "args": {}}
+        return _search_step(world, scan_first=True)
     if event in ("owner_alerted", "handle_taken", "path_blocked"):
         return {"tool": "guide_owner_to", "args": {"target": target}}
     if event == "guide_complete":
         return {"tool": "get_state", "args": {}}
-    # timeout / unknown: re-acquire the owner
+    # timeout / unknown: carry on leading if the owner holds the handle, else re-acquire the owner
+    if world.guiding_active:
+        return {"tool": "guide_owner_to", "args": {"target": target}}
     if world.owner_recently_seen(3.0):
         return {"tool": "alert_owner", "args": {"sound": sound, "place": target}}
-    return {"tool": "look_around", "args": {}}
+    return _search_step(world, scan_first=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -141,6 +165,38 @@ EVENT_TEXT = {
     "timeout": "Your last action took too long.",
     "user_command": "The owner just asked you to do something.",
 }
+
+
+def _contact_alerted(world) -> bool:
+    """#20: the owner's emergency contact has been alerted (owner not responding, no fire)."""
+    esc = getattr(world, "escalation", None)
+    return bool(esc and esc.get("called") and esc.get("contact") == "emergency_contact")
+
+
+def _owner_declined_999(world) -> bool:
+    """#13: the owner answered "no" to "Shall I call 999?" in this fire."""
+    esc = getattr(world, "escalation", None)
+    return bool(esc and esc.get("contact") == "999" and esc.get("answer") == "no" and not esc.get("called"))
+
+
+def _escalation_lines(world) -> List[str]:
+    """What the agent should know about calls for help (C8) and the camera check (C7)."""
+    lines: List[str] = []
+    esc = getattr(world, "escalation", None) or {}
+    if world.is_emergency():
+        if world.escalated:
+            lines.append("Emergency services (999) have already been called.")
+        elif _owner_declined_999(world):
+            lines.append("The owner said NOT to call 999. Only call if the owner is lost or not responding.")
+        elif esc.get("asked") and esc.get("answer") is None:
+            lines.append("You asked the owner \"Shall I call 999?\" and are waiting for the answer "
+                         "(no answer = call). Keep leading them out.")
+    elif _contact_alerted(world):
+        lines.append(f"The owner did not respond ({esc.get('detail', '')}): their emergency contact has "
+                     "been alerted. Stay with them until they respond.")
+    if getattr(world, "owner_lying_down", None) and world.owner_lying_down():
+        lines.append("Camera check: the owner is LYING DOWN.")
+    return lines
 
 
 def _areas_text(world) -> str:
@@ -187,8 +243,8 @@ def _situation(event: str, world) -> List[str]:
             lines.append(f"EMERGENCY: smoke alarm{where}. Fire believed in the {_label(fire.get('room'))} "
                          f"({fire.get('source', 'unknown')}). Alarm started {elapsed:.0f} s ago. "
                          f"Goal: get the owner out of the house.")
-            if world.escalated:
-                lines.append("Emergency services have already been called.")
+            if world.escalated or _owner_declined_999(world):
+                pass  # see _escalation_lines
             elif not world.owner_recently_seen(10.0) and not world.guiding_active and elapsed > 20:
                 lines.append(f"The owner is STILL MISSING {elapsed:.0f} s into the fire "
                              f"(more than 20 s: emergency services should be called now).")
@@ -207,10 +263,15 @@ def _situation(event: str, world) -> List[str]:
         lines.append(f"Owner: not visible; last seen {age:.0f} s ago in the {_label(world.owner_room)}.")
     else:
         lines.append("Owner: not seen yet.")
+    oc = getattr(world, "owner_check", None)  # Gemma's camera look at the owner (C7; only with NUDGE_OWNER_CHECK=1)
+    if oc and oc.get("state") != "not_visible" and oc.get("age", 99.0) <= 10.0:
+        lines.append(f"Camera look at the owner {oc['age']:.0f} s ago: {oc['description']} "
+                     f"({oc['state'].replace('_', ' ')}).")
     if world.owner_ack == "acknowledged":
         lines.append("The owner acknowledged the alert (tapped the handle).")
     elif world.nudge_attempts:
         lines.append(f"The owner has not acknowledged yet after {world.nudge_attempts} nudge(s).")
+    lines += _escalation_lines(world)
     if world.blocked_doors:
         lines.append("Blocked doorways seen by LiDAR: " + ", ".join(sorted(world.blocked_doors)) + ".")
     rules = world.rules.summaries()
@@ -244,6 +305,14 @@ def build_menu(event: str, world) -> Tuple[List[str], List[Dict[str, Any]]]:
     lead_now = (world.guiding_active or event in ("owner_alerted", "handle_taken", "path_blocked")
                 or (event == "user_command" and world.dist_to_owner() < 1.6))
     keep_off = _areas_text(world)
+    # #20: the owner did not respond to MAX_NUDGES nudges (no fire): stay with them instead of leading
+    stay_now = (not emergency and event == "owner_no_response" and not world.guiding_active
+                and (_contact_alerted(world) or world.nudge_attempts >= MAX_NUDGES))
+    if stay_now:
+        add("stay_with_owner", {},
+            f"stay next to the owner with the handle held out until they respond (no tap after "
+            f"{world.nudge_attempts} nudges" + ("; their emergency contact has been alerted" if _contact_alerted(world)
+                                                else "") + ")")
     if lead_now or event == "owner_no_response":
         if emergency and world.evac:
             details = world.evac.get("details", {})
@@ -276,7 +345,7 @@ def build_menu(event: str, world) -> Tuple[List[str], List[Dict[str, Any]]]:
                         + (f" instead of {d['length']:.0f} m" if d.get("around_ok", True) else
                            " (no other way)")
                         + ", " + fire_words(d["cross_fire_dist"]))
-        elif not emergency:
+        elif not emergency and not stay_now:
             why = "where they asked to go" if sound == "request" else f"where the {sound} needs them"
             add("guide_owner_to", {"target": m["target"]},
                 f"lead the owner by the handle to {m['target']} ({why})"
@@ -298,7 +367,9 @@ def build_menu(event: str, world) -> Tuple[List[str], List[Dict[str, Any]]]:
         here = world.robot_room
         if here in ROOMS and here not in world.searched_rooms:
             add("look_around", {}, f"scan the {_label(here)} you are in (owner probability "
-                                   f"{world.belief.p.get(here, 0):.0%}, not scanned yet)")
+                                   f"{world.belief.p.get(here, 0):.0%}, "
+                                   + ("your camera already saw most of it on the way in: little chance)"
+                                      if world.belief.cleared(here) else "not scanned yet)"))
         ranked = [(r, p) for r, p in sorted(world.belief.p.items(), key=lambda kv: -kv[1]) if r != here]
         for r, p in ranked[:4]:
             if room_hops(here, r, blocked) >= 99:
@@ -354,6 +425,10 @@ def explain_decision(event: str, action: Dict[str, Any], world) -> str:
     if tool == "alert_owner":
         return (f"{prefix}owner located in the {_label(world.owner_room)} -> walk up, nudge them and give "
                 f"the {args.get('sound', mission.get('sound', '?'))} vibration code")
+    if (tool == "go_to_room" and world.robot_room not in world.searched_rooms
+            and world.belief.cleared(world.robot_room) and event == "arrived_in_room"):
+        return (f"{prefix}the camera already ruled out the {_label(world.robot_room)} on the way in -> skip the "
+                f"scan and search '{args.get('room')}' next" + (f", keeping off {keep_off}" if keep_off else ""))
     if tool == "go_to_room":
         searched = ", ".join(sorted(world.searched_rooms)) or "none yet"
         return (f"{prefix}owner not in view after '{event}' -> search the most likely room "
@@ -366,6 +441,9 @@ def explain_decision(event: str, action: Dict[str, Any], world) -> str:
             return (f"{prefix}{why} -> lead them to {args.get('target')} ACROSS {keep_off}: the fire overrides "
                     f"the owner's place rule because that route is much shorter")
         return f"{prefix}{why} -> lead them to {args.get('target')}" + (f", keeping off {keep_off}" if keep_off else "")
+    if tool == "stay_with_owner":
+        return (f"owner did not tap the handle after {world.nudge_attempts} nudge(s) -> emergency contact "
+                "alerted; stay next to them with the handle out until they respond")
     if tool == "get_state":
         return "no active task -> stay put"
     return f"{prefix}{tool}({', '.join(str(v) for v in args.values())})"
@@ -483,7 +561,8 @@ class NudgeAgent:
         world.log(f"EVENT {event}")
         situation, options = build_menu(event, world)
         rule = deterministic_policy(event, world)
-        ask_esc = world.is_emergency() and not world.escalated
+        # The owner's "no" to "Shall I call 999?" stands; the no-response / not-found rules still call.
+        ask_esc = world.is_emergency() and not world.escalated and not _owner_declined_999(world)
         ask_say = any(o["tool"] == "alert_owner" for o in options)
         prompt = _menu_text(situation, options, ask_esc, ask_say)
         self.last_menu = prompt.splitlines()

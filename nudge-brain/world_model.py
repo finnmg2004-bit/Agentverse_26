@@ -111,7 +111,14 @@ class WorldModel:
         # Fire-aware evacuation (evacuation.py)
         self.fire: Optional[Dict[str, Any]] = None
         self.evac: Optional[Dict[str, Any]] = None      # {"target", "scores", "hazard_doors", "reason"}
-        self.escalated: bool = False
+        self.escalated: bool = False  # 999 called in this mission (any path)
+        # Contract C8 (main.Brain.escalate): who Nudge called and why, or None. One record per mission:
+        # {"reason": "fire"|"no_response", "contact": "999"|"emergency_contact", "asked": bool,
+        #  "answer": "yes"|"no"|"timeout"|None, "called": bool, "by", "detail", "t"}
+        self.escalation: Optional[Dict[str, Any]] = None
+        # Contract C7 (Teo's camera check, gemma_vision): {"state": "standing"|"sitting"|"lying_down"|
+        # "not_visible", "confidence", "t", "source"} or None. Read by the no-response escalation.
+        self.owner_check: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------ updates
     def update_state(self, msg: Dict[str, Any]) -> None:
@@ -191,9 +198,11 @@ class WorldModel:
 
     def best_search_room(self) -> str:
         """Most probable owner room, discounted by how far away it is (owner_belief.py).
-        The room the robot is standing in is skipped once it has looked around it."""
+        The room the robot is standing in is skipped once it has looked around it, or once the
+        camera has already ruled it out on the way in (owner_belief.cleared)."""
         blocked = set(self.blocked_doors)
-        exclude = {self.robot_room} if self.robot_room in self.searched_rooms else set()
+        here = self.robot_room
+        exclude = {here} if (here in self.searched_rooms or self.belief.cleared(here)) else set()
         return self.belief.best_room(self.robot_room, lambda a, b: room_hops(a, b, blocked), exclude)
 
     # ------------------------------------------------------------------ mission
@@ -217,6 +226,7 @@ class WorldModel:
         self.owner_ack = None
         self.nudge_attempts = 0
         self.escalated = False
+        self.escalation = None
         if sound != "smoke_alarm":
             self.fire = None
             self.evac = None
@@ -266,7 +276,17 @@ class WorldModel:
             "owner_acknowledged": self.owner_ack == "acknowledged",
             "evacuation_exit": self.evac_target() if self.is_emergency() else None,
             "owner_rules": self.rules.summaries(),
+            "escalation": self.escalation,
         }
+
+    def owner_lying_down(self, fresh_s: float = 30.0) -> bool:
+        """C7 camera check says the owner is lying down (recent, confident). False without Teo's check."""
+        oc = self.owner_check
+        if not oc or oc.get("state") != "lying_down" or float(oc.get("confidence", 1.0) or 0.0) < 0.5:
+            return False
+        t = float(oc.get("t", self.t_sim) or 0.0)
+        age = (time.time() - t) if t > 1e6 else (self.t_sim - t)  # unix or sim seconds
+        return age <= fresh_s
 
     def avoid_for_planning(self) -> Tuple[List[Tuple[float, float, float, float]], Optional[float]]:
         """(rectangles, cost) for the navigator: owner's no-go areas are walls normally, and only a

@@ -11,6 +11,7 @@ Nudge Brain orchestrator (`nudge-brain/main.py`) — run with `pixi run brain`.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -27,8 +28,9 @@ from alerts import HapticAlerts  # noqa: E402
 from bridge import BrainBridge  # noqa: E402
 from hearing import SoundEvents, StereoHearing  # noqa: E402
 from navigator import Navigator  # noqa: E402
-from skills import GoToRoom, Skill, SkillExecutor  # noqa: E402
+from skills import GoToRoom, Skill, SkillExecutor, SkillOutput, wrap  # noqa: E402
 from vision import OwnerDetector  # noqa: E402
+from gemma_vision import OwnerChecker  # noqa: E402  (Teo, C7 owner_check; NUDGE_OWNER_CHECK=1)
 from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
@@ -46,6 +48,42 @@ OWNER_SEEN_COOLDOWN = 3.0
 # E1.5: after teaching, ask "... OK?" (C5 `ask`); yes keeps the task, no drops it, no answer keeps it
 ASK_CONFIRM = os.environ.get("NUDGE_ASK_CONFIRM", "0") == "1"
 SAY_HOLD_S = 20.0  # top-level `say` in the brain status: how long a reply stays on the robot screen
+# Escalation (AGENTS.md 12: #13 999 call, #20 no response; contract C8)
+ASK_999_AFTER_S = 3.0      # owner on the handle this long in a fire -> "Shall I call 999?"
+ASK_999_TIMEOUT_S = 10.0   # no answer in a fire = call (the safe default)
+NO_RESPONSE_NUDGES = safety.MAX_NUDGES  # unanswered nudges before the emergency contact is alerted
+FIRE_NO_RESPONSE_NUDGES = 2             # in a fire: 999 after this many
+LYING_DOWN_NUDGES = 1                   # owner lying down (C7 camera check): escalate after the first
+SAY_999_ASK = "Shall I call 999? Say yes or no."
+SAY_999_CALLING = "Calling 999 now. Keep holding my handle. We are going outside."
+SAY_999_DECLINED = "OK. I will not call 999. Keep holding my handle. We are going outside."
+SAY_999_NOT_FOUND = "Smoke alarm! I have called 999. Hold my handle. We are going outside now."
+SAY_FIRE_NO_RESPONSE = "You are not answering. I have called 999. Hold my handle. We must go outside."
+SAY_CONTACT = "You are not answering. I am alerting your emergency contact. I will stay with you."
+
+
+class StayWithOwner(Skill):
+    """#20: the owner did not respond and their emergency contact was alerted. Stand by them with the
+    handle held out; a handle tap or taking the handle hands control back to the agent."""
+
+    name = "stay_with_owner"
+
+    def label(self) -> str:
+        return "stay_with_owner (emergency contact alerted)"
+
+    def step(self, world, nav, alerts) -> SkillOutput:
+        if world.guiding_active:
+            return SkillOutput(guiding=True, event="handle_taken", done=True)
+        if world.owner_tapped_since(self.started):
+            world.owner_ack = "acknowledged"
+            world.log("Owner RESPONDED (handle tap) while Nudge stayed with them")
+            return SkillOutput(event="owner_alerted", done=True)
+        if world.owner_pos is None:
+            return SkillOutput(guiding=True)
+        ox, oy = world.owner_pos
+        rx, ry, yaw = world.robot_pose
+        err = wrap(math.atan2(ry - oy, rx - ox) - yaw)  # handle side (the robot's back) to the owner
+        return SkillOutput(wz=max(-1.0, min(1.0, 1.5 * err)) if abs(err) > 0.3 else 0.0, guiding=True)
 
 
 class TaskAdapter:
@@ -142,6 +180,8 @@ class Brain:
         self.alerts = HapticAlerts()
         self.executor = SkillExecutor(self.nav, self.alerts)
         self.agent = NudgeAgent()
+        # Gemma looks at the owner (C7, gemma_vision.py): None unless NUDGE_OWNER_CHECK=1
+        self.owner_check = OwnerChecker.from_env(busy=lambda: self.agent.pending_info() is not None)
         self.localizer = SoundLocalizer()
         self.evac = EvacuationPlanner(self.nav.planner)
         # What the owner tells the robot (GUI text box / voice): rules.py
@@ -154,7 +194,10 @@ class Brain:
             self.task_store.clear()
         self.task_adapter = TaskAdapter(self)
         self.ask = AskOwner()  # one open question to the owner (C5), answered by voice / GUI
-        self.answer_listener = AnswerListener() if ASK_CONFIRM else None
+        # Answers (`user_answer`) are always listened for: the fire's "Shall I call 999?" needs them too.
+        self.answer_listener = AnswerListener()
+        self.fire_ask_id = None        # id of the open "Shall I call 999?" question (C5), if any
+        self.fire_guiding_since = None  # wall time the owner took the handle in this fire
         self.task_runner = TaskRunner(self.task_store, self.task_adapter,
                                       log=lambda text: self.world.log(text))
         self.new_sound_events: list = []  # SoundEvents since the last task tick (sound triggers)
@@ -197,7 +240,11 @@ class Brain:
         self.owner_activity.reset()
         self.owner_spoke = False
         self.ask.clear()
+        self.fire_ask_id = None
+        self.fire_guiding_since = None
         self.last_owner_seen_event = 0.0
+        if self.owner_check:
+            self.owner_check.reset()
         self.episode = episode
         self.world.log(f"RESET by sim (episode {episode}) - ready")
 
@@ -290,6 +337,8 @@ class Brain:
         pose = meta.get("robot_pose", self.world.robot_pose)
         det = self.vision.detect(rgb, depth, (float(pose[0]), float(pose[1]), float(pose[2])))
         self.world.update_owner_detection(det)
+        if self.owner_check:  # latest frame only; the check itself runs in its own thread
+            self.owner_check.on_frame(rgb, det, self.world.t_sim)
         now = time.monotonic()
         if (det["found"] and self.world.mission is not None and self.world.phase == "searching"
                 and now - self.last_owner_seen_event > OWNER_SEEN_COOLDOWN):
@@ -396,8 +445,9 @@ class Brain:
             for msg in self.answer_listener.poll():
                 if self.ask.answer(msg):
                     self.world.log(f'OWNER ANSWERED ({msg.get("source", "?")}): "{msg.get("text", "")}"')
-        if self.ask.current is not None and self.world.is_emergency():
-            self.ask.clear()  # a fire: no questions now (the task stays, as if unanswered)
+        if (self.ask.current is not None and self.world.is_emergency()
+                and self.ask.current["id"] != self.fire_ask_id):
+            self.ask.clear()  # a fire: no other questions now (the task stays, as if unanswered)
         self.ask.tick(self.world.t_sim)
 
     # ------------------------------------------------------------------ taught tasks
@@ -441,13 +491,96 @@ class Brain:
             return True
         return False
 
+    # ------------------------------------------------------------------ escalation (C8)
+    def tell(self, text: str) -> None:
+        """Say `text` to the owner now: robot screen + speech (mission.say) and the GUI (nudge_says)."""
+        if self.world.mission is not None:
+            self.world.mission["say"] = text
+        self.world.say(text, "escalation")
+
+    def escalate(self, reason: str, contact: str, by: str, asked: bool = False, answer=None,
+                 detail: str = "", say: str = "") -> bool:
+        """Call 999 / alert the emergency contact (simulated) - at most once per mission.
+        Every path ends here: the owner's answer, no answer, the 40 s owner-not-found timer, the LLM's
+        call_emergency_services and the no-response rule. Returns True if this call was made now."""
+        w = self.world
+        if w.escalation is not None and w.escalation.get("called"):
+            return False  # never call twice
+        if self.fire_ask_id is not None and self.ask.current and self.ask.current["id"] == self.fire_ask_id:
+            self.ask.clear()  # called by another path while the question was open
+        w.escalation = {"reason": reason, "contact": contact, "asked": asked, "answer": answer,
+                        "called": True, "by": by, "detail": detail, "t": round(w.t_sim, 1)}
+        if contact == "999":
+            w.escalated = True
+        who = "999 (emergency services)" if contact == "999" else "the owner's emergency contact"
+        w.log(f"ESCALATION {contact}: calling {who} (simulated) - reason {reason}, by {by}"
+              + (f", answer {answer}" if asked else "") + (f" ({detail})" if detail else ""))
+        if say:
+            self.tell(say)
+        return True
+
     def check_escalation(self) -> None:
+        """Owner still not found ESCALATE_AFTER_S into a fire -> 999 without asking."""
         w = self.world
         if (w.is_emergency() and not w.escalated and w.phase == "searching"
                 and time.monotonic() - w.mission["started"] > ESCALATE_AFTER_S):
-            w.escalated = True
-            w.log(f"ESCALATION: owner not found {ESCALATE_AFTER_S:.0f} s into a fire -> "
-                  "emergency services called (simulated)")
+            self.escalate("fire", "999", by="rules",
+                          detail=f"owner not found {ESCALATE_AFTER_S:.0f} s into a fire", say=SAY_999_NOT_FOUND)
+
+    def tick_fire_999(self) -> None:
+        """#13: in a fire, once the owner holds the handle, ask "Shall I call 999?" (C5 ask).
+        yes or no answer -> call; "no" -> don't. The evacuation never waits for the answer."""
+        w = self.world
+        if not w.is_emergency() or w.mission is None or not w.guiding_active:
+            self.fire_guiding_since = None
+            return
+        now = time.monotonic()
+        self.fire_guiding_since = self.fire_guiding_since or now
+        if (w.escalation is not None or w.mission.get("asked_999")
+                or now - self.fire_guiding_since < ASK_999_AFTER_S):
+            return  # already asked / called / declined in this fire, or the owner only just took the handle
+        w.mission["asked_999"] = True
+        mission = w.mission
+
+        def on_answer(choice) -> None:
+            if self.world.mission is not mission and self.world.mission is not None:
+                return  # a new mission started meanwhile
+            self.fire_ask_id = None
+            answer = {"yes": "yes", "no": "no"}.get(choice, "timeout")
+            if answer == "no":
+                self.world.escalation = {"reason": "fire", "contact": "999", "asked": True, "answer": "no",
+                                         "called": False, "by": "owner", "detail": "", "t": round(self.world.t_sim, 1)}
+                self.world.log("ESCALATION 999: owner answered no - not calling")
+                self.tell(SAY_999_DECLINED)
+            else:
+                self.escalate("fire", "999", by="owner" if answer == "yes" else "timeout", asked=True,
+                              answer=answer, say=SAY_999_CALLING,
+                              detail="" if answer == "yes" else f"no answer in {ASK_999_TIMEOUT_S:.0f} s")
+
+        self.fire_ask_id = self.ask.ask(SAY_999_ASK.split("?")[0] + "?", w.t_sim, on_answer,
+                                        choices=["yes", "no"], timeout_s=ASK_999_TIMEOUT_S)
+        w.escalation = {"reason": "fire", "contact": "999", "asked": True, "answer": None, "called": False,
+                        "by": "", "detail": "waiting for the owner's answer", "t": round(w.t_sim, 1)}
+        w.log(f'ASK {self.fire_ask_id}: "Shall I call 999?" (fire; no answer in {ASK_999_TIMEOUT_S:.0f} s = call)')
+        self.tell(SAY_999_ASK)
+
+    def on_no_response(self) -> None:
+        """#20: the owner did not tap the handle after N nudges -> alert someone (plain code).
+        In a fire: 999 (then lead them out anyway); otherwise: the emergency contact (then stay with them).
+        Lying down (Teo's C7 camera check) escalates after the first unanswered nudge."""
+        w = self.world
+        if w.mission is None:
+            return
+        lying = w.owner_lying_down()
+        need = LYING_DOWN_NUDGES if lying else (FIRE_NO_RESPONSE_NUDGES if w.is_emergency() else NO_RESPONSE_NUDGES)
+        if w.nudge_attempts < need:
+            return
+        detail = (("owner LYING DOWN (camera check), " if lying else "")
+                  + f"no handle tap after {w.nudge_attempts} nudge(s)")
+        if w.is_emergency():
+            self.escalate("no_response", "999", by="rules", detail=detail, say=SAY_FIRE_NO_RESPONSE)
+        else:
+            self.escalate("no_response", "emergency_contact", by="rules", detail=detail, say=SAY_CONTACT)
 
     # ------------------------------------------------------------------ loop
     def tick(self) -> bool:
@@ -474,6 +607,7 @@ class Brain:
         for result in self.cmd_parser.poll():
             self.apply_command(result)
         self.tick_ask()
+        self.tick_fire_999()
         self.tick_tasks()
 
         # LiDAR doorway check: re-plan around a blocked doorway (e.g. the chair).
@@ -490,6 +624,10 @@ class Brain:
                     self.agent.submit("path_blocked", self.world)
 
         out = self.executor.step(self.world)
+        if self.owner_check:
+            if out.event == "owner_no_response":
+                self.owner_check.request("owner_no_response")
+            self.owner_check.publish(self.world, self.agent)
         if out.event:
             m = self.world.mission
             if out.event == "guide_complete":
@@ -506,18 +644,26 @@ class Brain:
                 self.world.finish_mission()
                 self.alerts.clear()
             elif self.world.mission is not None:
+                if out.event == "owner_no_response":
+                    self.on_no_response()  # escalation first, so the agent's menu already knows
                 self.agent.submit(out.event, self.world)
 
         action = self.agent.poll(self.world)
         if action is not None:
             if action.get("escalate") and not self.world.escalated:
-                self.world.escalated = True
-                self.world.log("AGENT CALLED EMERGENCY SERVICES (simulated)")
+                self.escalate("fire", "999", by="llm", detail="the agent chose call_emergency_services",
+                              say=SAY_999_NOT_FOUND if not self.world.guiding_active else SAY_999_CALLING)
             if self.world.is_emergency() and action.get("tool") == "guide_owner_to" and self.world.evac:
                 # The agent may pick a different safe exit than the planner's shortest one.
                 self.world.evac["target"] = action["args"]["target"]
                 self.world.mission["target"] = action["args"]["target"]
-            self.executor.execute(action, self.world)
+            if action.get("tool") == "stay_with_owner":  # #20 (skill lives here, see StayWithOwner)
+                self.nav.clear()
+                self.executor.skill = StayWithOwner()
+                self.world.phase = "staying"
+                self.world.log(f"SKILL {self.executor.skill.label()}")
+            else:
+                self.executor.execute(action, self.world)
 
         vx, vy, wz = safety.filter_cmd(out.vx, out.vy, out.wz, self.world, self.world.lidar_ranges,
                                        allow_contact=out.allow_contact)
@@ -525,8 +671,10 @@ class Brain:
             vx = vy = wz = 0.0
         self.world.nav_path = self.nav.path_points(self.world.robot_pose[:2]) if self.nav.waypoints else []
         status, status_text = self.world.mission_status()
-        if self.world.escalated and status == "active":
-            status_text += "  |  EMERGENCY SERVICES CALLED"
+        esc = self.world.escalation
+        if esc and esc.get("called") and status == "active":
+            status_text += ("  |  EMERGENCY SERVICES CALLED" if esc["contact"] == "999"
+                            else "  |  EMERGENCY CONTACT ALERTED")
         m = self.world.mission
         if m is not None and m.get("alert_sound") and self.alerts.mode == "1_pulse":
             self.alerts.set_for_sound(m["alert_sound"])  # taught sound task (TaskAdapter.start_job)
@@ -565,6 +713,8 @@ class Brain:
             "rules": w.rules.status(),
             "nudge_says": w.nudge_says,
             "ask": self.ask.status(),  # C5: open question to the owner, or None
+            # C8: who Nudge called and why (fire 999 ask / no response), or None
+            "escalation": w.escalation,
             # the same reply as plain text for the robot screen / speaker outside a mission (sim reads
             # `say` when no mission message is active: "Sorry, I can't do that yet...", task reminders,
             # rule confirmations); cleared after SAY_HOLD_S so the screen doesn't show it forever
@@ -595,6 +745,8 @@ class Brain:
             "tasks": self.task_runner.status(),
             # brain-side owner activity for idle tasks (E1.6): minutes without a sign of activity
             "owner_activity": self.owner_activity.status(),
+            # C7: Gemma's camera look at the owner (NUDGE_OWNER_CHECK=1, else null)
+            "owner_check": self.owner_check.status(w.t_sim) if self.owner_check else None,
         }
 
     def run(self, duration: float = 0.0) -> None:
