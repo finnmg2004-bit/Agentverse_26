@@ -52,18 +52,60 @@ def _main_checkout() -> Path | None:
     return None
 
 
+SKIP_DIRS = {"owner", "owners"}  # our own converted output, never a source
+_IMG = (".jpg", ".jpeg", ".png")
+_NOT_COLOUR = re.compile(r"norm|normal|spec|rough|metal|gloss|occl|_ao|disp|bump|height|opacity|alpha|mask")
+
+
+def _res(p: Path) -> tuple:
+    """Lowest resolution first: rp_..._dif_2k.jpg -> 2; unknown -> by file size."""
+    m = re.search(r"_(\d+)k\.", p.name.lower())
+    return (int(m.group(1)) if m else 999, p.stat().st_size)
+
+
+def find_texture(src: Path, obj: Path | None = None) -> Path | None:
+    """The colour texture of a person folder: Renderpeople *_dif_* / *basecolor*, else the OBJ's .mtl
+    map_Kd, else any image named diffuse / albedo / color, else any image that isn't a normal / spec /
+    roughness / ... map or the *_A.jpg preview. Lowest resolution wins."""
+    imgs = [p for p in src.rglob("*") if p.suffix.lower() in _IMG and p.is_file()]
+    for pat in (r"_dif_", r"basecolor"):
+        hits = [p for p in imgs if re.search(pat, p.name.lower())]
+        if hits:
+            return min(hits, key=_res)
+    for mtl in ([obj.with_suffix(".mtl")] if obj else []) + sorted(src.glob("*.mtl")):
+        if mtl.exists():
+            for ln in mtl.read_text(encoding="utf-8", errors="replace").splitlines():
+                if ln.strip().lower().startswith("map_kd"):
+                    t = (mtl.parent / ln.split(None, 1)[1].strip()).resolve()
+                    if t.exists():
+                        return t
+    hits = [p for p in imgs if re.search(r"diffuse|albedo|colou?r", p.name.lower())]
+    if hits:
+        return min(hits, key=_res)
+    hits = [p for p in imgs if not _NOT_COLOUR.search(p.name.lower()) and not re.search(r"_a\.", p.name.lower())]
+    return min(hits, key=_res) if hits else None
+
+
+def _is_person(d: Path) -> bool:
+    """A downloaded person folder: any folder with an OBJ and a colour texture (Renderpeople rp_*_OBJ/
+    with either naming, or a plain OBJ + texture folder)."""
+    return (d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith((".", "_"))
+            and any(d.glob("*.obj")) and find_texture(d) is not None)
+
+
 def models_dir() -> Path:
-    """Where the downloaded Renderpeople packs are: NUDGE_MODELS_DIR, else this checkout's
-    assets/models/, else (a git worktree without them) the main checkout's assets/models/."""
+    """Where the downloaded people are: NUDGE_MODELS_DIR, else this checkout's assets/models/, else
+    (a git worktree without them) the main checkout's assets/models/."""
     env = os.environ.get("NUDGE_MODELS_DIR", "").strip()
     if env:
         return Path(env)
     here = PROJECT_ROOT / "assets" / "models"
-    if any(here.glob("rp_*")) or (here / "owners").is_dir():
+    if (here / "owners").is_dir() or (here.is_dir() and any(_is_person(d) for d in here.iterdir())):
         return here
     main = _main_checkout()
-    if main is not None and any((main / "assets" / "models").glob("rp_*")):
-        return main / "assets" / "models"
+    other = main / "assets" / "models" if main is not None else None
+    if other is not None and other.is_dir() and any(_is_person(d) for d in other.iterdir()):
+        return other
     return here
 
 
@@ -81,31 +123,33 @@ def _rel(p: Path) -> str:
 
 
 def full_name(pack: Path) -> str:
-    """rp_mei_posed_001_OBJ -> mei_posed_001."""
-    n = pack.name
-    n = n[3:] if n.lower().startswith("rp_") else n
-    n = n[:-4] if n.lower().endswith("_obj") else n
-    return n.lower()
+    """Folder -> name: rp_mei_posed_001_OBJ -> mei_posed_001, "Anna Scan" -> anna_scan."""
+    n = pack.name.lower()
+    n = n[3:] if n.startswith("rp_") else n
+    n = n[:-4] if n.endswith("_obj") else n
+    return re.sub(r"[^a-z0-9_]+", "_", n).strip("_") or "owner"
 
 
 def owner_name(pack: Path) -> str:
     """Short name for --owner / NUDGE_OWNER: rp_mei_posed_001_OBJ -> mei, rp_dennis_posed_004_OBJ ->
-    dennis; packs without a person's name keep the full one (rp_posed_00178_29_OBJ -> posed_00178_29)."""
+    dennis; anything else keeps its full name (rp_posed_00178_29_OBJ -> posed_00178_29)."""
     n = full_name(pack)
     m = re.fullmatch(r"([a-z]+)_posed_\d+", n)
     return m.group(1) if m else n
 
 
 def find_packs() -> dict:
-    """{owner name: pack folder} of every downloaded Renderpeople OBJ pack (short names; the full
-    name when two packs share a short name)."""
-    packs = [p for p in sorted(MODEL_DIR.glob("rp_*")) if p.is_dir() and any(p.glob("*.obj"))]
+    """{owner name: folder} of every downloaded person in MODEL_DIR (short names; the full name when
+    two folders share a short name). No per-person code: a new folder just shows up here."""
+    if not MODEL_DIR.is_dir():
+        return {}
+    packs = [d for d in sorted(MODEL_DIR.iterdir()) if _is_person(d)]
     short = [owner_name(p) for p in packs]
     return {(n if short.count(n) == 1 else full_name(p)): p for n, p in zip(short, packs)}
 
 
 def resolve(name: str) -> tuple[str, Path] | None:
-    """Owner name (short, full or an unambiguous prefix) -> (short name, pack folder), or None."""
+    """Owner name (short, full or an unambiguous prefix) -> (short name, folder), or None."""
     name = name.strip().lower()
     packs = find_packs()
     if name in packs:
@@ -118,25 +162,18 @@ def resolve(name: str) -> tuple[str, Path] | None:
 
 
 def pick_files(src: Path) -> tuple[Path, Path]:
-    """Mesh: the *_30k.obj if the pack has one, else its single OBJ (newer packs: rp_posed_00178_29.obj),
-    else the smallest. Texture: the lowest-resolution diffuse map."""
+    """Mesh: the *_30k.obj if the folder has one, else an OBJ without a *_<N>k suffix (single-OBJ
+    packs, plain folders), else the smallest. Texture: find_texture()."""
     objs = sorted(src.glob("*.obj"), key=lambda p: p.stat().st_size)
     if not objs:
         sys.exit(f"[owner] no .obj found in {src}")
     k30 = [p for p in objs if p.stem.lower().endswith("_30k")]
     plain = [p for p in objs if not re.search(r"_\d+k$", p.stem.lower())]
     obj = (k30 or plain or objs)[0]
-    difs = list(src.rglob("*_dif_*.jpg")) + list(src.rglob("*_dif_*.png"))
-    if not difs:  # newer Renderpeople packs: tex/<name>_basecolor.jpg (4k) instead of *_dif_2k.jpg
-        difs = list(src.rglob("*basecolor*.jpg")) + list(src.rglob("*basecolor*.png"))
-    if not difs:
-        sys.exit(f"[owner] no diffuse texture (*_dif_*.jpg/png or *basecolor*.jpg/png) found in {src}")
-
-    def res_k(p: Path) -> int:  # rp_..._dif_2k.jpg -> 2
-        m = re.search(r"_(\d+)k\.", p.name)
-        return int(m.group(1)) if m else 999
-
-    return obj, min(difs, key=res_k)  # lowest-poly mesh, lowest-resolution texture
+    tex = find_texture(src, obj)
+    if tex is None:
+        sys.exit(f"[owner] no colour texture found in {src}")
+    return obj, tex
 
 
 def decimate(lines: list, target: int) -> list:
@@ -233,7 +270,11 @@ def convert(src: Path, out_dir: Path, yaw_deg: float = 0.0, max_faces: int = MAX
         b = np.stack([p[:, 2], p[:, 0], p[:, 1]], axis=1) * scale
         return np.stack([c * b[:, 0] - s * b[:, 1], s * b[:, 0] + c * b[:, 1], b[:, 2]], axis=1)
 
-    vb = to_body(verts, 0.01)
+    # Units: Renderpeople scans are in centimetres (~170 tall); a person exported in metres is ~1.7.
+    raw_h = float(np.ptp(verts[:, 1]))
+    scale = 0.01 if raw_h > 10.0 else 1.0
+    print(f"[owner] units   {'cm' if scale == 0.01 else 'm'} (raw height {raw_h:.2f})")
+    vb = to_body(verts, scale)
     centre = np.array([(vb[:, 0].min() + vb[:, 0].max()) / 2, (vb[:, 1].min() + vb[:, 1].max()) / 2, vb[:, 2].min()])
     vb -= centre
     print(f"[owner] size    {np.ptp(vb[:, 0]):.2f} x {np.ptp(vb[:, 1]):.2f} x {np.ptp(vb[:, 2]):.2f} m (front x left x up)")

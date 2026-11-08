@@ -31,10 +31,12 @@ It has dropdowns and radio buttons for the same six choices, and a "Save for nex
   - `--list` shows the downloaded packs.
   - `--name <n>` converts one pack to `<models>/owners/<n>/`; `--all` converts every pack.
   - With no arguments it does what it did before: the default pack goes to `assets/models/owner/`.
-- **Both pack layouts work:**
-  - the pack's `*_30k.obj` if it has one (Mei, Dennis);
-  - else its single OBJ (`rp_posed_00178_29.obj`, 50k faces);
-  - the texture is `*_dif_2k.jpg` or `*basecolor*.jpg` (4k scaled down to 2k).
+- **Any person folder works, with no code per person.** Every folder in the models dir that has an OBJ and a colour texture is a person; it shows up in `--list` / `--owner` and `--all` converts it. Only `owner/` and `owners/` (our own output) are skipped.
+  - **Mesh:** the folder's `*_30k.obj` if it has one (Mei, Dennis); else an OBJ without a `_<N>k` suffix (`rp_posed_00178_29.obj`, or a plain folder's OBJ); else the smallest.
+  - **Texture, first match wins:** `*_dif_*` or `*basecolor*` (Renderpeople), else the `.mtl`'s `map_Kd`, else an image named diffuse / albedo / colour, else any image that isn't a normal, spec or roughness map or the `*_A.jpg` preview. The lowest resolution wins, and 4k is scaled down to 2k.
+  - **Units:** centimetres if the raw height is over 10 (Renderpeople), else metres. The scan is assumed Y-up and facing +Z, the OBJ convention (yaw fix: `--yaw-deg`).
+  - **Folder names:** cleaned up for `--owner` (`"Anna Scan"` becomes `anna_scan`).
+  - **Tested offline** with two made-up plain folders (temporary copies of Dennis's mesh, deleted afterwards). One was in cm with `skin_diffuse.jpg` next to a `skin_normal.jpg` decoy, the other in m with a `.mtl` `map_Kd`. Both were listed and converted correctly. The three real people pick exactly the same files as before.
 - **Big meshes are decimated:** anything over `--max-faces` (60k triangles) is cut to ~30k. No library was available, so it's a small numpy vertex clustering that keeps UVs.
   - Tested offline: posed_00178_29 forced from 50k to 29.9k faces, and MuJoCo compiles it.
   - None of today's three packs is over the limit.
