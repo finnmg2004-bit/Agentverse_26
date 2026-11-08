@@ -431,6 +431,16 @@ class NudgeSimulator:
                 print(f"[sim] GUI: owner is now {st.upper()}")
             else:
                 print(f"[sim] GUI: unknown owner state {st!r} (awake|asleep|idle)")
+        elif action == "chair":  # #19 repro: {"action": "chair", "pos": [x, y]} drops the chair anywhere
+            try:
+                x, y = (float(v) for v in payload.get("pos", ())[:2])
+            except (TypeError, ValueError):
+                print(f"[sim] GUI: bad chair pos {payload.get('pos')!r} (want [x, y])")
+            else:
+                self.chair_blocking = False
+                self.chair_at_exit = False
+                self.locomotion.set_chair_pos(x, y)
+                print(f"[sim] GUI: Chair placed at ({x:.2f}, {y:.2f})")
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()

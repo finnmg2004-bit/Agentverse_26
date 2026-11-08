@@ -192,6 +192,20 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_log": [],
         "expect_alert": ["1_pulse"],
     },
+    "stuck_chair": {
+        # #19 (Finn): a chair at the edge of the wide dining<->living archway, 1.6 m from the doorway
+        # centre, so the LiDAR doorway check never fires; without stuck recovery the robot pushes
+        # against it forever. Expect: STUCK -> obstacle remembered -> re-plan around it -> delivered.
+        "desc": "Chair beside the dining/living archway (not in a doorway) -> doorbell -> robot gets stuck, "
+                "recovers around it, delivers the owner",
+        "actions": [("gui", 0.3, {"action": "chair", "pos": [-6.49, 1.73]}),
+                    ("gui", 0.8, {"action": "chair", "pos": [-6.49, 1.73]}),
+                    ("gui", 1.3, {"action": "chair", "pos": [-6.49, 1.73]}),
+                    ("at", 2.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["NAV STUCK"],
+        "expect_alert": ["1_pulse"],
+    },
     "reset": {
         "desc": "Doorbell, [R] reset mid-guide, then a fresh doorbell must run cleanly from the start",
         "actions": [("at", 1.0, "B"), ("on", "guide_owner_to(front_door)", 2.0, "R"),
