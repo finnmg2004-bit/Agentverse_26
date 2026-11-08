@@ -19,6 +19,7 @@ import argparse
 import contextlib
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Dict, List
 
 USER_COMMAND_PUB = "tcp://127.0.0.1:5557"  # same endpoint as gui/nudge_control.py
+STUCK_RADIUS = 0.3                       # m: robot "not making progress" radius for stuck_s scenarios
 SIM_EXTRA_ARGS: List[str] = []           # set by --coco-objects (passed to sim/run_sim.py)
 SIM_STATE_SUB = "tcp://127.0.0.1:5555"     # judge reads ground truth (owner room, sim clock) from `state`
 
@@ -49,6 +51,12 @@ sys.path.insert(0, str(ROOT / "nudge-brain"))
 #   run_for: seconds           pass condition: just run this long (judged by the log/says checks)
 #   expect_says / forbid_says: substrings (case-insensitive) of the sim's "NUDGE SAYS:" lines
 #   forbid_log: brain log substrings that must never appear
+# Stuck repros (#19, experimental, run by name):
+#   ("on_gui", "brain log substring", delay_s, {payload})  send a `gui` payload delay_s after the log line
+#   gui {"action": "chair", "x", "y"} / {"action": "chair", "ahead": m}   place the chair (sim/run_sim.py)
+#   gui {"action": "owner_pos", "x", "y"}                                  put the owner at an exact spot
+#   stuck_s: seconds   watch the robot: any stretch this long in which it moves < STUCK_RADIUS while the
+#                      brain runs a skill is printed as "STUCK ..." and makes the scenario FAIL
 SCENARIOS: Dict[str, Dict] = {
     "doorbell": {
         "desc": "Doorbell -> find owner in living room -> 1 pulse -> guide to front door",
@@ -302,6 +310,62 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_sim": ["PROFILE: blind: screen off, light off, speech ON", "NUDGE SAYS:"],
         "forbid_sim": ["SPEECH OFF (profile"],
     },
+    # ---- #19 "getting stuck" repros (Sean -> Finn). Experimental: run by name. A FAIL here is the
+    # repro; each desc says what "stuck" looks like and what good behaviour would be.
+    "stuck_only_route": {
+        "desc": "Owner in the laundry (one door only), chair dropped in that doorway -> doorbell. STUCK = the "
+                "robot keeps pushing at / circling the chair in the robot_home<->laundry door, or searches "
+                "forever. GOOD = it sees the only door is blocked, marks it, tells the owner/GUI it cannot "
+                "reach them (or squeezes past if there is room) within ~30 s, never stands still for long",
+        "actions": [("gui", 0.5, {"action": "owner_room", "room": "laundry"}),
+                    ("gui", 0.8, {"action": "chair", "x": 10.0, "y": -1.95}), ("at", 1.5, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": [],
+        "expect_alert": ["1_pulse"],
+        "stuck_s": 15.0,
+        "experimental": True,
+    },
+    "stuck_owner_corner": {
+        "desc": "Owner wedged in the guest-bedroom corner (walls on two sides, chair stowed next to them) "
+                "-> doorbell. STUCK = the robot cannot reach its 0.75 m standoff / face the owner and "
+                "oscillates or stops near the corner, never nudging. GOOD = it approaches from the open side, "
+                "nudges (1 pulse) and guides the owner out to the front door",
+        "actions": [("gui", 0.5, {"action": "owner_pos", "x": -14.62, "y": -4.12, "yaw": 0.8}),
+                    ("at", 1.5, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["alert_owner(doorbell"],
+        "expect_alert": ["1_pulse"],
+        "stuck_s": 15.0,
+        "experimental": True,
+    },
+    "stuck_chair_midguide": {
+        "desc": "Doorbell -> guiding the owner to the front door -> 3 s in, the chair drops 0.7 m in front of "
+                "the robot. STUCK = robot + owner stand still facing the chair, or the robot spins in place. "
+                "GOOD = it stops, re-plans around the chair (the owner on the handle on its right) and still "
+                "delivers the owner to the front door",
+        "actions": [("at", 1.0, "B"),
+                    ("on_gui", "guide_owner_to(front_door)", 3.0, {"action": "chair", "ahead": 0.7})],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["guide_owner_to(front_door)"],
+        "expect_alert": ["1_pulse"],
+        "stuck_s": 15.0,
+        "experimental": True,
+    },
+    "stuck_doorway_behind": {
+        "desc": "Owner in the guest bedroom; once the robot starts nudging, the chair drops into the "
+                "guest<->entry doorway (the short way to the front door; the detour is guest<->living -> "
+                "dining -> entry). STUCK = the robot tries to guide through the chair door forever, or stalls "
+                "in front of it. GOOD = it notices the door is blocked, re-routes via the living room / dining "
+                "and still delivers the owner to the front door",
+        "actions": [("gui", 0.5, {"action": "owner_room", "room": "guest"}), ("at", 1.0, "B"),
+                    ("on_gui", "alert_owner(doorbell", 1.0, {"action": "chair", "x": -6.0, "y": -1.95})],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["alert_owner(doorbell"],
+        "expect_alert": ["1_pulse"],
+        "stuck_s": 15.0,
+        "min_timeout": 180.0,
+        "experimental": True,
+    },
 }
 
 
@@ -314,9 +378,13 @@ class SimProcess:
         if not gui:
             cmd.append("--headless")
         cmd += list(extra)
+        # Tests stay silent: robot speech is on by default for live runs (sim/robot_voice.py), so
+        # turn it off here unless the caller set NUDGE_SPEECH explicitly.
+        env = dict(os.environ)
+        env.setdefault("NUDGE_SPEECH", "0")
+        env["NUDGE_SOUND_OUT"] = "0"  # tests stay silent (#3)
         self.proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, encoding="utf-8", errors="replace",
-                                     env=dict(os.environ, NUDGE_SOUND_OUT="0"))  # tests stay silent (#3)
+                                     text=True, encoding="utf-8", errors="replace", env=env)
         self.lines: List[str] = []
         threading.Thread(target=self._pump, daemon=True).start()
 
@@ -342,7 +410,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     print(f"\n=== {name}: {spec['desc']}  [noise={noise}]")
     # Owner commands go out where the Nudge Control GUI publishes them (AGENTS.md 9.4).
     cmd_pub = None
-    if any(a[0] in ("cmd", "cmd_on", "clock", "gui") for a in spec["actions"]):
+    if any(a[0] in ("cmd", "cmd_on", "clock", "gui", "on_gui") for a in spec["actions"]):
         import zmq
         cmd_pub = zmq.Context.instance().socket(zmq.PUB)
         try:
@@ -408,6 +476,24 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
         brain.tick()
         time.sleep(0.05)
 
+    # #19 stuck watch: stretches where the robot stays within STUCK_RADIUS while a skill is running.
+    stuck = {"anchor": None, "since": 0.0, "skills": set(), "windows": []}
+
+    def close_stuck(el: float) -> None:
+        if stuck["anchor"] is not None and el - stuck["since"] >= spec["stuck_s"] and stuck["skills"]:
+            from sim.house_layout import get_room_at
+            ax, ay = stuck["anchor"]
+            stuck["windows"].append((stuck["since"], el, ax, ay, get_room_at(ax, ay), sorted(stuck["skills"])))
+
+    def watch_stuck(el: float) -> None:
+        rx, ry, _ = brain.world.robot_pose
+        skill = brain.executor.skill.label() if getattr(brain.executor, "skill", None) else ""
+        if stuck["anchor"] is None or math.hypot(rx - stuck["anchor"][0], ry - stuck["anchor"][1]) > STUCK_RADIUS:
+            close_stuck(el)
+            stuck.update(anchor=(rx, ry), since=el, skills=set())
+        if skill and not skill.startswith("idle"):
+            stuck["skills"].add(skill[:60])
+
     start = time.monotonic()
     ok = False
     try:
@@ -418,7 +504,17 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             el = t0 - start
             while state_sub is not None and state_sub.poll(0):
                 judge["state"] = json.loads(state_sub.recv_multipart()[1])
+            if spec.get("stuck_s"):
+                watch_stuck(el)
             for i, a in enumerate(list(pending)):
+                if a[0] == "on_gui":  # ("on_gui", "brain log substring", delay_s, {payload})
+                    if any(a[1] in l for l in log):
+                        fired_on.setdefault(id(a), el)
+                        if el - fired_on[id(a)] >= a[2]:
+                            cmd_pub.send_multipart([b"gui", json.dumps(a[3]).encode()])
+                            print(f"    t={el:5.1f}s  gui {json.dumps(a[3])} ({a[2]:.0f} s after {a[1]!r})")
+                            pending.remove(a)
+                    continue
                 if a[0] == "gui":  # any control-GUI action, e.g. {"action": "owner_state", "state": "asleep"}
                     if el >= a[1]:
                         cmd_pub.send_multipart([b"gui", json.dumps(a[2]).encode()])
@@ -513,6 +609,12 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
             state_sub.close(linger=0)
         sim.stop()
 
+    stuck_lines = []
+    if spec.get("stuck_s"):
+        close_stuck(elapsed)
+        for t0, t1, ax, ay, room, skills in stuck["windows"]:
+            stuck_lines.append(f"STUCK {t1 - t0:5.1f}s (t={t0:.0f}..{t1:.0f}s) within {STUCK_RADIUS} m of "
+                               f"({ax:.2f}, {ay:.2f}) in {room}; skills: {', '.join(skills)}")
     missing_log = [s for s in spec["expect_log"] if not any(s in l for l in log)]
     missing_alert = [m for m in spec["expect_alert"] if m not in alerts_seen]
     missing_sim = [s for s in spec.get("expect_sim", []) if not any(s in l for l in sim.lines)]
@@ -528,7 +630,7 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     for l in sim.lines:
         if "SCENARIO" in l or "HOTKEY" in l or "AVOID AREA" in l or "NUDGE SAYS" in l:
             print(f"    {l}")
-    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "cmd_on", "voice", "clock", "gui")]
+    pressed = [a[-1] for a in spec["actions"] if a[0] not in ("cmd", "cmd_on", "voice", "clock", "gui", "on_gui")]
     for vp in voice_procs:  # what the voice process heard / published
         out = vp.communicate(timeout=30)[0] if vp.poll() is None else vp.stdout.read()
         for line in (out or "").splitlines():
@@ -538,7 +640,10 @@ def run_scenario(name: str, spec: Dict, gui: bool, noise: str, timeout: float, v
     lost = [k for k in pressed if not any(f"HOTKEY [{k}]" in l for l in got)]
     if lost:
         print(f"    hotkeys never reached the sim: {lost}")
-    passed = ok and not lost and not missing_log and not missing_alert and not missing_sim and not forbidden
+    for l in stuck_lines:
+        print(f"    {l}")
+    passed = (ok and not lost and not missing_log and not missing_alert and not missing_sim and not forbidden
+              and not stuck_lines)
     for l in log:
         if "rejected" in l or "WATCHDOG" in l or "LLM error" in l:
             print(f"    note: {l}")

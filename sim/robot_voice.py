@@ -5,9 +5,10 @@ Robot speech output (`sim/robot_voice.py`) - robot outputs, AGENTS.md 9.1 / 9.4 
 `RobotVoice.say_if_changed(text)` speaks the "Nudge says" message once per change, never in a
 loop, on a background thread so the 500 Hz sim loop never waits for audio.
 
-Behind a flag (AGENTS.md 9.6): speech is OFF unless NUDGE_SPEECH=1. When on, it uses Teo's local
-TTS as soon as it exists - the first importable `speak(text)` from TTS_CANDIDATES (searched on
-sys.path plus nudge-brain/ and scripts/) - otherwise it just logs `[voice] would say: ...`.
+Speech is ON by default (live runs: run_all.py, GUI, plain run_sim.py) so the demo recording is
+audible; NUDGE_SPEECH=0 turns it off (scripts/test_scenarios.py does this so tests stay silent).
+When on, it uses Teo's local TTS - the first importable `speak(text)` from TTS_CANDIDATES (searched
+on sys.path plus nudge-brain/ and scripts/) - otherwise it just logs `[voice] would say: ...`.
 """
 from __future__ import annotations
 
@@ -52,12 +53,16 @@ def _find_speak() -> Optional[Callable[[str], None]]:
 
 class RobotVoice:
     def __init__(self, enabled: Optional[bool] = None) -> None:
-        self.enabled = (os.environ.get("NUDGE_SPEECH", "0") == "1") if enabled is None else enabled
+        if enabled is None:  # default ON; NUDGE_SPEECH=0 (or false/off) mutes it
+            enabled = os.environ.get("NUDGE_SPEECH", "1").strip().lower() not in ("0", "false", "off")
+        self.enabled = enabled
         self.last_text = ""
         self._speak = _find_speak() if self.enabled else None
         if self.enabled:
             backend = f"{self._speak.__module__}.speak" if self._speak else "none found (log only)"
             print(f"[voice] speech ON, TTS backend: {backend}")
+        else:
+            print("[voice] speech OFF (NUDGE_SPEECH=0)")
 
     def say_if_changed(self, text: str, urgent: bool = False) -> bool:
         """Speak `text` if it differs from the last message. Returns True if it was (or would be) spoken.

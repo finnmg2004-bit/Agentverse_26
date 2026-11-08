@@ -88,6 +88,7 @@ from sim.owner_profile import DEFAULT_PROFILE, PROFILE_NAMES, channels, describe
 from sim.sensors import NOISE_NAMES, SimSensors
 from sim.world import build_nudge_model
 from sim.owner_behavior import OwnerBehavior
+from sim.robot_nudge import NudgeFX
 from sim.sim_clock import SimClock
 from sim.night import NightScene  # agent F: night lighting (viewer / GUI view only)
 from sim.charging_dock import DockStatus  # agent F: charging-dock status light
@@ -235,9 +236,11 @@ class NudgeSimulator:
         self.avoid_steps: int = 0  # entries this episode
 
         # Robot outputs (AGENTS.md 9.1): flank screens coloured by alert tier, the "Nudge says"
-        # message (viewer label + overlay + log) and speech (NUDGE_SPEECH=1, sim/robot_voice.py).
+        # message (viewer label + overlay + log) and speech (on by default, NUDGE_SPEECH=0 = off, sim/robot_voice.py).
         self.screen = RobotScreen(self.model)
         self.voice = RobotVoice()
+        # Visible nudge (TODO #4): robot bump + contact ripple + owner reaction, render-only.
+        self.nudge_fx = NudgeFX(self.model)
         self.nudge_says: str = ""
         self.mission_sound: str | None = None
         # Owner profile (contract C10, sim/owner_profile.py): which of those outputs are on.
@@ -481,16 +484,27 @@ class NudgeSimulator:
                 print(f"[sim] GUI: owner is now {st.upper()}")
             else:
                 print(f"[sim] GUI: unknown owner state {st!r} (awake|asleep|idle)")
-        elif action == "chair":  # #19 repro: {"action": "chair", "pos": [x, y]} drops the chair anywhere
+        elif action == "chair":  # #19 repro: {"pos": [x, y]} / {"x": .., "y": ..} / {"ahead": m} (in front of the robot)
             try:
-                x, y = (float(v) for v in payload.get("pos", ())[:2])
+                if "ahead" in payload:  # e.g. dropped mid-guide right in front of the robot
+                    rx, ry, ryaw = self.locomotion.get_pose()
+                    d = float(payload.get("ahead", 0.8))
+                    x, y = rx + d * math.cos(ryaw), ry + d * math.sin(ryaw)
+                elif "pos" in payload:
+                    x, y = (float(v) for v in payload.get("pos", ())[:2])
+                else:
+                    x, y = float(payload.get("x", CHAIR_STOWED_POS[0])), float(payload.get("y", CHAIR_STOWED_POS[1]))
             except (TypeError, ValueError):
-                print(f"[sim] GUI: bad chair pos {payload.get('pos')!r} (want [x, y])")
+                print(f"[sim] GUI: bad chair payload {payload!r} (want pos [x, y], x/y or ahead)")
             else:
-                self.chair_blocking = False
-                self.chair_at_exit = False
+                self.chair_blocking = self.chair_at_exit = False
                 self.locomotion.set_chair_pos(x, y)
                 print(f"[sim] GUI: Chair placed at ({x:.2f}, {y:.2f})")
+        elif action == "owner_pos":  # test repro (#19): {"action": "owner_pos", "x": .., "y": .., "yaw": ..}
+            x, y = float(payload.get("x", 0.0)), float(payload.get("y", 0.0))
+            self.locomotion.set_owner_pos(x, y, float(payload.get("yaw", 0.0)))
+            self.owner.on_teleport(float(self.data.time))
+            print(f"[sim] GUI: Moved Owner to ({x:.2f}, {y:.2f}) in {get_room_at(x, y)}")
         elif action == "view":
             self.view_req = payload
             self.view_req_wall = time.monotonic()
@@ -529,6 +543,7 @@ class NudgeSimulator:
         cam.elevation = float(req.get("elevation", -62.0))
         self.night.upload_to_renderer(r)  # night sky (sim/night.py), only when it changed
         r.update_scene(self.data, camera=cam, scene_option=self.view_opt)
+        self.nudge_fx.draw(r.scene, self.data)
         rgb = r.render()
         ok, jpg = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
                                [int(cv2.IMWRITE_JPEG_QUALITY), int(req.get("quality", 85))])
@@ -547,6 +562,7 @@ class NudgeSimulator:
         ox, oy = ROOMS[ROOM_ORDER[0]]["owner_spot"]
         self.locomotion.set_owner_pos(ox, oy)
         self.owner.reset(float(self.data.time))
+        self.nudge_fx.reset()
         self.clock.reset(float(self.data.time))
         self.chair_blocking = False
         self.chair_at_exit = False
@@ -809,6 +825,10 @@ class NudgeSimulator:
         self.night.update(self.clock, float(self.data.time))  # sim/night.py
         self.dock.update(self.model, float(self.data.time), self.locomotion.get_pose()[:2])
         self.publish_telemetry(float(self.data.time))
+        # After the sensors: the bump offset is for the viewer / recording only (head camera and
+        # LiDAR above always see the true kinematic pose; locomotion rewrites it next step).
+        self.nudge_fx.apply(self.model, self.data, float(self.data.time), self.cmd_alert_mode,
+                            self.locomotion, self.owner)
         self.publish_view(float(self.data.time))
 
     def close(self) -> None:
@@ -947,6 +967,7 @@ def main() -> None:
                             shown_overlay = overlay
                         with viewer.lock():  # floating "Nudge says" label above the robot
                             sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.screen_text)
+                            sim.nudge_fx.draw(viewer.user_scn, sim.data)  # visible nudge (after the label reset)
                         sim.night.upload_to_viewer(viewer)  # night sky; outside the lock (sim/night.py)
                         viewer.sync()
                         last_sync = now_wall

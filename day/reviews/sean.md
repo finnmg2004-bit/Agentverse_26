@@ -3,6 +3,68 @@
 Notes from Sean (sim / robot outputs) to Eden and the team. Newest first.
 Eden: please relay agent notes to the agent named in each section.
 
+## Agent F `day/night-dock` (71756f9, #1 night + #2 charging station) - approve with small fixes
+
+Head camera is protected (`NightScene.protect_head_camera` renders it in daylight, then restores; the
+head-cam GL context keeps the day sky): byte-identical by day and night, so YOLO is unaffected. Cost
+3-9 us/step, thread-safe (all in `step_once` under `viewer.lock()`, texture upload correctly outside it).
+Dock: only the 2.4 cm base plate and the back panel collide; it's in `world.load_spec()`, so the planner,
+LiDAR and check-world all know it; >= 1.3 m from all routes; the robot starts in the entry, not in the dock.
+
+Fixes:
+1. Merge conflict with Sean's #4 (now on main) in `sim/run_sim.py`'s viewer loop. Keep both, in this order:
+   ```
+   with viewer.lock():
+       sim.screen.draw_label(viewer.user_scn, sim.locomotion.get_pose(), sim.nudge_says)
+       sim.nudge_fx.draw(viewer.user_scn, sim.data)  # visible nudge (after the label reset)
+   sim.night.upload_to_viewer(viewer)  # outside the lock
+   viewer.sync()
+   ```
+   Everything else merges cleanly (`publish_view`: `night.upload_to_renderer(r)` before `update_scene`,
+   `nudge_fx.draw(r.scene, ...)` after it).
+2. `night.py:133` reads the private `clock._abs_min(sim_t)`; please add a public
+   `SimClock.minute_of_day(t)` (float) in `sim/sim_clock.py` and use it (Sean OKs that edit).
+3. Not tested yet: YOLO looking at the dock (e.g. from (8.0, -2.0) facing south). The glowing panel might
+   be detected as tv / microwave / oven and pollute agent A's object memory. Check once; if it fires,
+   darken or simplify the fascia / status light.
+4. After the merge: a short live run at `--clock 23:00` with an alert active (night + visible nudge
+   together) plus `check-world`.
+5. Minor: `night.py:105` turns off every non-directional world-body light at night (a later TV light by
+   agent B would be dimmed too) - add a comment or an explicit list; `night.py:206` drops the sky for
+   good if one renderer upload fails.
+
+## Sean's must-dos landed on main: #12, #4, #19
+
+- **#12 speech on by default:** live runs (`run_all`, the control GUI, plain `run_sim.py`) now speak through
+  local Piper TTS; `NUDGE_SPEECH=0` mutes. `test_scenarios.py` starts the sim with `NUDGE_SPEECH=0` (and
+  `NUDGE_SOUND_OUT=0`), so tests stay silent.
+- **#4 visible nudge** (`sim/robot_nudge.py`, render-only): during a 1_pulse / 2_pulse / continuous alert
+  within 1.05 m the robot lunges into the owner's legs in the haptic rhythm, with a contact flash and an
+  expanding ring. The owner startles ("! felt the nudge"), taps the glowing grip; an asleep owner straightens
+  up when woken; an `unresponsive` owner (Finn's #20) shows no reaction. Sensors always see the true pose.
+  Best seen in the follow view (`V`). The asleep lean-back is a stand-in until Ricktho's #8 poses
+  (`ASLEEP_RECLINE_DEG = 0` in `robot_nudge.py` turns it off).
+- **#19 stuck repro scenarios** (experimental, run by name) - **Finn, these are for you:**
+  - `stuck_owner_corner`: FAILED before Finn's `b9b9c39` (the robot sat within 0.3 m for 51 s in
+    `alert_owner(doorbell) [approach]` and never nudged); **PASSES on main with your fix (101 s)**.
+  - `stuck_only_route` **still FAILS on main** (150 s timeout): chair in the laundry's only door;
+    `LiDAR: door_robothome_laundry BLOCKED -> re-planned route`, then it never reaches the owner and never
+    tells anyone. Good behaviour: say/show "I can't reach you" within ~30 s.
+  - `stuck_chair_midguide`, `stuck_doorway_behind` PASS (regression guards).
+  - New harness option `stuck_s` (fails a scenario when the robot stays within 0.3 m that long while a skill
+    runs), action `on_gui`; new sim GUI actions `{"action":"chair","x","y"}` / `{"action":"chair","ahead":m}`
+    and `{"action":"owner_pos","x","y","yaw"}`.
+- Tested on the rebased tree (on main 239f9ed: #3 audible sounds, #13/#20 escalation, #19 navigator fix),
+  standard ports: `doorbell smoke carpet_rule demo asleep_doorbell` 5/5 PASS. Eden: please include
+  `asleep_doorbell` in the checkpoint run.
+
+Suggested doc lines (file owners, please apply):
+- README: "During live runs Nudge speaks its messages aloud with local Piper TTS; set `NUDGE_SPEECH=0` to
+  mute. Scenario tests are always silent."
+- AGENTS.md robot outputs paragraph: "Speech is on by default (`NUDGE_SPEECH=0` mutes; `test_scenarios`
+  sets it to 0)" instead of "`NUDGE_SPEECH=1` speaks".
+- AGENTS.md 12.2 / TODO: tick Sean's #4, #12, #19 once Eden's checkpoint is green.
+
 ## Agent E `day/profiles` (dfb818c, #15 Deaf / Blind / Deafblind, C10) - approve with small fixes
 
 Default (deafblind, all on) keeps main's behaviour; haptic + guiding are never gated; the emergency

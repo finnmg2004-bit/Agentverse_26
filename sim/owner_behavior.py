@@ -91,6 +91,7 @@ class OwnerBehavior:
         self.tap_until = 0.0
         self.ignored_this_contact = False
         self.ignored_at = t
+        self.felt_at: Optional[float] = None  # sim time the owner last FELT a nudge (sim/robot_nudge.py reacts)
         # guiding
         self.loco.owner_grip = True
         self.loco.owner_speed = 0.38
@@ -203,6 +204,7 @@ class OwnerBehavior:
                 self.nudges_felt += 1
                 self.state, self.t_state, self.path = "alerted", t, []
                 self.ack_at = t + self.rng.uniform(*WAKE_REACTION_S)
+                self.felt_at = t
                 self.dwell_until = t + max(FIRST_WANDER_MIN_S, self.rng.uniform(*DWELL_S))
                 print(f"[sim] owner WAKES UP (nudge {alert_mode})", flush=True)
             return
@@ -215,6 +217,7 @@ class OwnerBehavior:
                     self.nudges_felt += 1
                     self.state, self.t_state, self.path = "alerted", t, []
                     self.ack_at = t + self.rng.uniform(*REACTION_S)
+                    self.felt_at = t
                     print("[sim] owner FEELS the nudge", flush=True)
                 else:
                     self.ignored_this_contact = True
