@@ -540,6 +540,17 @@ class TaskRunner:
                 self.pending.remove(task["name"])
         return task
 
+    def sound_task(self, sound: str) -> Optional[str]:
+        """Name of a taught task triggered by `sound` (E1.4): it REPLACES the built-in response to
+        that sound. Tier-1 (danger) sounds never: the validator refuses them, and this re-checks."""
+        if int(SOUND_SOURCES.get(sound, {}).get("tier", 1)) <= 1:
+            return None
+        for task in self.store:
+            trig = task.get("trigger", {})
+            if trig.get("kind") == "sound" and trig.get("sound") == sound and task.get("state") != "done":
+                return task["name"]
+        return None
+
     def status(self) -> List[Dict[str, Any]]:
         """Contract C3: brain status `tasks`."""
         out = []

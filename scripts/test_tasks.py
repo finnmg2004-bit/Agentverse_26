@@ -195,6 +195,19 @@ def test_store_and_runner(tmp):
     wave = [s for s in run3.status() if s["name"] == "wave"][0]
     check(wave["state"] == "done" and wave["next_run"] is None, "once task -> done")
 
+    # E1.4: a sound task replaces the built-in response to its sound (never tier 1)
+    check(run3.sound_task("kettle") is None, "no kettle task -> built-in kettle response")
+    tea = T.validate_task({"name": "tea", "trigger": {"kind": "sound", "sound": "kettle"},
+                           "steps": [{"skill": "find_owner"}, {"skill": "alert_owner", "args": {"text": "Kettle."}}]})[0]
+    store.add(tea)
+    check(run3.sound_task("kettle") == "tea", "kettle task replaces the built-in kettle response")
+    check(run3.sound_task("doorbell") is None, "other sounds keep the built-in response")
+    store.tasks["sneaky"] = dict(tea, name="sneaky", trigger={"kind": "sound", "sound": "smoke_alarm"})
+    check(run3.sound_task("smoke_alarm") is None, "a smoke task (even unvalidated) never replaces the alarm")
+    del store.tasks["sneaky"]
+    run3.remove("tea")
+    check(run3.sound_task("kettle") is None, "forgotten kettle task -> built-in response again")
+
     # forget
     check(run3.remove("bed") is not None and "bedtime" not in store.tasks, "'forget the bed task' removes bedtime")
     check(run3.remove("nothing") is None, "forgetting an unknown task is harmless")

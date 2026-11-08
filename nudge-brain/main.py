@@ -240,6 +240,13 @@ class Brain:
             self.deferred.discard(label)
             if self.world.is_emergency():
                 return
+            task_name = self.task_runner.sound_task(label)
+            if task_name is not None:
+                # E1.4: the owner taught their own response to this sound (e.g. "when the kettle boils,
+                # just tell me"); the task's sound trigger runs it (queued if a mission is active).
+                self.world.log(f"Heard {label} ({conf:.2f}) - owner's task '{task_name}' replaces the "
+                               f"built-in alert")
+                return
             if self.world.mission is None:
                 pref = self.world.rules.sound_rule(label)  # never applies to danger sounds
                 if pref is not None and pref["policy"] in ("ignore", "quiet_hours"):
