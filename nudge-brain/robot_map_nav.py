@@ -161,14 +161,21 @@ class RobotMapNav:
         """Find the exits in the robot's map and offer them to the evacuation planner (SCAN_EXITS) with an
         outside target each (added to LANDMARKS in this process). The room label of each exit (for "is the
         fire in this room?") is house_layout's room name, the same names the fire estimate uses."""
-        from sim.house_layout import get_room_at
+        from sim.house_layout import EXIT_TARGETS, EXITS, get_room_at
         SCAN_EXITS.clear()
         found = find_exits(self.grid, self.geofence)
         used: Dict[str, int] = {}
         for e in found:
-            used[e["side"]] = used.get(e["side"], 0) + 1
-            base = f"{e['side']}_exit" + (f"_{used[e['side']]}" if used[e["side"]] > 1 else "")
-            target = f"{base}_outside"
+            # An opening within 1 m of a known exit doorway takes its name + target key (exit_back /
+            # back_exit_outside ...), so LiDAR-blocked doors (world.blocked_doors, DOORWAYS names), agent menus
+            # and safety checks match; the target point itself is the scanned one. Other openings: by side.
+            near = min(EXITS, key=lambda k: math.dist(EXITS[k]["pos"], e["pos"]))
+            if math.dist(EXITS[near]["pos"], e["pos"]) <= 1.0 and near not in SCAN_EXITS:
+                base, target = near, EXIT_TARGETS[near]
+            else:
+                used[e["side"]] = used.get(e["side"], 0) + 1
+                base = f"{e['side']}_exit" + (f"_{used[e['side']]}" if used[e["side"]] > 1 else "")
+                target = f"{base}_outside"
             landmarks[target] = e["outside"]
             SCAN_EXITS[base] = dict(e, name=base, target=target, room=get_room_at(*e["inside"]))
         return list(SCAN_EXITS.values())
