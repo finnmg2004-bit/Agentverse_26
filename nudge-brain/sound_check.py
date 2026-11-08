@@ -20,7 +20,7 @@ the FIRST window (no delay for a real doorbell); an unclear first window waits o
 (0.5 s), then anything not clearly the TV counts as real. Tier-1 sounds (smoke alarm) are never
 checked: main.py calls this only for TV_SOURCE["plays"] sounds, after the safety pre-emption.
 
-Investigate before deciding (AGENTS.md 12.0 P6, NUDGE_TV_INVESTIGATE, default on): when Nudge is free
+Investigate before deciding (AGENTS.md 12.0 P6, NUDGE_TV_INVESTIGATE=1, default off): when Nudge is free
 (no mission) and the first window is NOT clearly the real door, it goes to check instead of deciding on
 the spot: walks a few metres toward the TV and turns its head camera to it (investigate.py), hearing
 every next window from a new place (walking toward the TV makes a TV sound grow louder than a
@@ -109,7 +109,8 @@ class SoundCheck:
         self.last: Optional[Dict[str, Any]] = None  # C9 status
         self.history: list = []
         self.inv: Optional[Dict[str, Any]] = None  # running investigation (P6)
-        self.investigate_enabled = os.environ.get("NUDGE_TV_INVESTIGATE", "1") not in ("0", "false", "off")
+        # off by default (12.0 rule: new features off unless in the demo story); NUDGE_TV_INVESTIGATE=1 = on
+        self.investigate_enabled = os.environ.get("NUDGE_TV_INVESTIGATE", "0") not in ("0", "", "false", "off")
 
     def reset(self) -> None:
         self.pending.clear()
@@ -256,7 +257,7 @@ class SoundCheck:
         s_meas = math.sin(math.radians(float(res.get("rel_azimuth_deg", 0.0))))
         executor.nav.clear()
         executor.skill = InvestigateSound(sound, self.tv_xy, TV_FACING, world, executor.nav)
-        self.inv = {"sound": sound, "t0": float(world.t_sim), "xy": (x, y), "d_tv": d_tv}
+        self.inv = {"sound": sound, "t0": float(world.t_sim), "xy": (x, y), "d_tv": d_tv, "res": dict(res)}
         world.log(f"SOUND CHECK: investigating {sound} - heard it {_side(s_meas)}; the front door or the "
                   f"TV in the living room ({d_tv:.1f} m away, TV ahead by {lead:.1f})? Going toward the "
                   f"sound to listen and look with the camera")
@@ -302,6 +303,8 @@ class SoundCheck:
             self._end_investigation(world, executor)  # abandoned (another sound / it stopped long ago)
         investigate = self._can_investigate(world, executor)
         verdict = self.check(sound, res, tuple(world.robot_pose), t, investigate=investigate)
+        if self.inv is not None:
+            self.inv["res"] = dict(res)  # last window heard (overdue() starts the mission with it)
         if verdict == "wait":
             if investigate and self.inv is None:
                 self._start_investigation(sound, res, world, executor)
@@ -318,6 +321,49 @@ class SoundCheck:
         if world.mission is None:
             world.say(TV_SAY, "info")
         return True
+
+    def overdue(self, world, latched: Dict[str, int], executor=None) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """main.py tick hook: an investigation whose sound went quiet before a verdict (gate() only runs
+        on a new doorbell / knock window, e.g. an intermittent ring between bursts) is decided here,
+        INVESTIGATE_MAX_S + 0.5 s after it started, from the evidence so far: "tv" only on the same
+        rule as gate(), else real. Returns (sound, last window) when the caller must start the mission
+        for a real sound now, else None."""
+        inv = self.inv
+        if inv is None:
+            return None
+        t = float(world.t_sim)
+        if t - inv["t0"] < INVESTIGATE_MAX_S + 0.5:
+            return None
+        sound = inv["sound"]
+        p = self.pending.pop(sound, None)
+        margin = (p["ll_tv"] - p["ll_real"]) if p else 0.0
+        positive = bool(p) and (p["dir"] >= TV_DIR_MIN or (bool(p["loud"]) and float(np.median(p["loud"])) >= TOO_LOUD))
+        verdict = "tv" if margin >= TV_MARGIN and positive else "real"
+        self.last = {"sound": sound, "verdict": verdict, "t": round(t, 2), "margin": round(margin, 2),
+                     "windows": p["n"] if p else 0, "waited_s": round(t - inv["t0"], 2),
+                     "reason": ("the sound stopped while checking; " +
+                                ("direction + loudness fit the TV" if verdict == "tv" else "not clearly the TV"))}
+        self.history = (self.history + [self.last])[-10:]
+        done = self._end_investigation(world, executor)
+        if verdict == "tv":
+            latched[sound] = 0
+            world.log(f"SOUND CHECK: {sound} came from the TV, not the door - no mission "
+                      f"({self.last['reason']}, margin {self.last['margin']}, {done})")
+            if world.mission is None:
+                world.say(TV_SAY, "info")
+            return None
+        world.log(f"SOUND CHECK: {sound} is real ({self.last['reason']}, margin {self.last['margin']}, {done})")
+        return sound, dict(inv.get("res") or {})
+
+    def cancel(self, world, executor=None, why: str = "") -> None:
+        """Drop a running investigation (e.g. the smoke alarm pre-empts it): stop the skill, forget the
+        evidence. No verdict, nothing said."""
+        if self.inv is None:
+            return
+        sound = self.inv["sound"]
+        self._end_investigation(world, executor)
+        self.pending.pop(sound, None)
+        world.log(f"SOUND CHECK: investigating {sound} cancelled" + (f" ({why})" if why else ""))
 
     def status(self) -> Optional[Dict[str, Any]]:
         """C9 `sound_check`: {"sound", "verdict": "real"|"tv", "reason", "t"} (+ margin, windows)."""

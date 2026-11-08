@@ -177,7 +177,6 @@ class NudgeSimulator:
             name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, f"beacon_{name}")
             for name in SOUND_SOURCES
         }
-        self.tv_beacon_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "beacon_tv")
         from sim.tv_model import TvScreen
         self.tv_screen = TvScreen(self.model)  # the TV's screen glows while it plays (sim/tv_model.py)
 
@@ -754,11 +753,6 @@ class NudgeSimulator:
         noise = getattr(getattr(self, "sensors", None), "noise", None)  # --noise tv: the TV is on (dim)
         ambient_tv = noise is not None and str(noise.profile.get("name")) == "tv"
         self.tv_screen.update(t, self.tv_playing is not None, ambient_tv)
-        if self.tv_beacon_id >= 0:  # the TV: purple pulse while it plays a doorbell / knock
-            on = self.tv_playing is not None
-            pulse = 0.65 + 0.35 * np.sin(t * 14.0) if on else 0.0
-            self.model.geom_rgba[self.tv_beacon_id] = [0.75, 0.35, 1.0, 0.95 * pulse] if on else [0.45, 0.3, 0.6, 0.3]
-            self.model.geom_size[self.tv_beacon_id][0] = 0.14 + 0.04 * pulse if on else 0.10
 
     def poll_zmq_commands(self) -> None:
         """Read non-blocking velocity/guiding commands (`cmd`) or test events (`sim_event`)."""

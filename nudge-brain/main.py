@@ -303,6 +303,7 @@ class Brain:
                 self.latched["smoke_alarm"] = 0
                 self.world.log(f"SAFETY PRE-EMPT: smoke_alarm {scores['smoke_alarm']:.2f} >= 0.60")
                 self.agent.cancel()
+                self.sound_check.cancel(self.world, self.executor, "smoke alarm")  # stop a TV check (P6)
                 self.world.start_mission("smoke_alarm")
                 self.alerts.set("continuous")
                 self.plan_evacuation("smoke alarm heard")
@@ -319,39 +320,44 @@ class Brain:
             if label not in self.latched and self.sound_check.gate(label, res, self.world, self.latched,
                                                                    executor=self.executor):
                 return
-            self.latched[label] = 0
-            self.deferred.discard(label)
-            if self.world.is_emergency():
+            self.start_alert_sound(label, conf, res)
+
+    def start_alert_sound(self, label: str, conf: float, res: dict) -> None:
+        """Latch a doorbell / knock / kettle and start (or update / defer) its mission. From on_audio, and
+        from tick when the sound check's investigation ended without a new window (sound_check.overdue)."""
+        self.latched[label] = 0
+        self.deferred.discard(label)
+        if self.world.is_emergency():
+            return
+        task_name = self.task_runner.sound_task(label)
+        if task_name is not None:
+            # E1.4: the owner taught their own response to this sound (e.g. "when the kettle boils,
+            # just tell me"); the task's sound trigger runs it (queued if a mission is active).
+            self.world.log(f"Heard {label} ({conf:.2f}) - owner's task '{task_name}' replaces the "
+                           f"built-in alert")
+            return
+        if self.world.mission is None:
+            pref = self.world.rules.sound_rule(label)  # never applies to danger sounds
+            if pref is not None and pref["policy"] in ("ignore", "quiet_hours"):
+                self.world.log(f"Heard {label} - not alerting: owner's rule '{pref['summary']}'")
                 return
-            task_name = self.task_runner.sound_task(label)
-            if task_name is not None:
-                # E1.4: the owner taught their own response to this sound (e.g. "when the kettle boils,
-                # just tell me"); the task's sound trigger runs it (queued if a mission is active).
-                self.world.log(f"Heard {label} ({conf:.2f}) - owner's task '{task_name}' replaces the "
-                               f"built-in alert")
-                return
-            if self.world.mission is None:
-                pref = self.world.rules.sound_rule(label)  # never applies to danger sounds
-                if pref is not None and pref["policy"] in ("ignore", "quiet_hours"):
-                    self.world.log(f"Heard {label} - not alerting: owner's rule '{pref['summary']}'")
-                    return
-                self.world.log(f"Heard {label} ({conf:.2f}) az {res.get('world_azimuth_deg'):+.0f} deg")
-                self.world.start_mission(label)
-                if pref is not None and pref["policy"] == "expect":
-                    name = label.replace("_", " ").capitalize()
-                    self.world.mission["say"] = (f"{name}. Maybe your parcel. Hold my handle. "
-                                                 f"I will take you to the front door.")
-                self.agent.submit("new_sound", self.world)
-            elif (self.world.mission["sound"] != label
-                  and SOUND_SOURCES[label]["target_landmark"] != self.world.mission["target"]):
-                self.deferred.add(label)
-                self.world.log(f"Heard {label} during the {self.world.mission['sound']} mission: "
-                               f"will alert after it")
-            elif self.world.mission["sound"] != label:
-                self.world.log(f"Mission sound updated: {label}")
-                self.world.mission["sound"] = label
-                if self.alerts.mode != "none":
-                    self.alerts.set_for_sound(label)
+            self.world.log(f"Heard {label} ({conf:.2f}) az {float(res.get('world_azimuth_deg') or 0.0):+.0f} deg")
+            self.world.start_mission(label)
+            if pref is not None and pref["policy"] == "expect":
+                name = label.replace("_", " ").capitalize()
+                self.world.mission["say"] = (f"{name}. Maybe your parcel. Hold my handle. "
+                                             f"I will take you to the front door.")
+            self.agent.submit("new_sound", self.world)
+        elif (self.world.mission["sound"] != label
+              and SOUND_SOURCES[label]["target_landmark"] != self.world.mission["target"]):
+            self.deferred.add(label)
+            self.world.log(f"Heard {label} during the {self.world.mission['sound']} mission: "
+                           f"will alert after it")
+        elif self.world.mission["sound"] != label:
+            self.world.log(f"Mission sound updated: {label}")
+            self.world.mission["sound"] = label
+            if self.alerts.mode != "none":
+                self.alerts.set_for_sound(label)
 
     def hear_owner_voice(self, res: dict) -> None:
         """#10: the owner spoke -> owner belief from where the voice came from (owner_voice.py). If the robot
@@ -649,6 +655,9 @@ class Brain:
             self.on_user_command(msg)
         for result in self.cmd_parser.poll():
             self.apply_command(result)
+        late = self.sound_check.overdue(self.world, self.latched, self.executor)  # P6: sound stopped mid-check
+        if late is not None:
+            self.start_alert_sound(late[0], float(late[1].get("confidence", 0.0)), late[1])
         self.tick_ask()
         self.tick_fire_999()
         self.tick_tasks()

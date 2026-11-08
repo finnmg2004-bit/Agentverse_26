@@ -87,7 +87,8 @@ class TvScreen:
         self.gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, TV_SCREEN_GEOM)
         self.mid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MATERIAL, TV_SCREEN_MAT)
         self.led = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "tv_led")
-        self.state = "off"
+        self.state = ""  # first update always writes
+        self.last_t = -1.0
 
     def ok(self) -> bool:
         return self.gid >= 0
@@ -95,6 +96,10 @@ class TvScreen:
     def update(self, t: float, playing: bool, ambient_tv: bool = False) -> None:
         if self.gid < 0:
             return
+        want = "playing" if playing else ("on" if ambient_tv else "off")
+        if want == self.state and (want != "playing" or abs(t - self.last_t) < 1.0 / 30.0):
+            return  # only write the model on a change (and ~30 Hz while the programme plays)
+        self.last_t = t
         if playing:
             k = (t / 1.6) % len(_PROGRAMME)
             i = int(k)
