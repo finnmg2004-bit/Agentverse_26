@@ -41,6 +41,9 @@ Nudge speaks with local [Piper](https://github.com/OHF-Voice/piper1-gpl) text-to
 ### Light bar model (credit)
 The light bar on the robot's back is **"Police Lights" by KIDosn** (<https://sketchfab.com/3d-models/police-lights-54321f506475441c8f92abdaa740b2d6>), licensed **CC BY 4.0** (<http://creativecommons.org/licenses/by/4.0/>). Modified: split into housing + three lens meshes, the centre checker panel turned into a clear lens, rescaled. The source GLB and the converted meshes are in `assets/lightbar/`; `pixi run prepare-lightbar` regenerates them.
 
+### Baby crib model (credit)
+The crib in `assets/props/crib/` is **"Baby bed with mattress guard" by aswwwcom** (<https://sketchfab.com/3d-models/baby-bed-with-mattress-guard-730d615e84dd49a5b1b1a4c4e0256542>), licensed **CC BY 4.0** (<http://creativecommons.org/licenses/by/4.0/>). Unmodified. The baby model next to it was made by the team with Tripo AI. Details: [`assets/props/README.md`](assets/props/README.md).
+
 ### Real sound recordings (credit, optional)
 `NUDGE_REAL_AUDIO=1 pixi run sim` uses real recordings from Wikimedia Commons instead of the synthesized placeholder clips (cut to a short loop, converted to 16 kHz mono WAV in `assets/audio/real/`). Kettle and oven timer stay synthesized (no public-domain recording found). **Experimental:** YAMNet recognises the real doorbell (0.97) and smoke alarm (0.99) up close, but the spectral rules are tuned to the synthesized tones, so detection across the house drops (see AGENTS.md 9.5b); the demo and the scenario tests use the synthesized clips.
 - `doorbell.wav`: "Sound Effect - Door Bell" by Amada44, **CC0 1.0** (<https://commons.wikimedia.org/wiki/File:Sound_Effect_-_Door_Bell.ogg>)
