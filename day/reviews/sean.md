@@ -45,16 +45,18 @@ Fixes:
   Best seen in the follow view (`V`). The asleep lean-back is a stand-in until Ricktho's #8 poses
   (`ASLEEP_RECLINE_DEG = 0` in `robot_nudge.py` turns it off).
 - **#19 stuck repro scenarios** (experimental, run by name) - **Finn, these are for you:**
-  - `stuck_owner_corner` FAILS (clear repro): owner in the guest-room corner, the robot sits within 0.3 m
-    for 51 s in `alert_owner(doorbell) [approach]` and never nudges.
-  - `stuck_only_route` FAILS: chair in the laundry's only door; `LiDAR: door_robothome_laundry BLOCKED ->
-    re-planned route`, then it never reaches the owner and never tells anyone.
+  - `stuck_owner_corner`: FAILED before Finn's `b9b9c39` (the robot sat within 0.3 m for 51 s in
+    `alert_owner(doorbell) [approach]` and never nudged); **PASSES on main with your fix (101 s)**.
+  - `stuck_only_route` **still FAILS on main** (150 s timeout): chair in the laundry's only door;
+    `LiDAR: door_robothome_laundry BLOCKED -> re-planned route`, then it never reaches the owner and never
+    tells anyone. Good behaviour: say/show "I can't reach you" within ~30 s.
   - `stuck_chair_midguide`, `stuck_doorway_behind` PASS (regression guards).
   - New harness option `stuck_s` (fails a scenario when the robot stays within 0.3 m that long while a skill
     runs), action `on_gui`; new sim GUI actions `{"action":"chair","x","y"}` / `{"action":"chair","ahead":m}`
     and `{"action":"owner_pos","x","y","yaw"}`.
-- Tested on the rebased tree (on top of #3 audible sounds and #13/#20 escalation): see the commit / the
-  10:45 checkpoint. Eden: please include `asleep_doorbell` in the checkpoint run.
+- Tested on the rebased tree (on main 239f9ed: #3 audible sounds, #13/#20 escalation, #19 navigator fix),
+  standard ports: `doorbell smoke carpet_rule demo asleep_doorbell` 5/5 PASS. Eden: please include
+  `asleep_doorbell` in the checkpoint run.
 
 Suggested doc lines (file owners, please apply):
 - README: "During live runs Nudge speaks its messages aloud with local Piper TTS; set `NUDGE_SPEECH=0` to
