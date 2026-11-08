@@ -99,6 +99,7 @@ def main() -> None:
     ap.add_argument("--objects", action="store_true", help="E3.2: object memory from the head camera (YOLO)")
     ap.add_argument("--save", default=None, help="write the map PNG on exit")
     ap.add_argument("--duration", type=float, default=0.0, help="stop after N s (testing)")
+    ap.add_argument("--stop-file", default=None, help="exit (and save) when this file appears (testing)")
     args = ap.parse_args()
     t_end = time.time() + args.duration if args.duration else None
 
@@ -123,6 +124,8 @@ def main() -> None:
     episode, last_pub, pose = None, 0.0, (0.0, 0.0, 0.0)
     try:
         while t_end is None or time.time() < t_end:
+            if args.stop_file and Path(args.stop_file).exists():
+                break
             if sub.poll(200):
                 parts = sub.recv_multipart()
                 if parts[0] == b"camera":
