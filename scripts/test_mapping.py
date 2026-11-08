@@ -195,7 +195,7 @@ def live(args) -> int:
 
     grid = None
     if args.load:
-        grid, objs0, _r, _m = OccupancyGrid.load(Path(args.load))
+        grid, objs0, rooms0, _m = OccupancyGrid.load(Path(args.load))
         print(f"[test_mapping] loaded {args.load}: {grid.known_frac():.1%} of the grid known")
     mb = MapBuilder(objects=args.objects, grid=grid)
     if args.load and mb.omem is not None:
@@ -306,8 +306,12 @@ def live(args) -> int:
         (rec / "gt.json").write_text(json.dumps({"objects_gt": gt_objects, "events_gt": events_gt}))
     if args.save_map or (args.mode == "explore" and not args.load):
         path = Path(args.save_map) if args.save_map else DEFAULT_MAP_FILE
-        mb.save(path, meta={"mode": args.mode, "time_s": round(t_run, 1), "coco_objects": args.coco_objects,
-                            "known_pct": out["known_pct"], "made": time.strftime("%Y-%m-%d %H:%M")})
+        meta = {"mode": args.mode, "time_s": round(t_run, 1), "coco_objects": args.coco_objects,
+                "known_pct": out["known_pct"], "made": time.strftime("%Y-%m-%d %H:%M")}
+        if mb.omem is None and args.load:     # keep the loaded map's objects / rooms
+            mb.grid.save(path, objs0, rooms0, meta)
+        else:
+            mb.save(path, meta=meta)
         cv2.imwrite(str(path.with_suffix(".png")), cv2.flip(mb.grid.to_image(), 0))
         out["saved"] = str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
     print(json.dumps(out, indent=1))
