@@ -947,6 +947,22 @@ class NudgeControl:
             lft = w2p(rx + 0.35 * math.cos(yaw + 2.5), ry + 0.35 * math.sin(yaw + 2.5))
             rgt = w2p(rx + 0.35 * math.cos(yaw - 2.5), ry + 0.35 * math.sin(yaw - 2.5))
             dpg.draw_triangle(tip, lft, rgt, color=(255, 255, 255, 255), fill=(255, 255, 255, 255), parent=L)
+        # P11 (NUDGE_LOCALIZE=1): the brain's OWN pose estimate (particle filter) = orange ghost robot +
+        # 2-sigma uncertainty circle; the white triangle above is the sim's true pose.
+        loc = br.get("localization") or {}
+        if loc.get("pose"):
+            lx, ly, lyaw = loc["pose"]
+            ocol = (255, 165, 40, 230)
+            p = w2p(lx, ly)
+            rad = max(abs(w2p(lx + 2.0 * float(loc.get("std_xy") or 0.0), ly)[0] - p[0]), 6.0)
+            dpg.draw_circle(p, rad, color=ocol, thickness=1.5, parent=L)
+            tip = w2p(lx + 0.45 * math.cos(lyaw), ly + 0.45 * math.sin(lyaw))
+            lft = w2p(lx + 0.28 * math.cos(lyaw + 2.5), ly + 0.28 * math.sin(lyaw + 2.5))
+            rgt = w2p(lx + 0.28 * math.cos(lyaw - 2.5), ly + 0.28 * math.sin(lyaw - 2.5))
+            dpg.draw_triangle(tip, lft, rgt, color=ocol, thickness=1.5, parent=L)
+            err = loc.get("err_xy")
+            dpg.draw_text((p[0] + 10, p[1] + 6), "self-localised" + (f" (err {err:.2f} m)" if err is not None else ""),
+                          color=ocol, size=11, parent=L)
         gt = st.get("owner_pos_gt")
         if gt:
             p = w2p(*gt)
