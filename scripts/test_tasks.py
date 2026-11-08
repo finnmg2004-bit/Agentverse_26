@@ -286,6 +286,41 @@ def test_teach_parsing():
     check(R.teach_schema()["properties"]["action"]["enum"] == R.TEACH_ACTIONS, "teach schema enum")
 
 
+def test_ask():
+    """ask.py (C5 brain side, E1.5): yes/no matching and the question life cycle."""
+    import ask as A
+    yn = ["yes", "no"]
+    for text, want in [("yes", "yes"), ("Yes please.", "yes"), ("okay", "yes"), ("Nudge, yeah", "yes"),
+                       ("no", "no"), ("No thanks", "no"), ("don't", "no"), ("please don't", "no"),
+                       ("ok no", "no"), ("maybe", None), ("stop", None), ("", None),
+                       ("no, take me to the kitchen right now", None)]:
+        got = A.match_choice(text, yn)
+        check(got == want, f"match_choice({text!r}) = {got!r}")
+    got = []
+    a = A.AskOwner()
+    qid = a.ask("Every day at 10 pm I'll take you to bed. OK?", 0.0, got.append, timeout_s=10)
+    check(a.status() == {"id": qid, "question": "Every day at 10 pm I'll take you to bed. OK?",
+                         "choices": ["yes", "no"], "timeout_s": 10.0}, "ask status = C5 shape")
+    check(not a.answer({"text": "take me to the kitchen"}, plain_command=True), "a command is not an answer")
+    check(not a.answer({"id": "other", "text": "yes"}), "user_answer for another id ignored")
+    check(a.answer({"id": qid, "text": "uh", "choice": "no"}) and got == ["no"], "user_answer choice wins")
+    check(a.status() is None, "answered -> ask cleared")
+    a.ask("Q?", 0.0, got.append, timeout_s=10)
+    a.tick(5.0)
+    check(len(got) == 1, "no timeout before timeout_s")
+    a.tick(10.0)
+    check(got[-1] is None and a.status() is None, "timeout -> callback(None), cleared")
+    a.ask("Q1?", 0.0, got.append)
+    a.ask("Q2?", 1.0, got.append)
+    check(got[-1] is None and a.status()["question"] == "Q2?", "a new question times out the old one")
+    check(a.answer({"text": "yes"}, plain_command=True) and got[-1] == "yes", "plain 'yes' answers")
+    a.ask("Q3?", 0.0, got.append)
+    n = len(got)
+    a.clear()
+    a.tick(100.0)
+    check(len(got) == n and a.status() is None, "clear() drops silently (reset / fire)")
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         test_teach_parsing()
@@ -293,6 +328,7 @@ def main():
         test_compile()
         test_watcher()
         test_store_and_runner(tmp)
+        test_ask()
     if FAILS:
         print(f"\n{len(FAILS)} FAILED")
         sys.exit(1)
