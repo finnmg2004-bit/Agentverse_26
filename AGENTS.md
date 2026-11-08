@@ -971,7 +971,7 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   |---|---|---|
   | Gemma 4 E2B (Ollama), decisions | laptop GPU (RTX 5060) | 0.19 s median, 0.26 s p95 |
   | Gemma 4 E2B, owner sentence → rule / task | laptop GPU (RTX 5060) | ~0.6 s |
-  | Gemma 4 E2B, camera look at the owner | laptop GPU (measured on a GTX 1650) | 1.6–2.5 s warm (never waited on) |
+  | Gemma 4 E2B, camera look at the owner | laptop GPU | not measured on the recording laptop yet (never waited on) |
   | YOLOv8n (ONNX Runtime), owner detection | CPU, 4 threads | ~60 ms per frame, 10 Hz camera |
   | YAMNet (TFLite) + spectral rules, sounds | CPU, 2 threads | alert 0.5 s median after the sound starts (0.5 s audio windows) |
   | Whisper base.en (faster-whisper int8), voice | CPU | ~0.5 s per sentence |
@@ -992,9 +992,10 @@ Not today: **#21 LED colours** (kept as they are, team decision).
   1. **Your user and problem** ✓ ("The problem").
   2. **Key features** ✓ ("How it works", "Adapting").
   3. **System architecture** ✓ (two processes over ZeroMQ, reflex + thinking layer); a small diagram would help if it fits.
-  4. **Where each model runs, with hardware and latency** ⚠ only Gemma's latency is in; use Teo's table above (YOLO ~60 ms CPU, Whisper ~0.5 s CPU, YAMNet alert 0.5 s, Gemma 0.19 s / ~0.6 s / 1.6–2.5 s, Piper).
+  4. **Where each model runs, with hardware and latency** ⚠ only Gemma's latency is in; use Teo's table above (YOLO ~60 ms CPU, Whisper ~0.5 s CPU, YAMNet alert 0.5 s, Gemma 0.19 s decisions / ~0.6 s sentence → rule on the RTX 5060, Piper; no numbers from Teo's GTX 1650 dev box).
   5. **Limits** ✓ ("Limitations (honest)"; still has a [TBC] for localisation, see below).
   6. **The critical failure mode** ⚠ not named as such: say it plainly, e.g. "the critical failure is a missed or late smoke alarm / not getting the owner out" and how it's handled (tier-1 pre-emption in plain code, never gated, smoke never missed in 1,000 trials on the demo sound, 96 % on real recordings, 999 escalation after 40 s).
   7. **Safety** ⚠ only a line inside "How it works"; give it its own short paragraph (pre-emption, 4 s LLM watchdog → rules, legal-options-only menu, speed cap near the owner, danger can't be overridden by owner rules, exit-safety check on Gemma's exit choice).
   Also: the same brief says the **video** must show perception on screen next to the actions and one unscripted change in a single continuous take, and the **pitch** must cover what the robot can and **cannot** do.
   **Localisation [TBC]:** Teo is testing `NUDGE_LOCALIZE=1` on the demo story now; result here shortly, then Eden can replace the [TBC] in Limitations.
+- [ ] Teo → Eden + Sean: **LiDAR localisation (`NUDGE_LOCALIZE=1`) passes the demo story** on Teo's PC (latest `main` @ `115fd6a`, Gemma on, one run each): `demo` **PASS 93.5 s** (doorbell → smoke pre-empts → 999 question → owner out of the back door), `carpet_rule` **PASS 67.6 s** (rule set, around the carpet, owner at the front door). With agent I's doorbell + smoke that's 4/4 live. Eden: the [TBC] in Limitations / the pitch can say "the robot can estimate its own position from LiDAR on the map (particle filter, ~8 cm error in sim; passes the demo story with it on); off by default, needs a known start (unknown start = agent N, in progress)". Whether to switch it on for a take is your + Sean's call (2 runs is not a soak). Small thing for agent I: `localizer_pf.py:192` prints `RuntimeWarning: divide by zero encountered in log` once per run (harmless so far).
