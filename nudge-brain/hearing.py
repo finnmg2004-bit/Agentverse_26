@@ -46,6 +46,7 @@ DUMP_DIR = Path(os.environ["NUDGE_HEARING_DUMP"]) if os.environ.get("NUDGE_HEARI
 DUMP_SOUND = os.environ.get("NUDGE_HEARING_DUMP_SOUND", "kettle")
 DUMP_MIN = float(os.environ.get("NUDGE_HEARING_DUMP_MIN", "0.4"))
 OVEN_TONAL_GATE = 8.0
+DOORBELL_HP = os.environ.get("NUDGE_DOORBELL_HP", "1") != "0"
 OVEN_LOCAL_GATE = 3.0  # oven peak (5.18-5.26 kHz) over the strongest bin at 5.11-5.165 kHz (doorbell bell partial)
 # Knock = short wooden bursts. Burstiness = p95 / median energy of 10 ms frames in 110-600 Hz.
 # Party music (sustained chords at 175-392 Hz, inside the knock band) used to fire the knock rule
@@ -282,7 +283,11 @@ class StereoHearing:
         gate = smoke_ratio > 0.18 or (smoke_prominent and smoke_ratio > 0.02)
         score_smoke = float(np.clip(max(smoke_ratio * 1.25, 0.85 * smoke_abs if gate else 0.0), 0.0, 0.99))
 
-        doorbell_ratio = e_doorbell / total_energy
+        # Ratio against the energy above 300 Hz: a chime has none below it, and fan / vacuum rumble there
+        # diluted the ratio (the real doorbell recording far away under fan noise scored 0.33-0.42).
+        # NUDGE_DOORBELL_HP=0 = the old ratio against all energy.
+        doorbell_ratio = e_doorbell / ((total_energy - self._band_energy(freqs, psd, 0.0, 300.0)) + 1e-12
+                                       if DOORBELL_HP else total_energy)
         score_doorbell = float(np.clip(doorbell_ratio * 1.20, 0.0, 0.98))
         if e_doorbell_fund < 0.08 * total_energy:
             score_doorbell *= 0.25
