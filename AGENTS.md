@@ -545,3 +545,23 @@ Overnight work must run **headless**, on its **own branch** (never push to `main
 
 ### 10.7 The 60-second video (Option A)
 Fast-forwarded scan with rooms/objects appearing on the GUI map -> owner teaches a new job, Nudge asks one question and confirms -> someone moves the chair, the map updates live and Nudge re-routes -> smoke alarm pre-empts everything. (Option B: skip the scan; teach a simple job.)
+
+---
+
+## 11. Overnight run 2026-11-08, until 06:30 (agreed; Eden = merge captain)
+- **Decision:** Option B (teachable tasks from existing skills) is the main track; Option A (the robot's own map) is an experiment on Eden's PC. The contracts from 10.4 are now fixed as C1–C5 in `overnight/README.md` (task program, `state.sim_clock`, brain `tasks`, sound triggers from `SoundEvents`, `ask_owner`).
+- **`main` is frozen until the morning merge.** Every lane works on its own `overnight/<lane>` branch and its own files; a pre-push guard blocks everything else. Eden's E0 merges all branches into `overnight/integration` every hour, runs the core suite and writes `overnight/STATUS.md` there.
+- **PCs and lanes:**
+  - Sean (`sean`): sim clock, exit-guard and teach scenarios, owner states, soak test
+  - Ricktho (`ricktho`): exit hysteresis, sound triggers, teaching by voice, `ask_owner` by voice, recordings
+  - Eden: `integration` (E0), `eden-tasks` (E1: teachable tasks, covering Finn), `eden-gui` (E2: task panel, clock, **test videos**), `eden-mapping` (E3: Option A)
+- **Times:** no new items after 06:00; final push and reports by **06:15**; everything idle by **06:30**.
+- **The demo isn't decided yet.** E2 renders test videos for the morning: A = the current ★ take in `docs/DEMO_STORYBOARD.md`; B = a taught bedtime task, then a smoke pre-emption.
+- **Files:**
+  - `overnight/README.md`: rules, lanes, contracts, pacing
+  - `overnight/QUEUE-*.md`: work lists
+  - `overnight/PROMPT.md`: the session prompt
+  - `overnight/CHECKLIST.md`: pre-sleep human steps
+  - `scripts/overnight_check.py`: the pre-sleep check
+  - `scripts/locked_test.py`: the per-PC test lock
+- **Morning:** Eden reads `STATUS.md` and the reports, then merges into `main` and runs `pixi run test-scenarios`. Everyone removes the guard with `pixi run python scripts/overnight_check.py --uninstall-hook`.

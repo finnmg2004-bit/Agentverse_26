@@ -65,7 +65,8 @@ open items are reassigned (marked → who) or parked; see AGENTS.md 9.7.**
 - [ ] 1-page technical summary + 5-minute pitch
 - [ ] Submit by 14:00 (deadline 15:00)
 
-## Next phase (proposal, AGENTS.md section 10)
-- [ ] Morning kick-off: choose Option A (ideal: robot maps the house + builds new jobs) or B (fallback: new jobs from existing skills); agree the 10.4 interfaces
-- [ ] Overnight runs (1–2 machines, own branches, headless): see 10.6
+## Next phase (AGENTS.md sections 10 + 11)
+- [x] Chosen: Option B main track + Option A experiment; 10.4 interfaces fixed as contracts C1–C5 (`overnight/README.md`)
+- [ ] Overnight run until 06:30 on 3 PCs (own `overnight/*` branches, `main` frozen): see AGENTS.md 11, `overnight/CHECKLIST.md`
+- [ ] Morning: merge `overnight/integration` (or branch by branch), full suite, remove push guards, choose the demo from test videos A/B
 - [ ] ~2 h checkpoint: A teaches + runs one new job end to end, else switch to B
