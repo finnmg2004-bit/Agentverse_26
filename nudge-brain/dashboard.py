@@ -40,7 +40,8 @@ CYAN = (230, 200, 30)
 GREEN = (90, 210, 90)
 AMBER = (40, 180, 255)
 RED = (60, 60, 235)
-SOUND_COLORS = {"doorbell": (255, 210, 30), "knock": (30, 190, 255), "smoke_alarm": (60, 60, 240)}
+SOUND_COLORS = {"doorbell": (255, 210, 30), "knock": (30, 190, 255), "smoke_alarm": (60, 60, 240),
+                "kettle": (40, 150, 255), "oven_timer": (40, 220, 240)}  # BGR; other sounds fall back to AMBER
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 FORWARD_KEYS = {ord(c): c for c in "BKMOCXRWENVJT12345678"} | {ord(c.lower()): c for c in "BKMOCXRWENVJT"}
 SOURCE_COLORS = {"llm": (230, 120, 255), "rules": (200, 200, 200), "watchdog": AMBER, "only option": (150, 150, 150)}
@@ -169,8 +170,8 @@ class Dashboard:
             p = w2p(sx, sy)
             if name == label:
                 r = int(8 + 6 * (0.5 + 0.5 * math.sin(t * 10)))
-                cv2.circle(img, p, r, SOUND_COLORS[name], 2)
-            cv2.circle(img, p, 4, SOUND_COLORS[name], -1)
+                cv2.circle(img, p, r, SOUND_COLORS.get(name, AMBER), 2)
+            cv2.circle(img, p, 4, SOUND_COLORS.get(name, AMBER), -1)
 
         # Sound localisation: bearing lines from where the robot listened, and the estimate +- 1 std
         for sname, est in world.sound_estimates.items():
@@ -238,7 +239,7 @@ class Dashboard:
             v = float(scores.get(name, 0.0))
             put(img, name, (20, y + 13), TEXT, 0.48)
             cv2.rectangle(img, (130, y), (330, y + 18), (60, 60, 60), -1)
-            cv2.rectangle(img, (130, y), (130 + int(200 * v), y + 18), SOUND_COLORS[name], -1)
+            cv2.rectangle(img, (130, y), (130 + int(200 * v), y + 18), SOUND_COLORS.get(name, AMBER), -1)
             thr = 0.6 if name == "smoke_alarm" else 0.5
             cv2.line(img, (130 + int(200 * thr), y - 2), (130 + int(200 * thr), y + 20), TEXT, 1)
             put(img, f"{v:.2f}", (340, y + 13), TEXT, 0.48)
