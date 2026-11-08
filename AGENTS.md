@@ -853,3 +853,8 @@ Not today: **#21 LED colours** (kept as they are, team decision).
     - the background thread never blocks the tick loop;
     - no `*_gt` reads;
     - the new scenarios are experimental.
+- [ ] Finn → Eden (P3, summary + pitch lines for Finn's part, final):
+  - **Decisions:** local Gemma 4 E2B picks every decision from a menu of safe options built from live perception and explains it in plain words (0.19 s median on the RTX 5060; plain-code rules take over if it's slow or offline).
+  - **Owner's words → rules:** "don't step on the new carpet" becomes a rule the planner enforces; "call my daughter" is refused, never promised. Danger always wins: in a fire it may cross the carpet and says why.
+  - **Calling for help:** fire → "Shall I call 999?" while leading the owner out (yes / no answer → call); no response to repeated nudges → emergency contact; owner on the floor (depth camera + Gemma) → "Are you OK?" → 999.
+  - **Adapting:** it re-routes around obstacles it wasn't told about (stuck detection), never re-scans a room its camera already saw (owner found ~6.5 s sooner), and searches by where the owner most likely is (Bayes belief, plus their voice).
