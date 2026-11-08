@@ -284,6 +284,28 @@ SCENARIOS: Dict[str, Dict] = {
         "expect_alert": ["1_pulse"],
         "forbid_sim": ["AVOID AREA: robot stepped ON"],
     },
+    "tv_doorbell": {
+        "desc": "Doorbell on the living-room TV [Y] (not the front door) -> the ears' direction + loudness "
+                "say TV -> no mission, Nudge says 'That was the TV, not the door.' (AGENTS.md 6.2, C9)",
+        "actions": [("at", 1.0, "Y")],
+        "expect_complete": [],
+        "run_for": 20.0,
+        "expect_log": ["SOUND CHECK: doorbell came from the TV"],
+        "expect_says": ["That was the TV"],
+        "forbid_log": ["MISSION ", "alert_owner(", "SOUND CHECK: doorbell is real"],
+        "expect_alert": [],
+    },
+    "tv_then_doorbell": {
+        "desc": "TV doorbell [Y] -> ignored ('That was the TV'); after it ends the REAL doorbell [B] rings "
+                "-> sound check says real -> normal doorbell mission to the front door",
+        "actions": [("at", 1.0, "Y"), ("on", "SOUND CHECK: doorbell came from the TV", 9.0, "B")],
+        "expect_complete": ["doorbell"],
+        "expect_log": ["SOUND CHECK: doorbell came from the TV", "SOUND CHECK: doorbell is real",
+                       "alert_owner(doorbell", "guide_owner_to(front_door)"],
+        "expect_says": ["That was the TV"],
+        "expect_alert": ["1_pulse"],
+        "min_timeout": 170.0,
+    },
     "demo": {
         "desc": "AGENTS.md demo story: doorbell, owner moved, then smoke alarm pre-empts while guiding",
         "actions": [("at", 1.0, "B"), ("at", 3.0, "O"), ("on", "guide_owner_to(front_door)", 2.0, "M")],

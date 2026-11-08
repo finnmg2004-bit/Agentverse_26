@@ -92,7 +92,7 @@ SOUND_KEYS: Dict[str, str] = {"doorbell": "B", "knock": "K", "smoke_alarm": "M",
 # Scene controls: (button label, sim hotkey). Add a line here when the sim gets a new hotkey.
 SCENE_CONTROLS: List[tuple] = [
     ("Next room", "O"), ("Chair in door", "C"), ("Block back exit", "E"),
-    ("Owner wander", "W"), ("Noise", "N"),
+    ("Owner wander", "W"), ("Noise", "N"), ("TV doorbell", "Y"),
 ]
 FIXED_KEYS = ("X", "R")  # Silence, Reset
 
@@ -508,6 +508,9 @@ class NudgeControl:
                 b = dpg.add_button(label="No", width=70, callback=lambda: self.answer("no"))
                 dpg.bind_item_theme(b, self._button_theme((150, 50, 50)))
                 dpg.add_text("", tag="ask_left_txt", color=DIM)
+            with dpg.group(horizontal=True):  # C9: "Is the sound real?" (nudge-brain/sound_check.py)
+                dpg.add_text("Sound check:", color=DIM)
+                dpg.add_text("-", tag="sound_check_txt", color=DIM, wrap=LEFT_W - 110)
 
             # Tabs: the agent's reasoning first, then one tab per plugin panel (gui/panels/*.py)
             with dpg.tab_bar(tag="main_tabs"):
@@ -676,6 +679,7 @@ class NudgeControl:
             dpg.set_value("scene_txt", "   sim not connected")
 
         self._update_commands(br if brain_ok else {}, brain_ok)
+        self._update_sound_check(br if brain_ok else {})
         self._update_camera_overlay(br if brain_ok else {})
         self._update_status(br if brain_ok else {}, brain_ok, tnow)
         self._update_map(st if sim_ok else {}, br if brain_ok else {}, tnow)
@@ -811,6 +815,28 @@ class NudgeControl:
             dpg.set_value("heard_cmd_txt", "nothing yet" if brain_ok else "brain not connected")
         rules = (br.get("rules") or []) if brain_ok else []
         dpg.set_value("rules_txt", "   |   ".join(self._rule_text(r) for r in rules) if rules else "none")
+
+    SOUND_CHECK_SHOW_S = 20.0  # a verdict stays highlighted this long (brain sim time), then fades
+
+    def _update_sound_check(self, br: dict) -> None:
+        """C9 `sound_check`: the last "Is the sound real?" verdict (TV vs the real front door)."""
+        sc = br.get("sound_check") or {}
+        if not sc.get("verdict"):
+            dpg.set_value("sound_check_txt", "-")
+            dpg.configure_item("sound_check_txt", color=DIM)
+            return
+        sound = str(sc.get("sound", "sound")).replace("_", " ")
+        age = float(br.get("t", 0.0) or 0.0) - float(sc.get("t", 0.0) or 0.0)
+        if sc["verdict"] == "tv":
+            text, col = f"{sound} came from the TV - ignored", AMBER
+        else:
+            text, col = f"{sound} is real", GREEN
+        if age <= self.SOUND_CHECK_SHOW_S:
+            dpg.set_value("sound_check_txt", f"{text}   ({sc.get('reason', '')})")
+            dpg.configure_item("sound_check_txt", color=col)
+        else:
+            dpg.set_value("sound_check_txt", f"last: {text} ({age:.0f}s ago)")
+            dpg.configure_item("sound_check_txt", color=DIM)
 
     @staticmethod
     def _rule_rect(r: dict):

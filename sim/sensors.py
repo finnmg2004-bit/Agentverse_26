@@ -559,12 +559,15 @@ class SimSensors:
         robot_pose: Tuple[float, float, float],
         active_sounds: Dict[str, bool],
         voice_pos: Optional[Tuple[float, float]] = None,
+        extra_sources: Optional[List[Tuple[np.ndarray, Tuple[float, float], float]]] = None,
     ) -> Tuple[bytes, Dict[str, object]]:
         """
         Synthesize 0.5s (8000 samples x 2 channels) of 16 kHz stereo int16 PCM audio
         as heard by the robot's Left `(0.22, +0.08, 0.15)` and Right `(0.22, -0.08, 0.15)` ears.
         Includes distance attenuation, wall occlusion (0.45x/wall), ILD, and ITD.
         `voice_pos`: the owner is talking from (x, y) this window (their voice is mixed in like any sound).
+        `extra_sources`: more emitters this window, each `(mono_window, (x, y), level)` with
+        `mono_window` = AUDIO_WINDOW_SAMPLES samples (e.g. a doorbell clip played by the TV).
         """
         rx, ry, ryaw = robot_pose
 
@@ -596,6 +599,9 @@ class SimSensors:
         else:
             self.voice_cursor = 0  # every new sentence starts at the beginning of the clip
 
+        for mono, src_xy, level in extra_sources or ():
+            self._mix_source(mono, src_xy, float(level), robot_pose, left_ch, right_ch)
+
         stereo = np.stack([left_ch, right_ch], axis=-1)
         if EAR_AGC:
             peak = float(np.max(np.abs(stereo))) + 1e-9
@@ -619,6 +625,11 @@ class SimSensors:
             "noise": self.noise.profile["name"],
         }
         return pcm_int16.tobytes(), meta
+
+    def clip_window(self, name: str, cursor: int) -> np.ndarray:
+        """AUDIO_WINDOW_SAMPLES of registry clip `name` starting at `cursor` (looped)."""
+        clip = self.audio_clips[name]
+        return clip[(np.arange(AUDIO_WINDOW_SAMPLES) + cursor) % len(clip)]
 
     @staticmethod
     def _mix_source(mono: np.ndarray, src_xy: Tuple[float, float], level: float,
