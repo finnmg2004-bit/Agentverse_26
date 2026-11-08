@@ -120,7 +120,9 @@ def check_git(lane: str | None, do_push: bool) -> None:
     guarded = hook.exists() and "overnight guard" in hook.read_text(errors="ignore")
     report("ok" if guarded else "FAIL", "push guard hook installed", "" if guarded else "use --install-hook")
     if guarded:
-        r = git("push", "--dry-run", "origin", "HEAD:refs/heads/main", timeout=90, env=NO_PROMPT)
+        # a throwaway commit object (not on any branch) so there is something to push and the hook runs
+        probe = git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "overnight guard probe").stdout.strip()
+        r = git("push", "--dry-run", "origin", f"{probe}:refs/heads/main", timeout=90, env=NO_PROMPT)
         blocked = r.returncode != 0 and "overnight guard" in (r.stderr + r.stdout)
         report("ok" if blocked else "FAIL", "push to main is blocked", (r.stderr or r.stdout).strip()[-200:])
 
