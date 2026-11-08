@@ -88,7 +88,8 @@ def main() -> int:
         return int(ox + (cx - crop[0] + 0.5) * scale), int(oy + (crop[3] - 1 - cy + 0.5) * scale)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    vw = cv2.VideoWriter(str(args.out), cv2.VideoWriter_fourcc(*"mp4v"), args.fps, (W, H))
+    from video_h264 import H264Writer   # H.264: plays in WhatsApp / browsers (cv2's mp4v doesn't)
+    vw = H264Writer(args.out, args.fps, (W, H))
     dt = args.speed / args.fps
     t_end = states[-1]["t"]
     fi, si, next_t = 0, 0, 0.0
