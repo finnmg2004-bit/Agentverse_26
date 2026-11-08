@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sim.house_layout import AVOID_AREAS, LANDMARKS, ROOMS, SOUND_SOURCES
 
 import tasks as tasklib
+from robot_map_nav import robot_map_target  # NUDGE_ROBOT_MAP=1 only: objects as places (else returns None)
 
 try:
     from sim.house_layout import AVOID_AREA_LABELS
@@ -222,6 +223,9 @@ def keyword_parse(text: str) -> Dict[str, Any]:
         return dict(out, kind="teach", teach=keyword_teach(text))
 
     def find_target() -> str:
+        obj = robot_map_target(t)  # "take me to the sofa" -> the sofa the robot found (flag on only)
+        if obj:
+            return obj
         for pat, key in _WORDS_TO_TARGET:
             if re.search(pat, t):
                 return key
@@ -600,7 +604,7 @@ def validate(parsed: Dict[str, Any], emergency: bool, text: str = "") -> Tuple[O
                    "always": f"always alert for the {name}"}[policy]
         return {"type": "sound_preference", "sound": sound, "policy": policy, "summary": summary}, say
     if kind == "go_to":
-        target = parsed.get("target")
+        target = robot_map_target(text) or parsed.get("target")  # robot-map objects first (flag on only)
         if target not in ROOMS and target not in LANDMARKS:
             return None, "Sorry, where do you want to go?"
         if emergency:

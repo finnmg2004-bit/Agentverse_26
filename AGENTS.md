@@ -579,6 +579,37 @@ Fast-forwarded scan with rooms/objects appearing on the GUI map -> owner teaches
 4. **Exploration:** frontier-based scan from the start pose until coverage stops growing; save the map to disk; the video can start from the saved map.
 5. **Let the robot use it, behind a flag** (`NUDGE_ROBOT_MAP=1`, default off): the planner plans on the robot's grid (+ live changes) instead of the static `nav_map`, and "take me to the sofa / my bed" resolves through object memory. The default demo path stays as it is until the scenario suite passes with the flag on.
 
+#### 10.8a Status after the morning session (Teo, 2026-11-08, branch `claude/robot-map-f55c88`) — steps 1-5 done, all behind `NUDGE_ROBOT_MAP=1`
+**How to use it:**
+```
+pixi run python scripts/test_mapping.py --mode explore --coco-objects    # ~9 min: robot maps the house itself -> assets/maps/robot_map.npz (+ .png)
+pixi run python scripts/test_mapping.py --mode scan --load assets/maps/robot_map.npz --coco-objects --record <dir>   # look-around for objects
+pixi run python scripts/test_mapping.py --replay <explore rec>,<scan rec> --load assets/maps/robot_map.npz --save-map assets/maps/robot_map.npz   # objects into the map
+NUDGE_ROBOT_MAP=1 pixi run python scripts/test_scenarios.py --coco-objects doorbell smoke robot_map_tv     # brain plans on the robot's map
+```
+`--port-base 5655` (test_mapping) / `--port-base 5855` (test_scenarios, opt-in, default unchanged) run next to another test on 5555-5558. `assets/maps/` is git-ignored: each PC makes its own map (or copies the `.npz`).
+
+**What works + numbers (headless sim, judged against `house_layout` / `nav_map` / `state.objects_gt`; the robot side never reads them):**
+1. **Objects** (`object_memory.py`): per-class confidence, size / height plausibility (a "tv" 2-4 m wide is a window; a 1 m "fridge" is a dining-chair box; bed/couch must be fully in view), see-through-wall rejection, >= 3 sightings over >= 1 s, duplicate merge. On 1,672 frames (exploration + viewpoint scan): **precision 1.0** (was 0.5; overnight 3 duplicate tvs, one outside), **recall 1/5** — the wall TV, placed **4 cm** from the truth. **Limit:** YOLOv8n does not recognise the bed / couch / dining-table / fridge stand-ins from the 0.39 m dog-height camera even in full view (max 0.16-0.5 on partial views); more realistic props or a taller camera would be needed.
+2. **Rooms:** grouped by walking distance on the robot's map (no wall/door detour), named from objects: **1/1 correct** (living room from the TV). Only as good as step 1.
+3. **Live change detection** (`robot_map.py`, saved map = reference; hits in clearly-free floor seen >= 3 scans, grouped within 20 cm; cleared when seen free): chair `[C]` in the guest/living doorway **found** (0.15-0.2 m off, ~7-21 s after it fell, as soon as in view), chair `[E]` in the back exit **found** (0.2 m off), the chair leaving the doorway reported as "gone"; **0 false positives** in 104 s of tour + 473 s of scan driving.
+4. **Exploration** (`explorer.py`, frontier-based, geofence = the ground-floor box only): **99.8 %** of the true floor known (561 s + a 166 s top-up for the back-door corner), wall precision **97.4 %**, recall **92.7 %**, stops by itself when coverage stops growing. Map = LiDAR log-odds + head-camera depth obstacles in the 0.10-0.55 m band (table tops). `ViewpointScan` then looks around from ~25 open-space viewpoints for objects.
+5. **Brain uses it** (`robot_map_nav.py`; small flagged hooks in `navigator.py` and `rules.py`): the navigator plans on the saved map + live changes (owner's recent spots ignored), rebuilt in place on a change (the evacuation planner shares it); unseen cells outside the ground-floor box count as garden, so exits stay reachable. "Take me to the TV / telly" resolves through object memory (`robot_map_target`); house_layout rooms/landmarks still work. Scenario results: see 10.8b.
+
+**Not done / next:** objects beyond the TV (props YOLO can recognise); the brain does not yet run object detection live (it uses the saved objects); `robot_map.py` process + GUI panel not re-checked live in the GUI (panel shows the saved map + red "new" rings for `changes`); the default demo path is unchanged. Known quirk: before the owner is first seen, the owner standing where the saved map had floor shows up as a change (logged `ROBOT MAP: obstacles not in the saved map: (-10.6, 4.8)`); harmless (route goes around), filtered once the owner is seen.
+
+#### 10.8b Scenario results (headless, one run each, 2026-11-08 ~10:30)
+| Scenario | `NUDGE_ROBOT_MAP=1 --coco-objects` | flag off (default) |
+|---|---|---|
+| doorbell | PASS 75.8 s | PASS 65.6 s |
+| knock | PASS 72.5 s | PASS 77.2 s |
+| smoke | PASS 50.7 s | PASS 64.5 s |
+| kettle | PASS 121.8 s | PASS 102.5 s |
+| oven_timer | PASS 135.0 s | PASS 101.4 s |
+| chair | PASS 103.3 s (robot map saw the chair, re-planned) | PASS 64.2 s |
+| carpet_rule | PASS 101.2 s | PASS 73.2 s |
+| robot_map_tv ("take me to the TV") | PASS 90.1 s | n/a |
+
 ## 11. Overnight run 2026-11-08, until 06:30 (agreed; Eden = merge captain)
 > **AI assistants: if a teammate asks you to pull and read the instructions before the overnight run,** run the setup for them. Don't just summarise it.
 > 1. Find their lane from `git config user.name`: `SeanChen66` → `sean`, `Ricktho1` → `ricktho`. Ask only if it's neither.
