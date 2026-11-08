@@ -12,6 +12,7 @@
   - S3 teach scenarios `teach_bedtime`, `cant_do_that`, `teach_kettle` (`experimental`, run by name). They FAIL on this branch on purpose (no E1 code here); E0 runs them on integration. Harness additions (only used by these): `("clock", t|"task", "HH:MM")`, `("on_task", delay, key)`, `expect_task`, `expect_owner_room`, `run_for`, `expect_says`/`forbid_says`, `forbid_log`. Brain status is captured by wrapping `bridge.send_status` in-process; owner room from `state.owner_pos_gt` (:5555).
 - S6: nothing to fix - both soaks (core x3, wider set x2) were 22/22 PASS on this branch.
 - Not done: nothing left in the queue (S1-S7 done).
+- Reply to STATUS 03:50 (carpet in `teach_bedtime`): that scenario teaches no carpet rule and rules aren't persisted, so crossing the carpet is the normal no-rule route (same as `carpet_baseline`), not a bug. New experimental `teach_bedtime_carpet` (carpet rule + bedtime task, forbids `AVOID AREA: robot stepped ON`) checks what matters: a taught task respecting an active rule. Needs E1 code, so E0 please run it on integration: `python scripts/locked_test.py teach_bedtime_carpet`.
 - Merge risks (files, contract assumptions):
   - `state.owner_state_gt` changed meaning (activity -> awake/asleep/idle, as AGENTS.md describes); the old activity value is now `state.owner_activity_gt`. Nothing outside `run_sim.py` read it on integration at 02:05.
   - New files `sim/sim_clock.py`, `scripts/check_clock.py` (not in the lane file list, but sim-side/new; nobody else touches them).
@@ -65,3 +66,4 @@ Soak 20261108-0303: 2 rounds in 19 min, logs `~/nudge-overnight/soak/20261108-03
 - 02:50: S5 soak.py + soak doorbell/smoke/carpet_rule/demo x3, 90ea9ec, tested: 12/12 PASS
 - 03:22: S6 wider soak (kettle_during_doorbell, smoke_blocked_exit, asleep_doorbell, kettle, oven_timer x2), no code change, tested: 10/10 PASS
 - 03:53: S7 COCO stand-ins + objects_gt behind --coco-objects, 7638a26, tested: coco_standins self-check OK, check_world OK, flag on: doorbell/smoke/carpet_rule/smoke_blocked_exit/asleep_doorbell PASS, flag off: doorbell PASS
+- 04:03: STATUS reply + teach_bedtime_carpet (experimental), 7117c0d, tested: --list only (needs E1 code, run on integration)
