@@ -31,7 +31,8 @@ from vision import OwnerDetector  # noqa: E402
 from world_model import WorldModel  # noqa: E402
 from evacuation import ESCALATE_AFTER_S, EvacuationPlanner  # noqa: E402
 from sound_localizer import SoundLocalizer  # noqa: E402
-from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, validate  # noqa: E402
+from rules import MIN_VOICE_CONFIDENCE, CommandListener, CommandParser, forget_reply, validate  # noqa: E402
+from tasks import TaskStore  # noqa: E402
 from sim.house_layout import ALERT_SOUNDS, SOUND_SOURCES  # noqa: E402  (non-danger sounds, from the registry)
 
 LOOP_HZ = 20.0
@@ -58,6 +59,7 @@ class Brain:
         # What the owner tells the robot (GUI text box / voice): rules.py
         self.cmd_listener = CommandListener()
         self.cmd_parser = CommandParser(self.agent)
+        self.task_store = TaskStore()  # taught jobs (assets/tasks.json); runner + triggers: E1.3
         # The owner's no-go areas; read self.world at call time (reset() replaces the world).
         self.nav.avoid_provider = lambda: self.world.avoid_for_planning()
         self.last_tick = time.monotonic()
@@ -221,6 +223,14 @@ class Brain:
                 w.start_request(instr["target"], str(msg.get("text", "")))
                 w.mission["say"] = say
                 self.agent.submit("user_command", w)
+            elif kind == "teach":
+                task = self.task_store.add(dict(instr["task"], source=msg.get("source", "")))
+                w.log(f"TASK taught: {task['name']} {task['trigger']} -> {[st['skill'] for st in task['steps']]}")
+            elif kind == "forget_task":
+                removed = self.task_store.remove(instr["name"])
+                say = forget_reply(removed, instr["name"])
+                if removed is not None:
+                    w.log(f"TASK forgotten: {removed['name']}")
             elif kind == "stop":
                 self.agent.cancel()
                 self.nav.clear()

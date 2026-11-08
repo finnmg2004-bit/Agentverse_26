@@ -200,8 +200,82 @@ def test_store_and_runner(tmp):
     check(run3.remove("nothing") is None, "forgetting an unknown task is harmless")
 
 
+def _said(text, emergency=False):
+    """Keyword path end to end: sentence -> rules.keyword_parse -> rules.validate."""
+    import rules as R
+    return R.validate(R.keyword_parse(text), emergency, text)
+
+
+def test_teach_parsing():
+    """E1.2: teach / forget / can't-do sentences in rules.py (keyword fallback = no Ollama needed)."""
+    import rules as R
+    print("teach parsing (rules.py, keywords)")
+    instr, say = _said("Nudge, every night at 10 pm take me to bed")
+    check(instr is not None and instr["type"] == "teach", "bedtime sentence -> teach")
+    task = instr["task"] if instr else {}
+    check(task.get("name") == "bedtime" and task.get("trigger") == {"kind": "time", "at": "22:00", "repeat": "daily"},
+          f"bedtime trigger 22:00 daily ({task.get('name')}, {task.get('trigger')})")
+    check([s["skill"] for s in task.get("steps", [])] == ["find_owner", "say", "guide_owner_to"]
+          and task["steps"][-1]["args"] == {"target": "guest"}, "bedtime steps find -> say -> guide to guest")
+    check(say == "OK. Every day at 10 pm I'll take you to bed.", f"confirmation: {say!r}")
+    check(R.keyword_parse("every night at 10 take me to bed")["teach"]["at"] == "22:00", "'every night at 10' = 22:00")
+    instr, _ = _said("Every night at 10 pm take me to bed")
+    check(R.keyword_parse("take me to the bedroom")["kind"] == "go_to", "'take me to the bedroom' (no time) stays go_to now")
+
+    instr, say = _said("When the kettle boils, just tell me")
+    t = instr["task"] if instr else {}
+    check(t.get("trigger", {}).get("sound") == "kettle" and [s["skill"] for s in t.get("steps", [])]
+          == ["find_owner", "alert_owner"], f"kettle -> sound trigger + tell ({say!r})")
+    check(say.startswith("OK. When I hear the kettle"), "kettle confirmation")
+
+    instr, say = _said("Remind me to take my pills at 8 every morning")
+    t = instr["task"] if instr else {}
+    check(t.get("trigger", {}).get("at") == "08:00" and "your pills" in str(t.get("steps")),
+          f"pills reminder 08:00 with 'your pills' ({say!r})")
+
+    instr, say = _said("If I haven't moved for two hours, come and check on me")
+    t = instr["task"] if instr else {}
+    check(t.get("trigger") == {"kind": "idle", "minutes": 120.0}, f"idle 2 h ({t.get('trigger')})")
+
+    instr, say = _said("When I go into the kitchen remind me to switch off the oven")
+    t = instr["task"] if instr else {}
+    check(t.get("trigger", {}).get("room") == "kitchen", f"room-entry trigger ({say!r})")
+
+    for bad in ("When the smoke alarm goes, don't wake me", "If there's a fire just tell me"):
+        instr, say = _said(bad)
+        check(instr is None and "smoke alarm" in say, f"danger refused: {bad!r} -> {say!r}")
+    instr, say = _said("Every day at 9 make me a coffee")
+    check(instr is None and "can't" in say, f"unsupported teach -> can't ({say!r})")
+    instr, say = _said("Please do the washing up")
+    check(instr is None and "can't" in say, f"cant_do_that sentence -> can't ({say!r})")
+    instr, say = _said("Every night take me to bed")
+    check(instr is None and say == R.NO_TIME, "no time given -> asks when")
+    instr, say = _said("Every night at 10 pm take me to bed", emergency=True)
+    check(instr is None and "fire" in say, "no teaching during a fire")
+
+    instr, _ = _said("Forget the bedtime task")
+    check(instr == {"type": "forget_task", "name": "bedtime"}, f"forget -> forget_task ({instr})")
+    instr, _ = _said("cancel the bed task")
+    check(instr and instr["type"] == "forget_task", "'cancel the bed task' is forget, not stop")
+    check(_said("stop")[0] == {"type": "stop"}, "'stop' still stops")
+    check(R.forget_reply(None, "kettle") == "I don't have a kettle task.", "forget unknown reply")
+
+    # LLM form merged with keywords (what CommandParser does when Gemma answers)
+    llm = {"trigger": "time", "at": "10:00", "repeat": "daily", "sound": "none", "minutes": 0, "room": "none",
+           "action": "guide", "target": "bed", "text": "", "name": "bedtime"}
+    flat = R.merge_teach(llm, R.keyword_teach("every night at 10 pm take me to bed"))
+    task, say = R.build_task(flat, "every night at 10 pm take me to bed")
+    check(task is not None and task["trigger"]["at"] == "22:00", "regex clock beats the LLM's 10:00")
+    llm_bad = dict(llm, trigger="sound", sound="doorbell")
+    task, say = R.build_task(R.merge_teach(llm_bad, R.keyword_teach("when the smoke alarm goes tell me")),
+                             "when the smoke alarm goes tell me")
+    check(task is None and say == R.DANGER_TEACH, "LLM mapping smoke onto the doorbell is still refused")
+    check(R.teach_schema()["properties"]["action"]["enum"] == R.TEACH_ACTIONS, "teach schema enum")
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
+        test_teach_parsing()
         test_validator()
         test_compile()
         test_watcher()

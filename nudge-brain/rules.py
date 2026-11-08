@@ -34,6 +34,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sim.house_layout import AVOID_AREAS, LANDMARKS, ROOMS, SOUND_SOURCES
 
+import tasks as tasklib
+
 try:
     from sim.house_layout import AVOID_AREA_LABELS
 except ImportError:  # older house_layout
@@ -45,7 +47,7 @@ MIN_VOICE_CONFIDENCE = 0.5
 PARSE_TIMEOUT_S = float(os.environ.get("NUDGE_COMMAND_TIMEOUT_S", "8.0"))
 EMERGENCY_AREA_COST = 4.0  # in a fire a rule area costs (1 + this) x its length instead of being a wall
 
-KINDS = ["avoid_area", "allow_area", "sound_preference", "go_to", "stop", "unknown"]
+KINDS = ["avoid_area", "allow_area", "sound_preference", "go_to", "stop", "teach", "forget_task", "unknown"]
 POLICIES = ["ignore", "quiet_hours", "expect", "always"]
 
 
@@ -182,8 +184,11 @@ kinds:
   sound_preference: how to treat a household sound. policy: ignore (never alert), quiet_hours (no alert
     from from_hour to to_hour, 24 h clock), expect (they are waiting for it, e.g. a parcel -> doorbell),
     always (always alert)
-  go_to: the owner wants to be taken somewhere (target = room or place)
+  go_to: the owner wants to be taken somewhere NOW (target = room or place)
   stop: the owner wants the robot to stop what it is doing
+  teach: the owner teaches a job for LATER, with a time ("every night at 10"), a sound ("when the
+    kettle boils"), "if I haven't moved for ..." or "when I go into ..."
+  forget_task: the owner wants the robot to forget / delete a job it was taught
   unknown: anything else
 Named areas (prefer these over whole rooms when they match):
 {areas}
@@ -210,6 +215,11 @@ def keyword_parse(text: str) -> Dict[str, Any]:
     t = text.lower()
     out = {"kind": "unknown", "area": "none", "sound": "none", "policy": "none",
            "from_hour": 0, "to_hour": 0, "target": "none"}
+    forget = forget_name(text)
+    if forget is not None:
+        return dict(out, kind="forget_task", task_name=forget)
+    if looks_like_teach(text):
+        return dict(out, kind="teach", teach=keyword_teach(text))
 
     def find_target() -> str:
         for pat, key in _WORDS_TO_TARGET:
@@ -252,12 +262,270 @@ def keyword_parse(text: str) -> Dict[str, Any]:
 DANGER_WORDS = re.compile(r"smoke|fire|carbon monoxide|\bco alarm|gas alarm|glass break", re.I)
 
 
+# --------------------------------------------------------------------------- #
+# Teaching a job (contract C1, overnight/README.md): "every night at 10 pm take me to bed"
+#   The LLM fills a FLAT schema (trigger + one action from a fixed list); plain code builds the
+#   task program from it and tasks.validate_task() checks it. The LLM never writes steps itself.
+# --------------------------------------------------------------------------- #
+TEACH_TRIGGERS = ["time", "sound", "idle", "event", "none"]
+TEACH_ACTIONS = ["guide", "remind", "tell", "check_on", "unsupported"]
+NO_TIME = "Please tell me when. For example: every night at 10 pm, take me to bed."
+DANGER_TEACH = "I always get you out when the smoke alarm goes. Nobody can change that."
+
+_NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+              "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20,
+              "thirty": 30, "forty": 40, "forty five": 45, "an": 1, "a": 1}
+_NUM = r"(\d{1,3}|" + "|".join(sorted(_NUM_WORDS, key=len, reverse=True)) + r")"
+_SOUND_WORDS = [  # (regex, registry key); danger words map to the smoke alarm so validate refuses them
+    (r"smoke|fire alarm|\bfire\b|carbon monoxide|\bco alarm", "smoke_alarm"),
+    (r"kettle", "kettle"), (r"oven|timer", "oven_timer"),
+    (r"door ?bell|\bbell\b|rings? the door|someone rings", "doorbell"), (r"knock", "knock"),
+]
+_TEACH_CUE = re.compile(
+    r"\b(every|each|daily|whenever|tonight|tomorrow)\b|\bat (\d|(noon|midnight|"
+    + "|".join(w for w in _NUM_WORDS if w not in ("a", "an")) + r")\b)"
+    r"|\bwhen(ever)? (the|i|someone|there)\b|\bif i (have ?n.?t|have not|don.?t|do not) (moved|move)", re.I)
+
+
+def _num(word: str) -> Optional[float]:
+    word = word.strip().lower()
+    if word.isdigit():
+        return float(word)
+    return float(_NUM_WORDS[word]) if word in _NUM_WORDS else None
+
+
+def looks_like_teach(text: str) -> bool:
+    """A sentence about LATER (time / sound / idle / room-entry), not something to do now."""
+    return bool(_TEACH_CUE.search(text or ""))
+
+
+def forget_name(text: str) -> Optional[str]:
+    """'forget the bedtime task' -> 'bedtime'; None if the sentence isn't about forgetting a task."""
+    t = (text or "").lower()
+    m = re.search(r"\b(forget|delete|remove|cancel|drop)\b( about)?( the| my| your)? ?(.*?)"
+                  r" ?\b(task|job|routine|reminder)s?\b", t)
+    if m:
+        return re.sub(r"[^a-z0-9 ]+", "", m.group(4)).strip() or "all"
+    return None
+
+
+def _clock_from_text(t: str) -> Optional[str]:
+    """'at 10 pm' / 'at 10:30' / 'at 22:00' / 'at ten' / 'every night at 10' -> 'HH:MM'."""
+    if re.search(r"\bmidnight\b", t):
+        return "00:00"
+    if re.search(r"\bnoon\b|\bmidday\b", t):
+        return "12:00"
+    m = re.search(r"\bat " + _NUM + r"(?:[:.](\d{2}))? ?(am|pm|a\.m\.|p\.m\.|o.?clock)?", t)
+    if not m:
+        return None
+    h = _num(m.group(1))
+    if h is None or h > 23:
+        return None
+    h, mi, ampm = int(h), int(m.group(2) or 0), (m.group(3) or "").replace(".", "")
+    if ampm == "pm" and h < 12:
+        h += 12
+    elif ampm == "am" and h == 12:
+        h = 0
+    elif ampm not in ("am", "pm") and h < 12 and re.search(r"night|evening|bed|tonight|afternoon", t):
+        h += 12
+    return f"{h:02d}:{mi:02d}" if mi < 60 else None
+
+
+def _sound_from_text(t: str) -> str:
+    return next((key for pat, key in _SOUND_WORDS if re.search(pat, t)), "none")
+
+
+def _target_from_text(t: str) -> str:
+    """Where 'take me to ...' points: a landmark / room key, else 'none'."""
+    m = re.search(r"(take|bring|lead|guide|walk) me (to|into|over to) (the |my )?([a-z ]+)", t)
+    if not m:
+        return "none"
+    words = re.split(r"\b(when|whenever|if|every|each|at|and|then|after|before)\b", m.group(4))[0]
+    if re.search(r"\bbed", words):
+        return "guest"
+    if re.search(r"kettle", words):
+        return "kettle"
+    if re.search(r"stove|oven|cooker", words):
+        return "stove"
+    if re.search(r"back door|garden door", words):
+        return "back_door"
+    for pat, key in _WORDS_TO_TARGET:
+        if re.search(pat, words):
+            return key
+    return "none"
+
+
+def keyword_teach(text: str) -> Dict[str, Any]:
+    """Keyword fallback for teach sentences; same flat shape as teach_schema()."""
+    t = (text or "").lower()
+    flat: Dict[str, Any] = {"trigger": "none", "at": "none", "repeat": "daily", "sound": "none",
+                            "minutes": 0, "room": "none", "action": "unsupported", "target": "none",
+                            "text": "", "name": ""}
+    idle = re.search(r"(have ?n.?t|have not|don.?t|do not) (moved|move)[a-z ]*? (for|in) "
+                     + _NUM + r"? ?(half )?(an? )?(hours?|minutes?|mins?)", t)
+    when_room = re.search(r"when(ever)? i (go|come|walk|get) (in|into|to) (the |my )?([a-z ]+)", t)
+    clock = _clock_from_text(t)
+    sound = _sound_from_text(t)
+    if idle:
+        n = _num(idle.group(4)) if idle.group(4) else 1.0
+        n = 0.5 if idle.group(5) and not idle.group(4) else (n or 1.0)
+        flat.update(trigger="idle", minutes=int(n * 60 if idle.group(7).startswith("h") else n))
+    elif when_room:
+        room = tasklib.place_key(re.split(r" and | then |,| remind| take| tell| bring", when_room.group(5))[0].strip())
+        flat.update(trigger="event", room=room if room in ROOMS else "none")
+    elif sound != "none" and re.search(r"\bwhen|\bif\b|\bevery time", t):
+        flat.update(trigger="sound", sound=sound)
+    elif clock or re.search(r"\b(every|each) (night|evening|morning|day)\b|\bdaily\b|\btonight\b", t):
+        flat.update(trigger="time", at=clock or "none")
+    if re.search(r"\b(today|tonight|tomorrow|once|just this)\b", t) and flat["trigger"] == "time" \
+            and not re.search(r"\bevery\b|\beach\b|daily", t):
+        flat["repeat"] = "once"
+    target = _target_from_text(t)
+    rem = re.search(r"remind me (to |about |that )?(.+?)(?: and | then |,| at \S+| every | each | when| if |"
+                    r" in the (morning|evening|afternoon)| daily|[.!?]|$)", t)
+    if target != "none":
+        flat.update(action="guide", target=target)
+    elif rem:
+        flat.update(action="remind", text=rem.group(2).strip())
+    elif re.search(r"check on me|see if i.?m (ok|okay|alright|fine)|come (and )?(find|see|check)|find me", t):
+        flat["action"] = "check_on"
+    elif re.search(r"\b(tell|let) me( know)?\b|\bwarn me\b|\bnudge me\b|\bwake me\b|\balert me\b", t):
+        flat["action"] = "tell"
+    if rem and target != "none":
+        flat["text"] = rem.group(2).strip()
+    return flat
+
+
+def teach_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "trigger": {"type": "string", "enum": TEACH_TRIGGERS},
+            "at": {"type": "string"},  # "HH:MM" 24 h, or "none"
+            "repeat": {"type": "string", "enum": ["daily", "once"]},
+            "sound": {"type": "string", "enum": list(SOUND_SOURCES) + ["none"]},
+            "minutes": {"type": "integer", "minimum": 0, "maximum": 1440},
+            "room": {"type": "string", "enum": list(ROOMS) + ["none"]},
+            "action": {"type": "string", "enum": TEACH_ACTIONS},
+            "target": {"type": "string", "enum": tasklib.places() + ["bed", "none"]},
+            "text": {"type": "string"},
+            "name": {"type": "string"},
+        },
+        "required": ["trigger", "at", "repeat", "sound", "minutes", "room", "action", "target", "text", "name"],
+    }
+
+
+def teach_prompt() -> str:
+    sounds = ", ".join(f"{k} ({v.get('label', k)})" for k, v in SOUND_SOURCES.items())
+    return f"""The owner of Nudge (a robot assistance dog) teaches it a job for later. Fill the form.
+trigger: time (at a clock time; at = "HH:MM" 24 h clock, "every night at 10" = 22:00; repeat daily or once),
+  sound (when a household sound starts; sound = one of: {sounds}), idle (the owner hasn't moved for
+  `minutes`), event (when the owner goes into `room`), none (no trigger said).
+action, the ONLY things Nudge can do:
+  guide: find the owner and take them to `target` (bed = guest bedroom)
+  remind: find the owner and tell them `text` (a short reminder in plain words)
+  tell: find the owner and tell them about the sound / time
+  check_on: find the owner and check they are OK
+  unsupported: anything else (cooking, cleaning, fetching things, calling people, ...)
+name: one short word for the job (bedtime, kettle, pills, ...). Unused fields: "none", 0 or "".
+Examples:
+"Every night at 10 pm take me to bed" -> time, at 22:00, daily, action guide, target bed, name bedtime
+"When the kettle boils, just tell me" -> sound, sound kettle, action tell, name kettle
+"Remind me to take my pills at 8 every morning" -> time, at 08:00, daily, action remind, text "take your pills", name pills
+"If I haven't moved for two hours, come and check on me" -> idle, minutes 120, action check_on, name check_on
+"Every day at 9 make me a coffee" -> time, at 09:00, action unsupported"""
+
+
+def _you(text: str) -> str:
+    """'take my pills' -> 'take your pills' (the reminder is said TO the owner)."""
+    swaps = {"my": "your", "me": "you", "i": "you", "i'm": "you're", "myself": "yourself", "mine": "yours"}
+    return " ".join(swaps.get(w.lower(), w) for w in str(text).split())
+
+
+def build_task(flat: Dict[str, Any], text: str = "") -> Tuple[Optional[Dict[str, Any]], str]:
+    """Flat teach form (LLM or keywords) -> (validated C1 task, "") or (None, what Nudge says)."""
+    trig_kind = flat.get("trigger")
+    sound = flat.get("sound") if flat.get("sound") in SOUND_SOURCES else None
+    if (sound in danger_sounds()) or (DANGER_WORDS.search(text or "") and trig_kind in ("sound", "none")):
+        return None, DANGER_TEACH
+    action = flat.get("action")
+    if action not in TEACH_ACTIONS or action == "unsupported":
+        return None, tasklib.CANT_DO
+    if trig_kind == "time":
+        at = tasklib.parse_hhmm(flat.get("at"))
+        if at is None:
+            return None, NO_TIME
+        trigger: Dict[str, Any] = {"kind": "time", "at": tasklib.fmt_hhmm(at),
+                                   "repeat": flat.get("repeat") if flat.get("repeat") in ("daily", "once") else "daily"}
+    elif trig_kind == "sound":
+        if sound is None:
+            return None, "Sorry, I can't hear that sound yet."
+        trigger = {"kind": "sound", "sound": sound, "phase": "start"}
+    elif trig_kind == "idle":
+        trigger = {"kind": "idle", "minutes": flat.get("minutes") or 0}
+    elif trig_kind == "event":
+        trigger = {"kind": "event", "event": "owner_entered_room", "room": flat.get("room")}
+    else:
+        return None, NO_TIME
+    words = _you(" ".join(str(flat.get("text") or "").split()).strip(" .!?"))
+    if words and not re.match(r"(it.s|time|remember|don.t|the|your|you)\b", words, re.I):
+        words = "Time to " + words
+    words = (words[:1].upper() + words[1:] + ".") if words else ""
+    steps: List[Dict[str, Any]] = [{"skill": "find_owner", "args": {}}]
+    if action == "guide":
+        target = tasklib.place_key(flat.get("target"))
+        if target is None:
+            return None, "Sorry, where do you want to go?"
+        if not words and trigger["kind"] == "time":
+            words = f"It's {tasklib.spoken_time(tasklib.parse_hhmm(trigger['at']))}." + \
+                    (" Time for bed." if target == "guest" else "")
+        if words:
+            steps.append({"skill": "say", "args": {"text": words}})
+        steps.append({"skill": "guide_owner_to", "args": {"target": target}})
+    elif action == "remind":
+        if not words:
+            return None, "Sorry, what should I remind you about?"
+        steps.append({"skill": "alert_owner", "args": {"text": words}})
+    elif action == "tell":
+        if trigger["kind"] == "sound":
+            say = str(SOUND_SOURCES[sound].get("say") or f"I heard the {sound.replace('_', ' ')}.")
+            words = words or (say.split(".")[0] + ".")
+        elif trigger["kind"] == "time" and not words:
+            words = f"It's {tasklib.spoken_time(tasklib.parse_hhmm(trigger['at']))}."
+        steps.append({"skill": "alert_owner", "args": {"text": words}})
+    else:  # check_on
+        steps.append({"skill": "alert_owner", "args": {"text": words or "Are you OK? Tap my handle."}})
+    name = flat.get("name") or ""
+    if not name and action == "guide" and trigger["kind"] == "time" and steps[-1]["args"].get("target") == "guest":
+        name = "bedtime"
+    elif not name and trigger["kind"] == "idle":
+        name = "check_on"
+    task, why = tasklib.validate_task({"name": name, "trigger": trigger, "steps": steps, "text": text})
+    if task is None:
+        return None, DANGER_TEACH if "danger" in why else (tasklib.CANT_DO if "skill" in why else f"Sorry, {why}.")
+    return task, tasklib.confirmation(task)
+
+
+def forget_reply(removed: Optional[Dict[str, Any]], name: str) -> str:
+    if removed is None:
+        return f"I don't have a {name} task." if name and name != "all" else "Which task should I forget?"
+    return f"OK. I forgot the {removed['name'].replace('_', ' ')} task."
+
+
 def validate(parsed: Dict[str, Any], emergency: bool, text: str = "") -> Tuple[Optional[Dict[str, Any]], str]:
     """Plain-code check of a parsed instruction. Returns (instruction | None, what Nudge says).
     `text`: the owner's words. Any sound preference / unknown instruction that MENTIONS a danger
     sound is refused, whatever the parser made of it (the LLM can't name danger sounds, so it may
     map "ignore the smoke alarm" onto a different sound)."""
     kind = parsed.get("kind")
+    if kind == "forget_task":
+        name = str(parsed.get("task_name") or forget_name(text) or "").strip()
+        return {"type": "forget_task", "name": name}, ""  # main.py says forget_reply() after the store lookup
+    if kind == "teach":
+        if emergency:
+            return None, "Not now. There is a fire. Hold my handle. We are going outside."
+        task, say = build_task(parsed.get("teach") or {}, text)
+        return ({"type": "teach", "task": task}, say) if task is not None else (None, say)
     if text and DANGER_WORDS.search(text) and kind in ("sound_preference", "unknown"):
         return None, "I will always tell you about the smoke alarm."
     if kind in ("avoid_area", "allow_area"):
@@ -300,7 +568,7 @@ def validate(parsed: Dict[str, Any], emergency: bool, text: str = "") -> Tuple[O
         if emergency:
             return None, "I cannot stop. There is a fire. Hold my handle. We are going outside."
         return {"type": "stop"}, "OK. I stopped."
-    return None, "Sorry, I did not understand. Please say it again."
+    return None, tasklib.CANT_DO  # "Sorry, I can't do that yet. I can find you, remind you, or take you somewhere."
 
 
 class CommandParser:
@@ -318,7 +586,20 @@ class CommandParser:
         text = str(msg.get("text", ""))
         t0 = time.perf_counter()
         parsed, source, raw = None, "keywords", None
-        if self.agent is not None and self.agent.enabled and self.agent.llm_online:
+        llm = self.agent is not None and self.agent.enabled and self.agent.llm_online
+        if forget_name(text) is not None or looks_like_teach(text):
+            # "forget the X task" is plain keywords; teach sentences go straight to the teach form
+            # (one LLM call), so "every night at 10 take me to bed" is never mistaken for go_to now.
+            parsed = keyword_parse(text)
+            if parsed["kind"] == "teach" and llm:
+                flat, raw = self._teach_llm(text)
+                if flat is not None:
+                    parsed, source = dict(parsed, teach=merge_teach(flat, parsed["teach"])), "llm"
+            with self._lock:
+                self._done.append({"msg": msg, "parsed": parsed, "source": source, "raw": raw,
+                                   "latency": round(time.perf_counter() - t0, 2)})
+            return
+        if llm:
             try:
                 resp = self.agent._http("/api/chat", {
                     "model": self.agent.model,
@@ -335,14 +616,50 @@ class CommandParser:
             kw = keyword_parse(text)
             if parsed is None or kw["kind"] != "unknown":
                 parsed, source = kw, ("keywords" if parsed is None else "llm+keywords")
+        elif parsed.get("kind") == "teach":  # the LLM saw a teach sentence our cue words missed
+            kw = keyword_teach(text)
+            flat, raw2 = self._teach_llm(text)
+            parsed = dict(parsed, teach=merge_teach(flat, kw) if flat is not None else kw)
+            raw = f"{raw} | {raw2}"
+        elif parsed.get("kind") == "forget_task":
+            parsed = dict(parsed, task_name=forget_name(text) or "")
         with self._lock:
             self._done.append({"msg": msg, "parsed": parsed, "source": source, "raw": raw,
                                "latency": round(time.perf_counter() - t0, 2)})
+
+    def _teach_llm(self, text: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Gemma fills the flat teach form (schema-constrained). Returns (form | None, raw reply)."""
+        try:
+            resp = self.agent._http("/api/chat", {
+                "model": self.agent.model,
+                "messages": [{"role": "system", "content": teach_prompt()},
+                             {"role": "user", "content": f'The owner said: "{text}"'}],
+                "stream": False, "format": teach_schema(), "think": False, "keep_alive": "30m",
+                "options": self.agent._options(120),
+            }, timeout=PARSE_TIMEOUT_S)
+            raw = resp["message"]["content"]
+            flat = json.loads(raw)
+            return (flat, raw) if isinstance(flat, dict) else (None, raw)
+        except Exception as exc:
+            return None, f"LLM failed: {exc}"
 
     def poll(self) -> List[Dict[str, Any]]:
         with self._lock:
             done, self._done = self._done, []
         return done
+
+
+def merge_teach(llm: Dict[str, Any], kw: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM teach form, with gaps filled from the keyword form. Plain-code facts win where the LLM is
+    known to be shaky: an explicit clock time in the sentence, a danger sound named in it."""
+    out = dict(kw, **{k: v for k, v in llm.items() if v not in (None, "", "none", 0)})
+    if kw.get("at") not in (None, "none") and kw.get("trigger") == "time":
+        out["at"] = kw["at"]  # "at 10 pm" parsed by regex beats the LLM's 24 h arithmetic
+    if kw.get("sound") == "smoke_alarm":
+        out.update(trigger="sound", sound="smoke_alarm")
+    if out.get("target") == "bed":
+        out["target"] = "guest"
+    return out
 
 
 class CommandListener:

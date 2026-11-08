@@ -254,7 +254,8 @@ def describe_steps(steps: List[Dict[str, Any]]) -> str:
 
 def confirmation(task: Dict[str, Any]) -> str:
     """'OK. Every day at 10 pm I'll take you to bed.'"""
-    return f"OK. {describe_trigger(task['trigger'])} I'll {describe_steps(task['steps'])}."
+    out = f"OK. {describe_trigger(task['trigger'])} I'll {describe_steps(task['steps'])}."
+    return out.replace('.".', '."').replace('!".', '!"').replace('?".', '?"')  # no 'tell you "X.".'
 
 
 # ---------------------------------------------------------------------------- compile to jobs
