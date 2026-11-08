@@ -115,6 +115,9 @@ def main() -> int:
     ap.add_argument("--tour", choices=sorted(TOURS), default="doorbell")
     ap.add_argument("--odom", choices=["cmd", "delta"], default="delta")
     ap.add_argument("--kidnap", action="store_true", help="global init instead of the known start pose")
+    ap.add_argument("--teleport", action="store_true",
+                    help="known start, then the robot is picked up mid-tour and put down somewhere else")
+    ap.add_argument("--trials", type=int, default=10, help="--kidnap / --teleport: random poses to try")
     ap.add_argument("--n", type=int, default=400)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -124,9 +127,9 @@ def main() -> int:
     loco = Go2Locomotion(model, data, nav)
     base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
     planner = GridPlanner(nav)
+    if args.kidnap or args.teleport:
+        return global_trials(args, model, data, nav, loco, base_id, planner)
     pf = localizer_pf.ParticleLocalizer(n=args.n, odom=args.odom, seed=args.seed, nav=nav)
-    if args.kidnap:
-        pf.global_init()
 
     t, step_ms = 0.0, []
     pose = loco.get_pose()
@@ -176,6 +179,97 @@ def main() -> int:
           f"end {e[-1, 2]:.3f} m, max {e[skip:, 2].max():.3f} m")
     ok = exy.mean() < 0.25 and exy.max() < 0.8
     print(f"[localize] {'PASS' if ok else 'FAIL'}")
+    return 0 if ok else 1
+
+
+def random_pose(nav, rng):
+    """A random free spot in one of the rooms Nudge searches (not outside, not the stairs), random heading."""
+    rooms = [k for k in H.nudge_rooms() if k in H.ROOMS]
+    while True:
+        x, y = rng.uniform(-15, 15), rng.uniform(-4.5, 17.5)
+        r, c = int((y - nav.y0) / nav.res), int((x - nav.x0) / nav.res)
+        if H.get_room_at(x, y) in rooms and nav.dist[r, c] > 0.45:
+            return x, y, rng.uniform(-math.pi, math.pi)
+
+
+def global_trials(args, model, data, nav, loco, base_id, planner) -> int:
+    """--kidnap: unknown start (NUDGE_LOCALIZE_GLOBAL behaviour: spin once, global search, convergence test),
+    then drive the tour on the estimate. --teleport: known start, tracking, then picked up after 12 s and put
+    down at a random spot (odometry sees nothing): lost detection + re-localisation while driving on.
+    Prints per trial: converged?, time to converge, error at convergence, final error."""
+    rng = np.random.default_rng(1000 + args.seed)
+    rows = []
+    for k in range(args.trials):
+        pf = localizer_pf.ParticleLocalizer(n=args.n, odom=args.odom, seed=args.seed + k, nav=nav)
+        pf.global_flag = True
+        if args.kidnap:
+            start = random_pose(nav, rng)
+            loco.reset_robot_pose(*start)
+            pf.global_init()
+        else:
+            start = H.ROBOT_START_POSE
+            loco.reset_robot_pose(*start)
+            pf.reset(start)
+        drop = random_pose(nav, rng) if args.teleport else None
+        fit_conv = None
+        t, t_kidnap, t_conv, err_conv, wrong = 0.0, (None if args.teleport else 0.0), None, None, 0
+        pose = loco.get_pose()
+        pf.update({"t": t, "robot_pose": list(pose), "lidar_ranges": lidar(model, data, base_id, pose)})
+        goals = list(TOURS[args.tour])
+        wps, was_conv, step_ms, post = [], pf.converged, [], []
+        while t < 75.0 and goals:
+            if drop is not None and t_kidnap is None and t >= 12.0:
+                loco.reset_robot_pose(*drop)
+                t_kidnap = t
+            if pf.converged and (not was_conv or not wps):     # (re)plan on the estimate
+                g = goals[0]
+                goal = H.LANDMARKS.get(g) or H.ROOMS[g]["owner_spot"]
+                wps = planner.plan(pf.estimate[:2], goal) or []
+                if not wps:
+                    goals.pop(0)
+                    continue
+            was_conv = pf.converged
+            if pf.wants_spin():
+                vx, wz = 0.0, localizer_pf.SPIN_WZ
+            elif pf.converged:
+                vx, wz, wps = follow(wps, pf.estimate)
+                if not wps:
+                    goals.pop(0)
+                    continue
+            else:                       # lost after the spin: keep exploring slowly (wander, LiDAR-safe)
+                vx, wz = 0.4, 0.3
+            pf.set_cmd(vx, 0.0, wz)
+            for _ in range(int(STATE_DT / PHYS_DT)):
+                loco.step(vx, 0.0, wz, guiding=False, dt=PHYS_DT)
+            t += STATE_DT
+            pose = loco.get_pose()
+            t0 = time.perf_counter()
+            pf.update({"t": t, "robot_pose": list(pose), "lidar_ranges": lidar(model, data, base_id, pose)})
+            step_ms.append(1000 * (time.perf_counter() - t0))
+            if t_kidnap is not None and pf.converged and t_conv is None and (pf.relocalizations or args.kidnap):
+                t_conv, err_conv, fit_conv = t - t_kidnap, pf.err_xy, pf.fit_ema
+            if t_conv is not None:
+                post.append(pf.err_xy)
+                if pf.err_xy > 0.8:
+                    wrong += 1
+        ok = t_conv is not None and err_conv < 0.5 and pf.err_xy < 0.5
+        rows.append((ok, t_conv, err_conv, pf.err_xy, np.mean(post) if post else None, pf.searches,
+                     pf.relocalizations, max(step_ms)))
+        what = (f"start ({start[0]:6.2f},{start[1]:6.2f}) {H.get_room_at(*start[:2]):12s}" if args.kidnap else
+                f"dropped at ({drop[0]:6.2f},{drop[1]:6.2f}) {H.get_room_at(*drop[:2]):12s}")
+        print(f"  trial {k}: {what} -> {'OK  ' if ok else 'FAIL'} "
+              f"converge {'-' if t_conv is None else f'{t_conv:5.1f}'} s  err@conv "
+              f"{'-' if err_conv is None else f'{err_conv:.2f}'} m  final {pf.err_xy:.2f} m  "
+              f"mean after {'-' if not post else f'{np.mean(post):.2f}'} m  searches {pf.searches}  "
+              f"relocalised {pf.relocalizations}  fit@conv {fit_conv} fit {pf.fit_ema:.2f}  mode {pf.mode}  max update {max(step_ms):.0f} ms", flush=True)
+    good = [r for r in rows if r[0]]
+    tc = [r[1] for r in good]
+    print(f"[localize] {'kidnap (global start)' if args.kidnap else 'teleport (kidnapped mid-tour)'} "
+          f"tour={args.tour}: {len(good)}/{len(rows)} converged correctly"
+          + (f" | time to converge median {np.median(tc):.1f} s, max {max(tc):.1f} s | final err mean "
+             f"{np.mean([r[3] for r in good]):.2f} m" if good else ""))
+    ok = len(good) >= 0.8 * len(rows)
+    print(f"[localize] {'PASS' if ok else 'FAIL'} (>= 80 % of trials)")
     return 0 if ok else 1
 
 

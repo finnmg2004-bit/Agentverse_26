@@ -744,6 +744,8 @@ class Brain:
 
         vx, vy, wz = safety.filter_cmd(out.vx, out.vy, out.wz, self.world, self.world.lidar_ranges,
                                        allow_contact=out.allow_contact)
+        if self.pf and self.pf.wants_spin():  # NUDGE_LOCALIZE_GLOBAL: look around once before trusting the pose
+            vx, vy, wz = 0.0, 0.0, localizer_pf.SPIN_WZ
         if not self.world.connected or time.monotonic() - self.world.last_state_wall > 1.0:
             vx = vy = wz = 0.0
         self.world.nav_path = self.nav.path_points(self.world.robot_pose[:2]) if self.nav.waypoints else []

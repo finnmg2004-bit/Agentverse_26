@@ -18,9 +18,15 @@ The sim's ground-truth pose is only used to MEASURE the error (`err_xy`, `err_ya
             distance transform of the static nav map (sim/nav_map.py, same 0.10-0.55 m band the LiDAR sees).
             Mixture with a uniform term, so the owner / chair (not in the map) don't kill good particles.
   resample: low-variance resampling when the effective sample size drops below N/2.
-  init    : Gaussian around the known start pose (house_layout.ROBOT_START_POSE). `global_init()` (experimental,
-            NUDGE_LOCALIZE_GLOBAL=1) spreads 6000 particles over the whole floor (kidnapped robot): it does NOT
-            converge reliably yet in this house (many look-alike rooms; scripts/test_localize.py --kidnap fails).
+  init    : Gaussian around the known start pose (house_layout.ROBOT_START_POSE) = mode "tracking" (default).
+  global  : NUDGE_LOCALIZE_GLOBAL=1 (agent N): unknown start. The robot turns once on the spot (`wants_spin()`,
+            main.py hook), LiDAR points are buffered in the body frame (motion compensated by odometry), then an
+            exhaustive scan match (every free 25 cm cell x 72 headings, padded likelihood field, ~0.5-1 s) seeds
+            3600 particles from the 300 best hypotheses. Converged = std < 0.3 m + fit > 0.7 for 2 s AND the
+            buffered scan fits >= UNIQUE_MARGIN better near the estimate than anywhere > 1.5 m away (look-alike
+            rooms); else search again. Kidnap recovery (flag on, while tracking): fit < 0.3 for 2 s -> lost ->
+            search on the scans since the drop. A pose jump > 0.5 m in one step is not read as leg odometry.
+            Status adds mode, converged, spinning, converge_s, relocalizations, margin.
 
 Env: NUDGE_LOCALIZE=1, NUDGE_LOCALIZE_N (400), NUDGE_LOCALIZE_ODOM (cmd|delta), NUDGE_LOCALIZE_GLOBAL=1.
 """
@@ -49,6 +55,19 @@ RAY_TEMPER = 0.25            # 36 rays are not independent: temper the joint log
 MAX_SPEED, GUIDE_SPEED, MAX_WZ = 1.35, 0.40, 2.4   # = sim/locomotion.py limits
 ODOM_SCALE_BIAS = 1.04      # simulated leg odometry over-reads distance and turn by 4 %...
 ODOM_YAW_DRIFT = 0.015      # ...and drifts 0.015 rad (0.9 deg) per metre walked
+# --- global localisation / kidnapped robot (NUDGE_LOCALIZE_GLOBAL=1) ---
+SPIN_WZ = 1.2                # rad/s, the start-up look-around turn (one full turn ~5.5 s)
+SPIN_TURN = 2.15 * math.pi   # turn this far before the first global search
+GRID_STEP = 0.25             # m, candidate positions of the global search
+GRID_YAWS = 72               # 5 deg candidate headings
+SIGMA_GLOBAL = 0.22          # m, wider likelihood for the coarse search grid
+SEED_HYPS, SEED_PER_HYP = 300, 12   # top hypotheses kept, particles per hypothesis
+BUF_AGE = 8.0                # s of motion-compensated LiDAR points kept for the search
+CONV_STD, CONV_FIT, CONV_HOLD = 0.30, 0.70, 40   # converged = std < 0.3 m and fit > 0.7 for 2 s
+LOST_FIT, LOST_HOLD = 0.30, 40                   # tracking + fit < 0.3 for 2 s -> lost (kidnapped)
+RESEARCH_EVERY = 4.0         # s, re-run the global search while not converged
+UNIQUE_MARGIN = 6.0         # log-likelihood lead of the estimate over the best place > 1.5 m away
+TELEPORT_JUMP = 0.5          # m in one state step: no leg can do that -> the odometry reads nothing
 
 
 def enabled() -> bool:
@@ -74,13 +93,20 @@ class ParticleLocalizer:
         self.H, self.W = self.dist.shape
         self.cmd = (0.0, 0.0, 0.0)
         self.guiding = False
+        self.global_flag = os.environ.get("NUDGE_LOCALIZE_GLOBAL") == "1"
+        self._build_global_fields()
         self.reset(start_pose)
-        if os.environ.get("NUDGE_LOCALIZE_GLOBAL") == "1":
+        if self.global_flag:
             self.global_init()
 
     # ------------------------------------------------------------------ init
-    def reset(self, pose: Sequence[float] = ROBOT_START_POSE, sxy: float = 0.15, syaw: float = 0.08) -> None:
-        x, y, yaw = (float(v) for v in pose)
+    def reset(self, pose: Optional[Sequence[float]] = None, sxy: float = 0.15, syaw: float = 0.08) -> None:
+        """Known start pose (tracking). With NUDGE_LOCALIZE_GLOBAL=1 and no pose given: global init."""
+        if pose is None and getattr(self, "global_flag", False):
+            self.reset(ROBOT_START_POSE)
+            self.global_init()
+            return
+        x, y, yaw = (float(v) for v in (ROBOT_START_POSE if pose is None else pose))
         self.p = np.column_stack([self.rng.normal(x, sxy, self.n), self.rng.normal(y, sxy, self.n),
                                   _wrap(self.rng.normal(yaw, syaw, self.n))])
         self.w = np.full(self.n, 1.0 / self.n)
@@ -95,19 +121,188 @@ class ParticleLocalizer:
         self.dr_err_xy: Optional[float] = None
         self.estimate = (x, y, yaw)
         self.dr = (x, y, yaw)              # dead reckoning (odometry only), for comparison
+        self.mode = "tracking"             # "global" while the robot does not know where it is
+        self.converged = True
+        self.spin_left = 0.0               # rad still to turn on the spot (start-up look-around)
+        self.conv_count = 0
+        self.lost_count = 0
+        self.fit_ema: Optional[float] = None
+        self.t_global: Optional[float] = None    # sim time the global phase started
+        self.t_converged: Optional[float] = None
+        self.t_search: Optional[float] = None
+        self.searches = 0
+        self.relocalizations = 0
+        self.buf_hit = np.zeros((0, 3))          # body-frame LiDAR points (x, y, t), motion compensated
+        self.buf_free = np.zeros((0, 3))         # body-frame points the beams passed through (free)
+        self.odom_step = (0.0, 0.0, 0.0)
+        self.margin: Optional[float] = None
 
-    def global_init(self) -> None:
-        """Kidnapped robot: particles uniformly on free floor inside the map (heading uniform)."""
-        b = HOUSE_BOUNDS
-        free = np.argwhere(self.dist > 0.35)
-        fx, fy = self.x0 + (free[:, 1] + 0.5) * self.res, self.y0 + (free[:, 0] + 0.5) * self.res
-        inside = (fx > b["x_min"]) & (fx < b["x_max"]) & (fy > b["y_min"]) & (fy < b["y_max"])
-        fx, fy = fx[inside], fy[inside]
-        m = max(15 * self.n, 6000)        # many particles until it has converged, then back to n
-        pick = self.rng.integers(0, len(fx), m)
-        self.p = np.column_stack([fx[pick] + self.rng.uniform(-0.025, 0.025, m),
-                                  fy[pick] + self.rng.uniform(-0.025, 0.025, m), self.rng.uniform(-np.pi, np.pi, m)])
+    def global_init(self, spin: bool = True) -> None:
+        """Unknown start / kidnapped robot. The robot first turns once on the spot (`wants_spin()`, start-up
+        only) while its LiDAR points are collected in the body frame (motion compensated by odometry); then
+        `_global_search()` scores every free 25 cm cell x 72 headings of the house against that 360 deg scan
+        and seeds the filter with the best few hundred hypotheses. Until the convergence test passes, `mode`
+        stays "global" and `converged` False (the brain should not trust the estimate yet)."""
+        self.mode, self.converged = "global", False
+        self.conv_count = 0
+        self.t_global, self.t_converged, self.t_search = None, None, None
+        self.spin_left = SPIN_TURN if spin else 0.0
+        # until the first search: particles spread over the free floor (the status shows a big cloud)
+        m = 4 * self.n
+        pick = self.rng.integers(0, len(self.cand_xy), m)
+        self.p = np.column_stack([self.cand_xy[pick, 0], self.cand_xy[pick, 1], self.rng.uniform(-np.pi, np.pi, m)])
         self.w = np.full(m, 1.0 / m)
+        self.estimate = self._mean()
+
+    def wants_spin(self) -> bool:
+        """True while the start-up look-around turn is not finished (brain hook: command (0, 0, SPIN_WZ))."""
+        return self.mode == "global" and self.spin_left > 0.0
+
+    def _build_global_fields(self) -> None:
+        d = self.dist
+        pad = self.pad = int(LIDAR_MAX / self.res) + 2      # padded fields: no bounds checks in the search
+        gh = np.log(Z_HIT * np.exp(-0.5 * (d / SIGMA_GLOBAL) ** 2) + 0.05).astype(np.float32)
+        self.g_hit = np.pad(gh, pad, constant_values=np.log(0.05)).ravel()
+        gf = np.where(d < 0.06, -1.5, 0.0).astype(np.float32)   # a beam passing through a wall
+        self.g_free = np.pad(gf, pad, constant_values=0.0).ravel()
+        self.Wp = self.W + 2 * pad
+        b = HOUSE_BOUNDS
+        step = max(1, int(round(GRID_STEP / self.res)))
+        rr, cc = np.mgrid[0:self.H:step, 0:self.W:step]
+        rr, cc = rr.ravel(), cc.ravel()
+        fx, fy = self.x0 + (cc + 0.5) * self.res, self.y0 + (rr + 0.5) * self.res
+        ok = (d[rr, cc] > 0.28) & (fx > b["x_min"]) & (fx < b["x_max"]) & (fy > b["y_min"]) & (fy < b["y_max"])
+        self.cand_rc = np.column_stack([rr[ok], cc[ok]])
+        self.cand_xy = np.column_stack([fx[ok], fy[ok]])
+
+    def _buffer_scan(self, ranges: Sequence[float], t: float) -> None:
+        """Add this scan to the body-frame buffer: LiDAR hits + points the beams passed through (free)."""
+        r = np.asarray(ranges, float)
+        if r.shape[0] != LIDAR_ANGLES.shape[0]:
+            return
+        hit = r < LIDAR_MAX - 0.05
+        ca, sa = np.cos(LIDAR_ANGLES), np.sin(LIDAR_ANGLES)
+        h = np.column_stack([r[hit] * ca[hit], r[hit] * sa[hit], np.full(int(hit.sum()), t)])
+        free = []
+        for k in (0.6, 1.2, 1.8, 2.4, 3.0, 3.6):
+            m = r - 0.3 > k
+            free.append(np.column_stack([k * ca[m], k * sa[m], np.full(int(m.sum()), t)]))
+        self.buf_hit = np.vstack([self.buf_hit[self.buf_hit[:, 2] > t - BUF_AGE], h])
+        self.buf_free = np.vstack([self.buf_free[self.buf_free[:, 2] > t - BUF_AGE]] + free)
+
+    def _move_buffer(self, dx: float, dy: float, dth: float) -> None:
+        """The body moved by (dx, dy, dth) (odometry reading): re-express the buffered points in the new frame."""
+        c, s = math.cos(-dth), math.sin(-dth)
+        for b in (self.buf_hit, self.buf_free):
+            if len(b):
+                px, py = b[:, 0] - dx, b[:, 1] - dy
+                b[:, 0], b[:, 1] = c * px - s * py, s * px + c * py
+
+    @staticmethod
+    def _bin(pts: np.ndarray, nb: int, rstep: float = 0.0) -> np.ndarray:
+        """Newest point per bearing bin (and per range ring if rstep): a small, even point set."""
+        if not len(pts):
+            return pts
+        key = ((np.arctan2(pts[:, 1], pts[:, 0]) + np.pi) / (2 * np.pi) * nb).astype(np.int64)
+        if rstep:
+            key = key * 100 + (np.hypot(pts[:, 0], pts[:, 1]) / rstep).astype(np.int64)
+        order = np.argsort(-pts[:, 2], kind="stable")
+        _, first = np.unique(key[order], return_index=True)
+        return pts[order[first]]
+
+    def _scores(self):
+        """Exhaustive scan match: every candidate cell x heading vs the buffered (up to 360 deg) scan."""
+        near = lambda b: b[np.hypot(b[:, 0], b[:, 1]) < LIDAR_MAX]   # noqa: E731 (inside the padding)
+        hits = self._bin(near(self.buf_hit), 90)
+        if len(hits) < 8:
+            return None
+        free = self._bin(near(self.buf_free), 45, 0.6)
+        if len(free) > 90:
+            free = free[self.rng.choice(len(free), 90, replace=False)]
+        pts, nh, P = np.vstack([hits[:, :2], free[:, :2]]), len(hits), self.cand_rc
+        base = ((P[:, 0] + self.pad) * self.Wp + P[:, 1] + self.pad).astype(np.int64)
+        yaws = np.linspace(-np.pi, np.pi, GRID_YAWS, endpoint=False)
+        scores = np.empty((GRID_YAWS, len(P)), np.float32)
+        for k, yaw in enumerate(yaws):
+            c, s = math.cos(yaw), math.sin(yaw)
+            dc = np.rint((c * pts[:, 0] - s * pts[:, 1]) / self.res).astype(np.int64)
+            dr = np.rint((s * pts[:, 0] + c * pts[:, 1]) / self.res).astype(np.int64)
+            off = dr * self.Wp + dc
+            scores[k] = (self.g_hit[base[:, None] + off[None, :nh]].sum(axis=1)
+                         + self.g_free[base[:, None] + off[None, nh:]].sum(axis=1))
+        return scores, yaws
+
+    def _global_search(self, t: float, sy=None) -> None:
+        sy = sy or self._scores()
+        if sy is None:
+            return
+        scores, yaws = sy
+        P = self.cand_rc
+        flat = scores.ravel()
+        top = np.argpartition(-flat, SEED_HYPS)[:SEED_HYPS]
+        ky, kp = np.divmod(top, len(P))
+        sc = flat[top].astype(float)
+        m = SEED_HYPS * SEED_PER_HYP
+        rep = np.repeat(np.arange(SEED_HYPS), SEED_PER_HYP)
+        self.p = np.column_stack([self.cand_xy[kp[rep], 0] + self.rng.normal(0, 0.08, m),
+                                  self.cand_xy[kp[rep], 1] + self.rng.normal(0, 0.08, m),
+                                  _wrap(yaws[ky[rep]] + self.rng.normal(0, 0.03, m))])
+        w = np.exp(0.3 * (sc[rep] - sc.max()))      # the 360 deg evidence as a tempered prior (no early collapse)
+        self.w = w / w.sum()
+        self.estimate = self._mean()
+        self.searches += 1
+        self.t_search = t
+        self.conv_count = 0
+
+    def _unique(self):
+        """Ambiguity test before trusting a converged cloud: the buffered scan must fit clearly better
+        within 0.75 m of the estimate than anywhere > 1.5 m away (look-alike rooms)."""
+        sy = self._scores()
+        if sy is None:
+            return False, None
+        best = sy[0].max(axis=0)
+        d = np.hypot(self.cand_xy[:, 0] - self.estimate[0], self.cand_xy[:, 1] - self.estimate[1])
+        near, far = best[d < 0.75], best[d > 1.5]
+        if not len(near) or not len(far):
+            return bool(len(near)), sy
+        self.margin = float(near.max() - far.max())
+        return self.margin >= UNIQUE_MARGIN, sy
+
+    def _update_mode(self, t: float) -> None:
+        """Convergence test (global -> tracking) and lost detection (tracking -> global: kidnapped)."""
+        if self.fit is not None:
+            self.fit_ema = self.fit if self.fit_ema is None else 0.9 * self.fit_ema + 0.1 * self.fit
+        if self.mode == "global":
+            if self.t_global is None:
+                self.t_global = t
+            if self.spin_left > 0.0:
+                return
+            if self.t_search is None:
+                self._global_search(t)
+                return
+            ok = self.std_xy() < CONV_STD and (self.fit_ema or 0.0) > CONV_FIT
+            self.conv_count = self.conv_count + 1 if ok else 0
+            if self.conv_count >= CONV_HOLD:
+                unique, sy = self._unique()
+                if not unique:              # a look-alike place fits as well: start again from all modes
+                    self._global_search(t, sy)
+                    return
+                self.mode, self.converged, self.t_converged = "tracking", True, t
+                self.lost_count = 0
+                self._resample(force_n=self.n)
+            elif t - self.t_search > RESEARCH_EVERY and (self.std_xy() > 1.0 or (self.fit_ema or 0.0) < CONV_FIT):
+                self._global_search(t)      # still ambiguous, or one compact cloud on the wrong walls
+        elif self.global_flag:
+            low = self.fit_ema is not None and self.fit_ema < LOST_FIT
+            self.lost_count = self.lost_count + 1 if low else 0
+            if self.lost_count >= LOST_HOLD:   # kidnapped: keep only the scans since the fit dropped
+                t_cut = t - LOST_HOLD * 0.05 - 0.5
+                self.buf_hit = self.buf_hit[self.buf_hit[:, 2] >= t_cut]
+                self.buf_free = self.buf_free[self.buf_free[:, 2] >= t_cut]
+                self.relocalizations += 1
+                self.global_init(spin=False)
+                self.t_global = t
+                self._global_search(t)
 
     # ------------------------------------------------------------------ helpers
     def _dist_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -140,11 +335,14 @@ class ParticleLocalizer:
             dx, dy = c * dxw + s * dyw, -s * dxw + c * dyw
             dth = math.atan2(math.sin(gt[2] - self.last_gt[2]), math.cos(gt[2] - self.last_gt[2]))
             dist = math.hypot(dx, dy)
+            if dist > TELEPORT_JUMP:     # picked up and put down elsewhere: the legs felt nothing
+                dx = dy = dth = dist = 0.0
             # the odometry SENSOR is wrong, systematically and randomly (foot slip): this reading is all the
             # filter gets; the truth above never reaches the particles
             dx, dy = dx * ODOM_SCALE_BIAS + self.rng.normal(0, 0.01 * dist), dy * ODOM_SCALE_BIAS
             dth = dth * ODOM_SCALE_BIAS + ODOM_YAW_DRIFT * dist + self.rng.normal(0, 0.002)
             self._dead_reckon(dx, dy, dth)
+            self.odom_step = (dx, dy, dth)
             dxp = dx * self.rng.normal(1.0, 0.05, n) + self.rng.normal(0, 0.005 + 0.05 * dist, n)
             dyp = dy * self.rng.normal(1.0, 0.05, n) + self.rng.normal(0, 0.005 + 0.05 * dist, n)
             dthp = dth * self.rng.normal(1.0, 0.05, n) + self.rng.normal(0, 0.004 + 0.05 * abs(dth), n)
@@ -162,6 +360,7 @@ class ParticleLocalizer:
             wzp = wz + self.rng.normal(0, 0.02 + 0.10 * abs(wz), n)
             dthp = wzp * dt
             self._dead_reckon(vx * dt, vy * dt, wz * dt)
+            self.odom_step = (vx * dt, vy * dt, wz * dt)
             dxp, dyp = vxp * dt, vyp * dt
         yaw_mid = self.p[:, 2] + 0.5 * dthp
         c, s = np.cos(yaw_mid), np.sin(yaw_mid)
@@ -170,6 +369,10 @@ class ParticleLocalizer:
         ok = self._dist_at(nx, ny) >= ROBOT_RADIUS     # blocked by a wall -> stays (like the sim's clamp)
         self.p[ok, 0], self.p[ok, 1] = nx[ok], ny[ok]
         self.p[:, 2] = _wrap(self.p[:, 2] + dthp)
+        if self.global_flag or self.mode == "global":
+            self._move_buffer(*self.odom_step)
+            if self.spin_left > 0.0:
+                self.spin_left -= abs(self.odom_step[2])
 
     def _correct(self, ranges: Sequence[float]) -> None:
         r = np.asarray(ranges, float)
@@ -197,9 +400,9 @@ class ParticleLocalizer:
         if self.n_eff < len(self.p) / 2:
             self._resample()
 
-    def _resample(self) -> None:
-        # after a global init keep the big particle set until the cloud has collapsed to one place
-        m = self.n if (len(self.p) <= self.n or self.std_xy() < 1.0) else len(self.p)
+    def _resample(self, force_n: Optional[int] = None) -> None:
+        # global mode keeps the big particle set until the convergence test passes
+        m = force_n or (len(self.p) if self.mode == "global" else self.n)
         pos = (self.rng.random() + np.arange(m)) / m
         idx = np.minimum(np.searchsorted(np.cumsum(self.w), pos), len(self.p) - 1)
         self.p = self.p[idx]
@@ -219,8 +422,13 @@ class ParticleLocalizer:
                 dt = 0.0
             if dt > 0:
                 self._predict(dt, gt)
-                self._correct(msg.get("lidar_ranges") or [])
+                if self.mode != "global" or self.t_search is not None:
+                    self._correct(msg.get("lidar_ranges") or [])
                 self.updates += 1
+        if self.global_flag or self.mode == "global":
+            self._buffer_scan(msg.get("lidar_ranges") or [], t)
+        self.estimate = self._mean()
+        self._update_mode(t)
         self.t_last = t
         self.last_gt = gt
         self.estimate = self._mean()
@@ -259,6 +467,13 @@ class ParticleLocalizer:
             "odom_only_err_xy": None if self.dr_err_xy is None else round(self.dr_err_xy, 3),
             "n_eff": round(self.n_eff, 1),
             "fit": None if self.fit is None else round(self.fit, 2),
-            "n": self.n,
+            "n": len(self.p),
             "odom": self.odom,
+            "mode": self.mode,
+            "converged": self.converged,
+            "spinning": self.wants_spin(),
+            "converge_s": (None if self.t_converged is None or self.t_global is None
+                           else round(self.t_converged - self.t_global, 1)),
+            "relocalizations": self.relocalizations,
+            "margin": None if self.margin is None else round(self.margin, 1),
         }
