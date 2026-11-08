@@ -24,12 +24,16 @@
 
     No smoke false positives (max 0.17 without an alarm). Other sounds are unchanged in `test_sound_events`. Scenarios smoke, kettle, doorbell, demo PASS. One-off `kettle_then_smoke` PASS (evacuation 75 s with AGC, 102 s without). The scenario-level gain is small because the robot rarely stands 1-3 m from the alarm in today's scenarios, but a kitchen mission would.
   - **R3 teaching by voice** (`12a32d5`): the Whisper vocabulary now has task words, and the published `user_command.text` gets times normalised (`raw` stays as heard): "ten pm" / "10 p.m." -> "10 pm", "half past nine" -> "9:30", "quarter to seven" -> "6:45", "ten o'clock" -> "10:00". New `assets/audio/voice_tests/` (5 teach + 3 command clips, Piper) + `scripts/test_voice_clips.py`: **teach 5/5 exact, commands 3/3**, 0.64 s per clip (the old prompt got 4/5). The selftest passes, and nothing is copied back on "Nudge." alone, silence or babble. carpet_rule_voice PASS. **For eden-tasks:** times arrive as "10 pm", "9:30", "7:30 am", "10:00" (no "p.m.", no number words).
+  - **R4 ask_owner by voice, voice side of C5** (`f3a4bb4`): while the brain status has an open `ask`, no wake word is needed, and the answer goes out as `user_answer {id, text, choice, confidence, raw, source, t}` on :5558. `choice` is the best fuzzy match ("yeah, please" -> yes, "the one in the guest room" -> guest room; "I don't know" / "maybe" -> null). One answer per id. "Nudge, stop" during a question stays a command. The mic is muted while Nudge speaks, using `state.speaking` if it exists, else an estimate from `nudge_says`. `scripts/test_ask_owner.py` (stub brain): 4/4. `--no-robot` gives the old behaviour.
 - Behind a flag / experimental: `NUDGE_EVAC_HYSTERESIS=0` turns R1 off, `NUDGE_EAR_AGC=0` turns the R2c AGC off (both default on).
-- Not done: R4-R6.
+- Not done: R5, R6. The brain side of C5 (publish `ask`, consume `user_answer`) isn't built by anyone yet.
 - Merge risks (files, contract assumptions): voice `text` is now time-normalised (an additive change in form; `raw` is unchanged). `sim/sensors.py` (+20 lines in `synthesize_stereo_audio`, audio only). `sim/house_layout.py` knock entry gained `event_stop_windows` (data only). `choose()` gained an optional `now=` kwarg and returns an extra `hysteresis` field. Callers are unchanged.
 - How to see it working: the EVAC decision dict has `hysteresis` = "kept (... only 1.0 m better)" / "switched (...)".
 
 ## Needs from others
+- eden-tasks (brain, C5): to use voice answers, publish `ask: {"id", "question", "choices", "timeout_s"}` in the `brain` status and SUB `user_answer` on :5558 (same socket as `user_command`). `choice` may be null, meaning unclear: ask again or use `text`.
+- sean (sim, optional): `state.speaking` (truthy while the robot's TTS plays) makes the mic mute exact. Without it, voice estimates the speaking time from `nudge_says`.
+- eden-gui: `voice_status.state` can now also be `"muted"` (while Nudge speaks).
 - sean (`scripts/test_scenarios.py`): please add scenario `kettle_then_smoke`: `"actions": [("at", 1.0, "J"), ("on", "Mission kettle complete", 3.0, "M")], "expect_complete": ["kettle", "smoke_alarm"], "expect_log": ["guide_owner_to(kettle)", "SAFETY PRE-EMPT"], "expect_alert": ["2_pulse", "continuous"], "min_timeout": 220.0`. It covers a fire right after a kitchen mission (PASS here, 177 s). Even better, a variant that presses `M` while guiding through the kitchen.
 - eden-tasks (`nudge-brain/main.py`): call `self.evac.reset()` in `Brain.reset()`, so an `R` reset forgets the held exit straight away. Today it is forgotten after 30 s without a `choose()` call. Without the call, a new alarm < 30 s after a reset keeps the old exit for up to 2 s. Optional: log `decision["hysteresis"]` in the EVAC line.
 
@@ -43,3 +47,4 @@
 - 01:46: R2b false kettle/smoke starts at the stove, 33e7522, tested: test_sound_events PASS, oven_timer PASS, kettle PASS x3, smoke PASS; found R2c (smoke masked by the kettle at the stove)
 - 02:24: R2c sim ear AGC (smoke deaf spot in the kitchen), 1ade7e8, tested: offline smoke sweep 136/400 missed -> 0/400, test_sound_events PASS, smoke/kettle/doorbell/demo PASS, kettle_then_smoke (one-off) PASS
 - 02:34: R3 teaching by voice, 12a32d5, tested: test_voice_clips teach 5/5 + commands 3/3, voice --selftest PASS, carpet_rule_voice PASS
+- 03:05: R4 ask_owner by voice (C5 voice side), f3a4bb4, tested: test_ask_owner 4/4, voice --selftest PASS, test_voice_clips 5/5+3/3, carpet_rule_voice PASS
