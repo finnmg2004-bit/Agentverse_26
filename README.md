@@ -1,4 +1,11 @@
-## Nudge — a local-AI assistance dog for deaf, blind and deafblind people
+# Nudge — a local-AI assistance dog for deaf, blind and deafblind people
+
+🥇 **Winner, Google DeepMind Gemini prize** (best use of AI / Google DeepMind)\
+🥈 **2nd place, Robotics Track**, Agent Verse 2026 (7–8 Nov)
+
+<p align="center">
+  <img src="docs/img/demo.gif" alt="Nudge demo: hears a doorbell, finds its owner and guides them" width="720">
+</p>
 🥇 Winner, Google DeepMind Gemini prize (best use of AI / Google DeepMind)
 🥈 2nd place, Robotics Track, Agent Verse 2026 (7–8 Nov)
 
