@@ -1,5 +1,17 @@
 # Nudge — a local-AI assistance dog for deaf, blind and deafblind people
 
+🥇 **Winner, Google DeepMind Gemini prize** (best use of AI / Google DeepMind)\
+🥈 **2nd place, Robotics Track**, Agent Verse 2026 (7–8 Nov)
+
+<p align="center">
+  <img src="docs/img/demo.gif" alt="Nudge demo: hears a doorbell, finds its owner and guides them" width="720">
+</p>
+🥇 Winner, Google DeepMind Gemini prize (best use of AI / Google DeepMind)
+🥈 2nd place, Robotics Track, Agent Verse 2026 (7–8 Nov)
+
+Nudge hears a doorbell, finds its owner and leads them to the door
+▶️ Watch the full demo video
+
 **The correct Demo video (60 s) (The wrong video was submitted to Builder Base this is the correct video):** [watch on Google Drive](https://drive.google.com/file/d/12cjB34Vrt6-VDNwTnTcYrqYkDT8Pb3om/view?usp=sharing)
 one continuous take (the owner says "don't step on the new carpet", the doorbell rings, Nudge finds the owner, keeps off the carpet while guiding, then an unscripted smoke alarm pre-empts everything and it asks "Shall I call 999?"), followed by a TV doorbell told apart from the real door, glass breaking reasoned about by local Gemma, and a second home. Perception (head camera, hearing, map, event log) is on screen next to every action.
 
